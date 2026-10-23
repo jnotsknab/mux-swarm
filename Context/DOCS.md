@@ -1314,6 +1314,11 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
     puts model and effort at the right edge (a single `|` stays plain text). Clickable chips follow their text.
   - `header.template`: the session card text with `{agent}`, `{model}`, `{provider}`, `{tools}`; `header.frame:
     box` draws a rounded card around it.
+  - `splash.frame`: `rounded` (default), `square`, `double`, `thick`, `ascii`, `none`; `splash.borderFg`;
+    `splash.padY` 0-2 (default 1); `splash.align`: `left` (default) or `center` (the panel hugs its content and
+    is centered); `splash.columns`: `all` (logo, getting-started, recent; default), `logo`, `logo,recent`,
+    `logo,getting-started`, `getting-started,logo`, `recent,logo` (choose and order the wide-screen columns;
+    a single column keeps the compact one-panel look at any width).
   - `toolCard.style`: `bullet` (default), `gutter` (one prefix glyph per tool line, `toolCard.gutter`, default `┊`)
     or `box` (side rails `toolCard.boxLeft`/`boxRight`).
   Example, an editor-style box with the status line in its border:

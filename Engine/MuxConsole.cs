@@ -842,45 +842,77 @@ public static partial class MuxConsole
             };
         }
 
+        // splash.columns picks which columns the wide layout shows (and their order); "all" is the stock
+        // logo / getting-started / recent set. A logo-only choice keeps the narrow single-panel look at any width.
+        string columns = RegionStyle.Choice("splash.columns");
+        var ids = columns == "all" ? new[] { "logo", "getting-started", "recent" } : columns.Split(',');
+        bool wide = terminalWidth >= 180 && ids.Length > 1;
         var brand = BuildSplashBrandMarkup(version, debugTag, splashLabel, splashText,
-            includeHelp: terminalWidth < 180, spectreHyperlink: false);
-        if (terminalWidth < 180)
+            includeHelp: !wide, spectreHyperlink: false);
+        if (!wide)
         {
-            var panel = BuildFramePanel(brand, w);
+            // Centered: the panel hugs its content (widest row) so there is room to center it.
+            bool center = RegionStyle.Choice("splash.align") == "center";
+            int panelW = center ? Math.Min(w, brand.Max(l => Tui.TuiMarkup.MarkupWidth(l)) + 4) : w;
+            var panel = BuildFramePanel(brand, panelW);
             panel.Add("");
-            return panel;
+            return AlignSplash(panel, w);
         }
 
-        var middle = BuildSplashGettingStartedMarkup();
-        var right = BuildSplashRecentSessionsMarkup(recent);
         int inner = Math.Max(20, w - 4);
-        int leftW = Math.Min(86, Math.Max(64, (inner * 46) / 100));
-        int middleW = Math.Min(52, Math.Max(44, (inner * 28) / 100));
-        int rightW = inner - leftW - middleW - 6;
-        var body = ComposeFrameSplashColumns(brand, middle, right, leftW, middleW, rightW);
+        List<string> Column(string id) => id switch
+        {
+            "logo" => brand,
+            "getting-started" => BuildSplashGettingStartedMarkup(),
+            _ => BuildSplashRecentSessionsMarkup(recent),
+        };
+        List<(List<string> Lines, int Width)> parts;
+        if (ids.Length == 3)
+        {
+            int leftW = Math.Min(86, Math.Max(64, (inner * 46) / 100));
+            int middleW = Math.Min(52, Math.Max(44, (inner * 28) / 100));
+            parts = [(Column(ids[0]), leftW), (Column(ids[1]), middleW), (Column(ids[2]), inner - leftW - middleW - 6)];
+        }
+        else
+        {
+            // Two columns: the logo keeps its stock width, the other column takes the rest.
+            int logoW = Math.Min(86, Math.Max(64, (inner * 46) / 100));
+            int otherW = inner - logoW - 3;
+            parts = ids.Select(id => (Column(id), id == "logo" ? logoW : otherW)).ToList();
+        }
+        var body = ComposeFrameSplashColumns(parts);
         var widePanel = BuildFramePanel(body, w);
         widePanel.Add("");
-        return widePanel;
+        return AlignSplash(widePanel, w);
     }
 
-    private static List<string> ComposeFrameSplashColumns(
-        IReadOnlyList<string> left, IReadOnlyList<string> middle, IReadOnlyList<string> right,
-        int leftW, int middleW, int rightW)
+    /// <summary>splash.align center: shift the whole block right by one shared left pad, so the art does not shear.</summary>
+    private static List<string> AlignSplash(List<string> rows, int width)
     {
-        var leftRows = WrapSplashColumn(left, leftW);
-        var middleRows = WrapSplashColumn(middle, middleW);
-        var rightRows = WrapSplashColumn(right, rightW);
-        int count = Math.Max(leftRows.Count, Math.Max(middleRows.Count, rightRows.Count));
+        if (RegionStyle.Choice("splash.align") != "center") return rows;
+        int widest = rows.Max(r => Tui.TuiMarkup.MarkupWidth(r));
+        int pad = Math.Max(0, (width - widest) / 2);
+        return pad == 0 ? rows : rows.Select(r => r.Length == 0 ? r : new string(' ', pad) + r).ToList();
+    }
+
+    private static List<string> ComposeFrameSplashColumns(IReadOnlyList<(List<string> Lines, int Width)> columns)
+    {
+        var wrapped = columns.Select(c => WrapSplashColumn(c.Lines, c.Width)).ToList();
+        int count = wrapped.Max(w => w.Count);
+        string divider = SplashBorder(5);
         var rows = new List<string>(count);
         for (int i = 0; i < count; i++)
-        {
-            string l = i < leftRows.Count ? leftRows[i] : "";
-            string m = i < middleRows.Count ? middleRows[i] : "";
-            string r = i < rightRows.Count ? rightRows[i] : "";
-            rows.Add(PadMarkup(l, leftW) + $" [{C.Muted}]│[/] "
-                + PadMarkup(m, middleW) + $" [{C.Muted}]│[/] " + PadMarkup(r, rightW));
-        }
+            rows.Add(string.Join($" {divider} ", columns.Select((c, k) => PadMarkup(i < wrapped[k].Count ? wrapped[k][i] : "", c.Width))));
         return rows;
+    }
+
+    // One glyph of the splash.frame border set (index as in ComposeShape.Borders), in splash.borderFg.
+    // The "none" frame keeps the column divider (a plain bar) so wide columns stay readable.
+    private static string SplashBorder(int glyph)
+    {
+        string frame = RegionStyle.Choice("splash.frame");
+        string g = frame == "none" ? (glyph == 5 ? "\u2502" : " ") : Tui.ComposeShape.Borders[frame][glyph];
+        return $"[{RegionStyle.Color("splash.borderFg")}]{Esc(g)}[/]";
     }
 
     private static List<string> WrapSplashColumn(IReadOnlyList<string> lines, int width)
@@ -899,16 +931,22 @@ public static partial class MuxConsole
     private static List<string> BuildFramePanel(IReadOnlyList<string> body, int width)
     {
         int inner = Math.Max(8, width - 4);
-        var rows = new List<string>(body.Count + 4)
+        int padY = RegionStyle.Number("splash.padY");
+        bool framed = RegionStyle.Choice("splash.frame") != "none";
+        string side = framed ? SplashBorder(5) : " ";
+        string Edge(int left, int right)
         {
-            $"[{C.Muted}]╭{new string('─', inner + 2)}╮[/]",
-            $"[{C.Muted}]│[/] {new string(' ', inner)} [{C.Muted}]│[/]",
-        };
+            var g = Tui.ComposeShape.Borders[RegionStyle.Choice("splash.frame")];
+            return $"[{RegionStyle.Color("splash.borderFg")}]{Esc(g[left] + string.Concat(Enumerable.Repeat(g[4], inner + 2)) + g[right])}[/]";
+        }
+        var rows = new List<string>(body.Count + 4);
+        if (framed) rows.Add(Edge(0, 1));
+        for (int p = 0; p < padY; p++) rows.Add($"{side} {new string(' ', inner)} {side}");
         foreach (var line in body)
             foreach (var wrapped in Tui.TuiMarkup.WrapMarkup(line, inner))
-                rows.Add($"[{C.Muted}]│[/] {PadMarkup(wrapped, inner)} [{C.Muted}]│[/]");
-        rows.Add($"[{C.Muted}]│[/] {new string(' ', inner)} [{C.Muted}]│[/]");
-        rows.Add($"[{C.Muted}]╰{new string('─', inner + 2)}╯[/]");
+                rows.Add($"{side} {PadMarkup(wrapped, inner)} {side}");
+        for (int p = 0; p < padY; p++) rows.Add($"{side} {new string(' ', inner)} {side}");
+        if (framed) rows.Add(Edge(2, 3));
         return rows;
     }
 
