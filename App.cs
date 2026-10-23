@@ -2684,7 +2684,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
     /// <summary>
     /// Chat client for a lead single-agent session other than /agent (/teams lead, stateless, resume, ACP,
-    /// --agent): the plain client plus the /insight line. The session checks the client for
+    /// --agent): the plain client plus the /insight line and the mid-turn steer (Ctrl+N). The session checks the client for
     /// <c>InsightClient</c> before promising the agent a context line, so a lead path built elsewhere simply
     /// gets no insight.
     /// </summary>
@@ -2735,7 +2735,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             .Use(inner => wrapMidTurnReflection || insight
                 ? new Engine.Insight.InsightClient(inner, () => Engine.Insight.InsightLevels.Current)
                 : inner)
-            .Use(inner => wrapMidTurnReflection
+            .Use(inner => wrapMidTurnReflection || insight
                 ? new MidTurnSteerClient(inner, SingleAgentOrchestrator.DrainSteer)
                 : inner)
             // INSIDE function-invocation: if the endpoint rejects the top reasoning tier
