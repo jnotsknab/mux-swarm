@@ -37,7 +37,7 @@ internal static class ContextPruner
         return true;
     }
 
-    private static bool IsErrorText(string text)
+    internal static bool IsErrorText(string text)
     {
         string t = text.TrimStart();
         return t.StartsWith("[ERROR]", StringComparison.OrdinalIgnoreCase)
