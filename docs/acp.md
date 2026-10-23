@@ -50,6 +50,7 @@ On Linux/macOS the `command` is the `MuxSwarm` binary and paths use `/`.
 | `session/prompt` | ✅ | Text content blocks (and embedded text / `resource_link` references) flattened into the user turn. |
 | `session/cancel` | ✅ | Aborts the in-flight turn; the prompt is answered with `stopReason: "cancelled"`. |
 | `session/close` | ✅ | Ends the active session loop. |
+| `session/list` | ✅ | Lead-agent sessions with a saved file, newest first, 50 per page (opaque `nextCursor`): `sessionId` (= the `Sessions/` folder name, also returned by `session/new`), absolute `cwd`, `title` (session tag, else the first user message), `updatedAt` (RFC 3339). Filtered by `cwd` when given; sessions started outside ACP have no recorded cwd and show in every project. The first prompt of a new session sends `session_info_update` with its title. |
 | `authenticate` | ✅ (no-op) | No auth required; returns `{}`. |
 | `session/update` → `agent_message_chunk` | ✅ | Streamed assistant text, stable `messageId` per turn. |
 | `session/update` → `agent_thought_chunk` | ✅ | Streamed reasoning (Mux muted stream). |
