@@ -33,8 +33,10 @@ public class TuiSplashChromeDefaultLookTests
         return sb.ToString();
     }
 
+    // 4BB0F13F...: the recent-sessions hint now says "/history to browse sessions" (/sessions became an
+    // alias of /history). With the old hint text the render still hashes to the 1ca7758 value 3ACA2AE68D0DDACA.
     [Fact]
-    public void Splash_NoStyles_IsUnchanged() => Assert.Equal("3ACA2AE68D0DDACA", Hash(RenderSplash()));
+    public void Splash_NoStyles_IsUnchanged() => Assert.Equal("4BB0F13F3B2B7D46", Hash(RenderSplash()));
 
     /// <summary>Every full-screen view (pickers, history, /extensions, an extension panel) at a fixed size.</summary>
     internal static string RenderViews()
