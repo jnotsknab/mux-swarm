@@ -816,10 +816,10 @@ internal static class TuiComponents
             sysTokens, toolTokens, sessionElapsed, giga, turnElapsed, lastTurn, toolCalls, model, pulseFrame, activeMode);
         all.AddRange(ExtensionChips());
         var segments = ApplyFooterTemplate(all, _footerTemplate);
-        var (line, chosen) = ComposeFooter(segments, 0);
+        var (line, chosen) = ComposeFooter(segments, 0, width);
         if (width > 8)
             for (int lvl = 1; lvl <= 7 && TuiMarkup.MarkupWidth(line) > width; lvl++)
-                (line, chosen) = ComposeFooter(segments, lvl);
+                (line, chosen) = ComposeFooter(segments, lvl, width);
         if (badges is not null) { badges.Clear(); badges.AddRange(chosen); }
         return line;
     }
@@ -974,27 +974,87 @@ internal static class TuiComponents
         if (template is null) return segments;
         var ordered = new List<FooterSegment>(segments.Count);
         if (!template.Contains("share")) ordered.AddRange(segments.Where(s => s.Id == "share"));
-        foreach (var id in template.Distinct()) ordered.AddRange(segments.Where(s => s.Id == id));
+        foreach (var id in template.Distinct())
+        {
+            if (id == FooterSplit) ordered.Add(new FooterSegment(FooterSplit, ""));
+            else ordered.AddRange(segments.Where(s => s.Id == id));
+        }
         return ordered;
     }
 
+    /// <summary>Template marker id between the left-aligned and right-aligned footer groups (<c>||</c> in the template).</summary>
+    internal const string FooterSplit = "|";
+
+    /// <summary>Separator glyphs per <c>footer.style</c>: between chips, and the caps around a powerline group.</summary>
+    private static (string Sep, bool Powerline) FooterStyle => RegionStyle.Choice("footer.style") switch
+    {
+        "pipe" => ("|", false),
+        "space" => (" ", false),
+        "powerline" => ("", true),
+        "ascii" => ("|", false),
+        _ => (RegionStyle.PlainGlyph("footer.separator"), false),
+    };
+
     /// <summary>Join the segments visible at <paramref name="level"/> with uniform middot
     /// separators, reporting (column, width, id) extents for clickable chips measured on the
-    /// same composed string.</summary>
-    private static (string Line, List<(int Col, int Width, string Id)> Extents) ComposeFooter(List<FooterSegment> segments, int level)
+    /// same composed string. With a <c>|</c> split in the template the right group is pushed to the right edge
+    /// of <paramref name="width"/>; <c>footer.strip</c> fills the row with <c>footer.bg</c>.</summary>
+    private static (string Line, List<(int Col, int Width, string Id)> Extents) ComposeFooter(List<FooterSegment> segments, int level, int width = 0)
     {
-        var chips = segments.Where(s => s.VisibleAt(level)).ToList();
+        var chips = segments.Where(s => s.Id == FooterSplit || s.VisibleAt(level)).ToList();
         var extents = new List<(int Col, int Width, string Id)>();
-        string sep = RegionStyle.PlainGlyph("footer.separator");
-        int sepCols = TuiMarkup.Width(sep) + 2;   // " · " (the separator glyph between two spaces)
-        int col = 2;   // leading "  "
-        foreach (var chip in chips)
+        bool styled = RegionStyle.Choice("footer.style") != "dot" || RegionStyle.Flag("footer.strip");
+        int split = chips.FindIndex(s => s.Id == FooterSplit);
+        if (!styled && split < 0)
         {
-            int w = TuiMarkup.MarkupWidth(chip.Markup);
-            if (chip.BadgeId is { } id) extents.Add((col, w, id));
-            col += w + sepCols;
+            string sep = RegionStyle.PlainGlyph("footer.separator");
+            int sepCols = TuiMarkup.Width(sep) + 2;   // " · " (the separator glyph between two spaces)
+            int col = 2;   // leading "  "
+            foreach (var chip in chips)
+            {
+                int w = TuiMarkup.MarkupWidth(chip.Markup);
+                if (chip.BadgeId is { } id) extents.Add((col, w, id));
+                col += w + sepCols;
+            }
+            return ("  " + string.Join($" [{RegionStyle.Color("footer.separatorFg")}]{Esc(sep)}[/] ", chips.Select(c => c.Markup)), extents);
         }
-        return ("  " + string.Join($" [{RegionStyle.Color("footer.separatorFg")}]{Esc(sep)}[/] ", chips.Select(c => c.Markup)), extents);
+
+        var left = split < 0 ? chips : chips[..split];
+        var right = split < 0 ? new List<FooterSegment>() : chips[(split + 1)..];
+        var (glyph, _) = FooterStyle;
+        string sepFg = RegionStyle.Color("footer.separatorFg");
+        string joint = glyph == " " ? " " : $" [{sepFg}]{Esc(glyph)}[/] ";
+        int jointCols = glyph == " " ? 1 : TuiMarkup.Width(glyph) + 2;
+        (string Markup, int Cols) Group(List<FooterSegment> group, int startCol)
+        {
+            var sb = new System.Text.StringBuilder();
+            int col = startCol;
+            for (int i = 0; i < group.Count; i++)
+            {
+                if (i > 0) { sb.Append(joint); col += jointCols; }
+                int w = TuiMarkup.MarkupWidth(group[i].Markup);
+                if (group[i].BadgeId is { } id) extents.Add((col, w, id));
+                sb.Append(group[i].Markup);
+                col += w;
+            }
+            return (sb.ToString(), col - startCol);
+        }
+        var (leftMarkup, leftCols) = Group(left, 2);
+        int rightCols = right.Sum(s => TuiMarkup.MarkupWidth(s.Markup)) + Math.Max(0, right.Count - 1) * jointCols;
+        int total = width > 0 ? width : 2 + leftCols + (right.Count > 0 ? 3 + rightCols : 0);
+        int gap = Math.Max(right.Count > 0 ? 3 : 0, total - 2 - leftCols - rightCols - (right.Count > 0 ? 1 : 0));
+        string fill = RegionStyle.Choice("footer.fill") == "rule" && gap > 2
+            ? $" [{sepFg}]{Esc(new string('\u2500', gap - 2))}[/] "
+            : new string(' ', gap);
+        int rightStart = 2 + leftCols + gap;
+        var (rightMarkup, _) = Group(right, rightStart);
+        string line = "  " + leftMarkup + fill + rightMarkup + (right.Count > 0 ? " " : "");
+        if (RegionStyle.Flag("footer.strip"))
+        {
+            int pad = Math.Max(0, total - TuiMarkup.MarkupWidth(line));
+            line = $"[on {RegionStyle.Color("footer.bg")}]{line}{new string(' ', pad)}[/]";
+        }
+        return (line, extents);
     }
 
     /// <summary>A horizontal rule that spans the FULL terminal width (Claude-Code style),

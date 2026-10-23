@@ -2192,7 +2192,10 @@ internal sealed partial class TuiDriver
         for (int g = RegionStyle.Number("compose.gap"); g > 0; g--) lines.Add("");
         int footerStart = lines.Count;
         string footerPos = RegionStyle.Choice("footer.position");
+        // "border" needs a shape with a top edge and an input box on screen; otherwise the footer stays above.
+        if (footerPos == "border" && !(_inInput && !_editor.IsSearching && ComposeShape.HasTitleEdge(ComposeShape.Active))) footerPos = "above";
         _footerLine = -1;
+        _footerBadgeShift = 0;
         if (footerPos == "hidden") _footerBadges.Clear();
         if (footerPos == "above") AddFooterBlock(lines, width);
 
@@ -2209,7 +2212,7 @@ internal sealed partial class TuiDriver
             {
                 int pinnedRows = lines.Skip(footerStart).Sum(row => LiveRegion.WrapMarkupLine(row, width).Count)
                     + (footerPos == "below" ? FooterBlockRows(width) : 0);
-                RenderCompose(lines, width, Math.Max(1, Height - pinnedRows));
+                RenderCompose(lines, width, Math.Max(1, Height - pinnedRows), footerPos == "border");
                 AddCompletions(lines, width);
             }
         }
@@ -2562,7 +2565,7 @@ internal sealed partial class TuiDriver
         if (_footerLine >= 0 && _footerBadges.Count > 0
             && MapLiveLine(_footerLine, out int footTop, out _))
             foreach (var (col, bw, id) in _footerBadges)
-                hits.Add(new HitRegion(footTop, col + 1, 1, bw,
+                hits.Add(new HitRegion(footTop, col + 1 + _footerBadgeShift, 1, bw,
                     MouseTargetKind.FooterBadge, id == TuiComponents.BadgeModel ? 0 : 1, id));
         // Transcript entries with expandable payloads: click toggles expand/collapse (the NAV
         // Enter alias). Walk the visible window bottom-up mirroring the render walk, mapping each
@@ -2906,6 +2909,8 @@ internal sealed partial class TuiDriver
     // command alias are reported (model -> /setmodel, effort -> the Shift+Tab cycle).
     private readonly List<(int Col, int Width, string Id)> _footerBadges = new();
     private int _footerLine = -1;
+    // Columns the footer's badges moved by when the footer sits in the compose box's top edge.
+    private int _footerBadgeShift;
 
     // Job dashboard rows, same per-paint lifecycle as the lane lines: view-relative rows from
     // the render, then live-band line indices for region registration.

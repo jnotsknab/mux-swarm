@@ -133,7 +133,7 @@ internal sealed partial class TuiDriver
         else ApplyPastePayload(payload);
     }
 
-    private void RenderCompose(List<string> lines, int width, int availableRows)
+    private void RenderCompose(List<string> lines, int width, int availableRows, bool footerInEdge = false)
     {
         var display = _editor.Display;
         _composeMeta.Clear();
@@ -164,10 +164,25 @@ internal sealed partial class TuiDriver
             lines.AddRange(input.Skip(start).Take(maxInput));
             return;
         }
-        var frame = ComposeShape.Wrap(shape, input.Skip(start).Take(maxInput).ToList(), width);
+        string? title = null;
+        int titleCols = 0;
+        if (footerInEdge)
+        {
+            // The footer row (built at the edge's width, its two-space lead dropped) becomes the box's title.
+            title = BuildFooterRow(ComposeShape.TitleWidth(shape, width) + 2);
+            if (title.StartsWith("  ", StringComparison.Ordinal)) title = title[2..];
+            titleCols = TuiMarkup.MarkupWidth(title);
+        }
+        var frame = ComposeShape.Wrap(shape, input.Skip(start).Take(maxInput).ToList(), width, title, titleCols);
         for (int i = 0; i < frame.InputLines.Count; i++)
             _composeVisible.Add((lines.Count + frame.InputLines[i], start + i));
         _composeLeftCols = frame.LeftCols;
+        if (frame.TitleLine >= 0)
+        {
+            _footerLine = lines.Count + frame.TitleLine;
+            _footerBadgeShift = frame.TitleCol - 2;   // badge columns were measured with the dropped two-space lead
+        }
+        else if (footerInEdge) _footerBadges.Clear();   // too narrow for the title: no chips to click
         lines.AddRange(frame.Lines);
     }
 
