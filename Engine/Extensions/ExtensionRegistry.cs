@@ -572,14 +572,18 @@ internal static partial class ExtensionRegistry
     {
         if (template.Length > 512) { problems.Add($"{extension}: footer template is longer than 512 characters; skipped."); return null; }
         var ids = new List<string>();
+        // "||" between placeholders splits the footer: ids before it align left, ids after it align right.
+        // (A single "|" stays plain decoration, as before.)
+        int split = template.IndexOf("||", StringComparison.Ordinal);
         foreach (Match m in Placeholder().Matches(template))
         {
             var id = m.Groups[1].Value.Trim().ToLowerInvariant();
+            if (split >= 0 && m.Index > split && !ids.Contains(Tui.TuiComponents.FooterSplit)) ids.Add(Tui.TuiComponents.FooterSplit);
             if (!Tui.TuiComponents.FooterSegmentIds.Contains(id) && !Tui.TuiComponents.IsExtensionChipId(id))
                 problems.Add($"{extension}: footer template has unknown segment '{{{m.Groups[1].Value}}}'; ignored.");
             else if (!ids.Contains(id)) ids.Add(id);
         }
-        if (ids.Count > 0) return ids;
+        if (ids.Any(i => i != Tui.TuiComponents.FooterSplit)) return ids;
         problems.Add($"{extension}: footer template names no known segment; skipped.");
         return null;
     }

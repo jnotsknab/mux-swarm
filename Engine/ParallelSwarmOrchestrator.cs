@@ -1051,6 +1051,7 @@ public static class ParallelSwarmOrchestrator
                 orchTurnSpan?.SetTag("agent", "Orchestrator");
                 orchTurnSpan?.SetTag("iteration", i);
 
+                string? lastUsageResponseId = null;   // a repeated usage chunk counts once
                 await foreach (var update in orchestratorAgent
                     .RunStreamingAsync(messages, orchestratorSession)
                     .WithCancellation(cancellationToken))
@@ -1162,13 +1163,14 @@ public static class ParallelSwarmOrchestrator
                                 goto streamComplete;
                             }
                         }
-                        else if (content is UsageContent usageContent)
+                        else if (content is UsageContent usageContent
+                            && Telemetry.TelemetryUsageTracker.FirstForResponse(update.ResponseId, ref lastUsageResponseId))
                         {
                             lock (_stateLock)
                             {
                                 _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
                             }
-                            Telemetry.TelemetryUsageTracker.RecordCumulative(orchestratorSession, "Orchestrator", _orchestratorModelId,
+                            Telemetry.TelemetryUsageTracker.RecordCall("Orchestrator", _orchestratorModelId,
                                 usageContent.Details.InputTokenCount, usageContent.Details.OutputTokenCount,
                                 usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount);
                         }
@@ -1567,6 +1569,7 @@ public static class ParallelSwarmOrchestrator
                 using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), cancellationToken);
                 var pendingAskUser = new HashSet<string>();
 
+                string? lastUsageResponseId = null;   // a repeated usage chunk counts once
                 await foreach (var update in specialist.Agent
                     .RunStreamingAsync(messages, specialist.Session)
                     .WithCancellation(cancellationToken))
@@ -1698,13 +1701,14 @@ public static class ParallelSwarmOrchestrator
                             }
 
                         }
-                        else if (content is UsageContent usageContent)
+                        else if (content is UsageContent usageContent
+                            && Telemetry.TelemetryUsageTracker.FirstForResponse(update.ResponseId, ref lastUsageResponseId))
                         {
                             lock (_stateLock)
                             {
                                 _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
                             }
-                            Telemetry.TelemetryUsageTracker.RecordCumulative(specialist.Session, specialist.Def.Name, specialist.Agent.Id,
+                            Telemetry.TelemetryUsageTracker.RecordCall(specialist.Def.Name, specialist.Agent.Id,
                                 usageContent.Details.InputTokenCount, usageContent.Details.OutputTokenCount,
                                 usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount);
                         }

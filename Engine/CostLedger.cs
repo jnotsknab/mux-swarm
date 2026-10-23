@@ -6,10 +6,10 @@
 /// (pushed to exporters; not readable back in-process), so this small accumulator mirrors the
 /// same instrumentation points to keep a queryable view.
 ///
-/// Token semantics: providers report SESSION-CUMULATIVE snapshots on each UsageContent frame
-/// (assignment, not a per-frame delta). We therefore keep, per model id:
-///   - <b>session</b> totals = the latest cumulative snapshot (cleared on <c>/wipe</c>);
-///   - <b>rolling</b> totals = accumulated deltas across the whole process run (survive <c>/wipe</c>);
+/// Token semantics: each UsageContent frame is the usage of ONE model call (the chat-completions path
+/// reports per-call usage; a tool turn emits one frame per round-trip). We therefore keep, per model id:
+///   - <b>session</b> totals = the sum of this session's calls (cleared on <c>/wipe</c>);
+///   - <b>rolling</b> totals = the sum across the whole process run (survive <c>/wipe</c>);
 /// plus static per-session estimates for the system prompt and tool schemas (a subset of input,
 /// shown for the proportional breakdown) and counts for tool calls + compaction runs.
 ///
@@ -20,13 +20,10 @@ public static class CostLedger
 {
     private sealed class ModelStat
     {
-        // Session-cumulative (latest snapshot); reset on /wipe.
+        // Session sums of per-call usage; reset on /wipe.
         public long SessInput, SessOutput, SessCached, SessReasoning, SessTotal;
-        // Rolling process-lifetime totals (accumulated by delta); survive /wipe.
+        // Rolling process-lifetime sums; survive /wipe.
         public long RollInput, RollOutput, RollCached, RollReasoning, RollTotal;
-        // Baseline snapshot used to derive deltas for the rolling totals this session.
-        public long BaseInput, BaseOutput, BaseCached, BaseReasoning, BaseTotal;
-        public bool HasBase;
         // Counts.
         public long SessToolCalls, RollToolCalls;
         public long SessCompactions, RollCompactions;
@@ -56,66 +53,28 @@ public static class CostLedger
     }
 
     /// <summary>
-    /// Record a provider usage checkpoint. The token counts are the provider's session-cumulative
-    /// running totals (the same numbers fed to <see cref="OtelMetrics.RecordTokens"/>). Session
-    /// totals snap to the snapshot; rolling totals advance by the positive delta vs the last
-    /// snapshot seen this session. <paramref name="agent"/> attributes the persisted telemetry
-    /// delta to the emitting agent (the in-memory ledger stays keyed by model).
+    /// Record the usage of one model call (one UsageContent frame). Session and rolling totals add it; the
+    /// same per-call figures go to the durable telemetry sink and the OTel token counters.
+    /// <paramref name="agent"/> attributes the persisted record to the emitting agent (the in-memory ledger
+    /// stays keyed by model). Negative values are treated as 0.
     /// </summary>
     public static void RecordUsage(string model, long input, long output, long cached,
         long reasoning, long total, string? agent = null)
     {
+        input = Math.Max(0, input); output = Math.Max(0, output); cached = Math.Max(0, cached);
+        reasoning = Math.Max(0, reasoning); total = Math.Max(0, total);
         lock (Gate)
         {
             var s = Get(model);
-
-            // Session = latest cumulative snapshot.
-            s.SessInput = input;
-            s.SessOutput = output;
-            s.SessCached = cached;
-            s.SessReasoning = reasoning;
-            s.SessTotal = total;
-
-            // Rolling += positive delta vs baseline (handles provider resets gracefully: a snapshot
-            // smaller than the baseline => treat as a fresh run, advance by the snapshot itself).
-            if (!s.HasBase)
-            {
-                s.RollInput += Math.Max(0, input);
-                s.RollOutput += Math.Max(0, output);
-                s.RollCached += Math.Max(0, cached);
-                s.RollReasoning += Math.Max(0, reasoning);
-                s.RollTotal += Math.Max(0, total);
-            }
-            else
-            {
-                s.RollInput += Delta(input, s.BaseInput);
-                s.RollOutput += Delta(output, s.BaseOutput);
-                s.RollCached += Delta(cached, s.BaseCached);
-                s.RollReasoning += Delta(reasoning, s.BaseReasoning);
-                s.RollTotal += Delta(total, s.BaseTotal);
-            }
-
-            // Persist the same positive delta to the durable telemetry sink (all-time dashboard).
-            long dIn = s.HasBase ? Delta(input, s.BaseInput) : Math.Max(0, input);
-            long dOut = s.HasBase ? Delta(output, s.BaseOutput) : Math.Max(0, output);
-            long dCache = s.HasBase ? Delta(cached, s.BaseCached) : Math.Max(0, cached);
-            long dReason = s.HasBase ? Delta(reasoning, s.BaseReasoning) : Math.Max(0, reasoning);
-            long dTotal = s.HasBase ? Delta(total, s.BaseTotal) : Math.Max(0, total);
-            Telemetry.TelemetrySink.RecordUsageDelta(model, dIn, dOut, dCache, dReason, agent, dTotal);
-            if (dIn > 0 || dOut > 0 || dCache > 0 || dReason > 0 || dTotal > 0)
-                OtelMetrics.RecordTokens(agent ?? "(unknown)", model, dIn, dOut, dCache, dReason, dTotal);
-
-            s.BaseInput = input;
-            s.BaseOutput = output;
-            s.BaseCached = cached;
-            s.BaseReasoning = reasoning;
-            s.BaseTotal = total;
-            s.HasBase = true;
+            s.SessInput += input; s.SessOutput += output; s.SessCached += cached;
+            s.SessReasoning += reasoning; s.SessTotal += total;
+            s.RollInput += input; s.RollOutput += output; s.RollCached += cached;
+            s.RollReasoning += reasoning; s.RollTotal += total;
         }
+        Telemetry.TelemetrySink.RecordUsageDelta(model, input, output, cached, reasoning, agent, total);
+        if (input > 0 || output > 0 || cached > 0 || reasoning > 0 || total > 0)
+            OtelMetrics.RecordTokens(agent ?? "(unknown)", model, input, output, cached, reasoning, total);
     }
-
-    private static long Delta(long now, long baseline)
-        => now >= baseline ? now - baseline : Math.Max(0, now);
 
     /// <summary>
     /// Increment the tool-call count for a model (session + rolling). <paramref name="agent"/>
@@ -162,7 +121,7 @@ public static class CostLedger
     }
 
     /// <summary>
-    /// Clear SESSION token totals + the delta baseline + per-session counts/estimates, on <c>/wipe</c>.
+    /// Clear SESSION token totals + per-session counts/estimates, on <c>/wipe</c>.
     /// Rolling process-lifetime totals are preserved.
     /// </summary>
     public static void ResetSession()
@@ -172,8 +131,6 @@ public static class CostLedger
             foreach (var s in Stats.Values)
             {
                 s.SessInput = s.SessOutput = s.SessCached = s.SessReasoning = s.SessTotal = 0;
-                s.HasBase = false;
-                s.BaseInput = s.BaseOutput = s.BaseCached = s.BaseReasoning = s.BaseTotal = 0;
                 s.SessToolCalls = 0;
                 s.SessCompactions = 0;
                 s.SysPromptTok = 0;

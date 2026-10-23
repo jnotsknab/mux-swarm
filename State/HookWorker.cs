@@ -190,30 +190,45 @@ public static class HookWorker
         _ => result.ToString()
     };
 
+    private static bool _confirmPending;
+
+    /// <summary>
+    /// Load the hooks. Interactive runs with hooks configured defer the "Proceed with hooks enabled?" prompt to
+    /// <see cref="ConfirmPending"/> (after the TUI is up, so it shows in the frame); events queue meanwhile.
+    /// </summary>
     public static void Start(List<HookConfig> hooks)
     {
-        if (_cts is not null) return;
+        if (_cts is not null || _confirmPending) return;
 
         _hooks = hooks;
 
-        if (hooks.Count > 0)
+        if (hooks.Count > 0 && !MuxConsole.StdioMode)
         {
-            MuxConsole.WriteWarning($"[Hooks] {hooks.Count} hook(s) configured in swarm.json.");
-            MuxConsole.WriteWarning("Hooks execute arbitrary external commands with your user permissions.");
-
-            if (!MuxConsole.StdioMode)
-            {
-                if (!MuxConsole.Confirm("Proceed with hooks enabled?", defaultValue: false))
-                {
-                    // Mute hook EXECUTION for the session but KEEP the configs loaded, so /hooks shows
-                    // the real count and /hooks on can re-enable them without a restart. (Previously
-                    // this wiped _hooks, which made the count read 0 after a decline.)
-                    Enabled = false;
-                    MuxConsole.WriteInfo("Hooks disabled for this session - re-enable with /hooks on.");
-                }
-            }
+            _confirmPending = true;
+            return;
         }
 
+        Run();
+    }
+
+    /// <summary>Ask the deferred hooks prompt once, then start the hook loop. No-op when nothing is pending.</summary>
+    public static void ConfirmPending()
+    {
+        if (!_confirmPending) return;
+        _confirmPending = false;
+        MuxConsole.WriteWarning($"[Hooks] {_hooks.Count} hook(s) configured in swarm.json. Hooks execute arbitrary external commands with your user permissions.");
+        if (!MuxConsole.Confirm("Proceed with hooks enabled?", defaultValue: false))
+        {
+            // Mute hook EXECUTION for the session but KEEP the configs loaded, so /hooks shows
+            // the real count and /hooks on can re-enable them without a restart.
+            Enabled = false;
+            MuxConsole.WriteInfo("Hooks disabled for this session - re-enable with /hooks on.");
+        }
+        Run();
+    }
+
+    private static void Run()
+    {
         _cts = new CancellationTokenSource();
         // Only spin up persistent hook processes when execution is enabled; otherwise they start
         // lazily when the user runs /hooks on (the process loop also gates on Enabled).

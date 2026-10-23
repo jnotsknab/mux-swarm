@@ -265,7 +265,7 @@ public class RemoteInputTests
 
     [Theory]
     [InlineData("explain this repo", true)]
-    [InlineData("", false)]      // an empty submit quits the host's agent/swarm loop
+    [InlineData("", false)]      // a guest never submits an empty line (the host box ignores it too)
     [InlineData("   ", false)]
     [InlineData("/", true)]
     [InlineData("/help", true)]

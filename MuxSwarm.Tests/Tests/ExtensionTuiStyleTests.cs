@@ -292,7 +292,8 @@ public sealed class ExtensionTuiStyleTests : IDisposable
         var result = LoadEnabled();
         Assert.Empty(result.Problems);
         var regions = Assert.Single(result.Extensions).TuiRegions;
-        Assert.Equal(RegionStyle.Regions.Order(), regions.Order());
+        // Every region of the colour/glyph round (later regions: compose layout, command-output block).
+        Assert.Equal(RegionStyle.Regions.Where(r => r is not ("compose" or "block")).Order(), regions.Order());
         Assert.Contains("[#FF8C42]", TuiComponents.InputRowsWithCursor("", 0, 40)[0]);
     }
 }

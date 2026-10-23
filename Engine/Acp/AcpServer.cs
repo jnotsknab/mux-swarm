@@ -37,6 +37,8 @@ public sealed class AcpServer
     private AcpInputReader? _reader;
     private Task? _sessionTask;
     private string? _sessionId;
+    private string? _sessionCwd;     // cwd from session/new, persisted at the first prompt
+    private bool _titlePending;      // new session whose first prompt has not arrived yet
 
     // Turn-boundary state. _pendingPromptId is the JSON-RPC id of the in-flight session/prompt;
     // its response is deferred until the orchestrator re-enters ReadInput (turn complete).
@@ -46,11 +48,20 @@ public sealed class AcpServer
     private int _messageCounter;
     private string _currentMessageId = "msg_0";
 
-    // Tool-call correlation: Mux tool_call/tool_result carry no id, so synthesize one and pair
-    // results to calls FIFO (single-agent tools run sequentially).
+    // Tool-call correlation. Single-agent events carry the provider callId on both tool_call and
+    // tool_result; events without one (swarm paths) pair FIFO. Every announced call stays in
+    // _openTools until a result or the turn boundary closes it, so no card is left spinning.
     private int _toolCounter;
-    private readonly ConcurrentQueue<string> _pendingToolIds = new();
-    private string? _lastToolArgs;
+    private readonly object _toolLock = new();
+    private readonly Dictionary<string, OpenTool> _openTools = new(StringComparer.Ordinal);
+    private readonly Queue<string> _fifoToolIds = new();
+
+    /// <summary>An announced, not yet finished tool call. OldText/Snapshot hold the edited file's
+    /// content captured before the tool ran (Snapshot=false when it could not be read).</summary>
+    private sealed record OpenTool(string AcpId, string Tool, string? Args, string? Path, string? OldText, bool Snapshot);
+
+    // Files larger than this are not snapshotted for diff cards.
+    private const long MaxDiffBytes = 1_000_000;
 
     // Client capabilities (from initialize) gating agent->client callbacks (fs/*, terminal/*).
     private AcpClientCaps _clientCaps;
@@ -100,6 +111,7 @@ public sealed class AcpServer
     {
         MuxConsole.AcpActive = true;
         MuxConsole.AcpSink = OnMuxEvent;
+        AskUserHandler = AskUserAsync;
 
         // Read AND dispatch on a DEDICATED thread, never the thread pool. During startup MCP
         // init spawns many subprocess connections concurrently, which can saturate the pool
@@ -135,6 +147,8 @@ public sealed class AcpServer
         {
             _reader?.CloseSession();
             MuxConsole.AcpSink = null;
+            AskUserHandler = null;
+            _outbound.CancelAll();   // client gone: release waiting requests
             try { if (_sessionTask is not null) await _sessionTask; } catch { /* session teardown best-effort */ }
         }
     }
@@ -178,11 +192,16 @@ public sealed class AcpServer
                     break;
 
                 case "session/new":
-                    HandleSessionNew(id);
+                    HandleSessionNew(id, prms);
                     break;
 
                 case "session/load":
                     HandleSessionLoad(id, prms);
+                    break;
+
+                case "session/list":
+                    Respond(id, ListSessions(PlatformContext.SessionsDirectory,
+                        StrProp(prms, "cwd"), StrProp(prms, "cursor"), Environment.CurrentDirectory));
                     break;
 
                 case "session/prompt":
@@ -191,6 +210,9 @@ public sealed class AcpServer
 
                 case "session/cancel":
                     _cancelRequested = true;
+                    // The client should answer open permission prompts with "cancelled"; release
+                    // them here too so an ask_user can never outlive its cancelled turn.
+                    _outbound.CancelAll();
                     StdinCancelMonitor.Instance?.FireCancel();
                     break;            // notification: no response
 
@@ -228,16 +250,22 @@ public sealed class AcpServer
         }
     }
 
-    private void HandleSessionNew(object? id)
+    private void HandleSessionNew(object? id, JsonElement prms)
     {
-        string sid = "sess_" + Guid.NewGuid().ToString("N")[..12];
-        StartSession(sid, resume: null);
+        // The session id IS the Sessions folder name the orchestrator persists to, so
+        // session/list, session/load and session/resume all round-trip with no id mapping.
+        string sid = NewSessionId();
+        string dir = Path.Combine(PlatformContext.SessionsDirectory, sid);
+        _sessionCwd = StrProp(prms, "cwd");
+        StartSession(sid, new AcpResume(null, dir));
+        _titlePending = true;
         var result = new Dictionary<string, object?> { ["sessionId"] = sid };
         var cfg = BuildConfigOptions();
         if (cfg.Length > 0) result["configOptions"] = cfg;   // configOptions-API clients (e.g. Copilot CLI)
         var models = BuildModelState();
         if (models is not null) result["models"] = models;   // Models-API clients (e.g. Zed agent-panel model picker)
         Respond(id, result);
+        AdvertiseCommands(sid);   // after the response: clients attach commands to a known session
     }
 
     private void HandleSessionLoad(object? id, JsonElement prms)
@@ -271,6 +299,7 @@ public sealed class AcpServer
         var lmodels = BuildModelState();
         if (lmodels is not null) lres["models"] = lmodels;
         Respond(id, lres);
+        AdvertiseCommands(sid);   // after the response: clients attach commands to a known session
     }
 
     private void HandleSessionResume(object? id, JsonElement prms)
@@ -297,6 +326,7 @@ public sealed class AcpServer
         var rmodels = BuildModelState();
         if (rmodels is not null) rres["models"] = rmodels;
         Respond(id, rres);
+        AdvertiseCommands(sid);   // after the response: clients attach commands to a known session
     }
 
     private void HandleSetConfigOption(object? id, JsonElement prms)
@@ -357,6 +387,59 @@ public sealed class AcpServer
         return message.ValueKind == JsonValueKind.Object && message.TryGetProperty("result", out var result) ? result : default;
     }
 
+    /// <summary>
+    /// Set while an ACP server runs: the ask_user tool routes through it (question, type
+    /// confirm|select|multi_select|text, choices, tool call id) instead of reading the console.
+    /// </summary>
+    internal static Func<string, string, IReadOnlyList<string>, string?, Task<string>>? AskUserHandler;
+
+    /// <summary>
+    /// ask_user over ACP. Confirm/select/multi_select become a session/request_permission on the
+    /// same tool call (one option per choice; a client can pick only one), mapped back to the
+    /// tool's usual result text. Free-text questions cannot be asked mid-turn, so the model is told
+    /// to ask in its reply instead. Never reads stdin.
+    /// </summary>
+    private async Task<string> AskUserAsync(string question, string type, IReadOnlyList<string> choices, string? callId)
+    {
+        string? sid = _sessionId;
+        bool confirm = type == "confirm";
+        if (sid is null || (!confirm && choices.Count == 0) || type is not ("confirm" or "select" or "multi_select"))
+            return "This client cannot collect a typed answer mid-turn. Ask the question in your reply and end your turn, "
+                + "or proceed with your best judgement and state the assumption.";
+
+        var labels = confirm ? new List<string> { "Yes", "No" } : choices.ToList();
+        var options = labels.Select((l, i) => (object)new Dictionary<string, object?>
+        {
+            ["optionId"] = "opt_" + i,
+            ["name"] = l,
+            ["kind"] = confirm && i == 1 ? "reject_once" : "allow_once"
+        }).ToArray();
+        var prms = new Dictionary<string, object?>
+        {
+            ["sessionId"] = sid,
+            ["toolCall"] = new Dictionary<string, object?>
+            {
+                ["toolCallId"] = callId ?? "ask_" + Guid.NewGuid().ToString("N")[..8],
+                ["title"] = AcpProtocol.ToolTitle("ask_user", JsonSerializer.Serialize(new { question })),
+                ["kind"] = "other",
+                ["status"] = "pending",
+                ["content"] = new[] { AcpProtocol.TextContent(question) }
+            },
+            ["options"] = options
+        };
+        // A human answers this: no timeout. session/cancel makes the client answer "cancelled".
+        var res = await SendRequestAsync("session/request_permission", prms, Timeout.Infinite);
+        string? picked = res.ValueKind == JsonValueKind.Object && res.TryGetProperty("outcome", out var o)
+            && o.ValueKind == JsonValueKind.Object && StrProp(o, "outcome") == "selected" ? StrProp(o, "optionId") : null;
+        int idx = picked is not null && picked.StartsWith("opt_", StringComparison.Ordinal)
+            && int.TryParse(picked[4..], out var k) && k >= 0 && k < labels.Count ? k : -1;
+        if (idx < 0)
+            return confirm ? "User cancelled the prompt (no yes/no answer given)."
+                : "User cancelled the prompt without choosing (no option selected).";
+        if (confirm) return idx == 0 ? "User confirmed: yes" : "User declined: no";
+        return $"User selected: {labels[idx]}";
+    }
+
     private void StartSession(string sid, AcpResume? resume)
     {
         // One active session per process. A new session/new (e.g. the client's "/new") must
@@ -385,13 +468,12 @@ public sealed class AcpServer
         var reader = new AcpInputReader();
         _reader = reader;
         _sessionId = sid;
+        _titlePending = false;
         _sawFirstReadTick = false;
         _pendingPromptId = null;
         _cancelRequested = false;
         _messageCounter = 0;
-        _toolCounter = 0;
-        while (_pendingToolIds.TryDequeue(out _)) { }   // drop any stale tool ids
-        _lastToolArgs = null;
+        lock (_toolLock) { _toolCounter = 0; _openTools.Clear(); _fifoToolIds.Clear(); }
 
         reader.ReadEntered += OnTurnBoundary;
         MuxConsole.InputOverride = reader;
@@ -407,7 +489,6 @@ public sealed class AcpServer
             finally { if (ReferenceEquals(MuxConsole.InputOverride, reader)) MuxConsole.InputOverride = Console.In; }
         });
 
-        AdvertiseCommands(sid);
     }
 
     /// <summary>
@@ -432,24 +513,94 @@ public sealed class AcpServer
     }
 
     /// <summary>
-    /// Replay a persisted session's messages to the client as session/update notifications
-    /// (user_message_chunk for user turns, agent_message_chunk for assistant turns), per the
-    /// session/load contract. Each message gets its own messageId.
+    /// Replay a persisted session to the client, per the session/load contract: user text as
+    /// user_message_chunk, reasoning as agent_thought_chunk, assistant text as agent_message_chunk,
+    /// and each tool call as a tool_call + finished tool_call_update (completed, or failed for
+    /// error results / calls that never got one), in conversation order.
     /// </summary>
     private void ReplayHistory(string sid, JsonElement data)
     {
-        int n = 0;
-        foreach (var msg in Common.ExtractMessagesFromSession(data))
-        {
-            string txt = msg.Text ?? string.Empty;
-            if (txt.Length == 0) continue;
-            bool isUser = msg.Role == Microsoft.Extensions.AI.ChatRole.User;
-            string mid = (isUser ? "msg_user_" : "msg_agent_") + (++n);
-            object update = isUser
-                ? UserMessageChunk(txt, mid)
-                : AcpProtocol.AgentMessageChunk(txt, mid);
+        foreach (var update in ReplayUpdates(data))
             WriteMessage(AcpProtocol.SessionUpdate(sid, update));
+    }
+
+    /// <summary>The session/update payloads that replay a serialized agent session (pure; testable).</summary>
+    internal static List<object> ReplayUpdates(JsonElement data)
+    {
+        var updates = new List<object>();
+        if (!Common.TryGetSessionMessages(data, out var messages)) return updates;
+        var open = new List<string>();
+        int n = 0;
+        foreach (var msg in messages.EnumerateArray())
+        {
+            string role = msg.TryGetProperty("role", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() ?? "" : "";
+            if (!msg.TryGetProperty("contents", out var contents) || contents.ValueKind != JsonValueKind.Array) continue;
+            string mid = "msg_replay_" + (++n);
+            foreach (var c in contents.EnumerateArray())
+            {
+                string type = c.TryGetProperty("$type", out var ty) && ty.ValueKind == JsonValueKind.String ? ty.GetString() ?? "" : "";
+                switch (type)
+                {
+                    case "text" when role is "user" or "assistant":
+                    {
+                        string text = StripInsight(c.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "");
+                        if (text.Length == 0) break;
+                        updates.Add(role == "user" ? UserMessageChunk(text, mid) : AcpProtocol.AgentMessageChunk(text, mid));
+                        break;
+                    }
+                    case "reasoning" when role == "assistant":
+                    {
+                        string text = c.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "";
+                        if (text.Length > 0) updates.Add(AcpProtocol.AgentThoughtChunk(text, mid));
+                        break;
+                    }
+                    case "functionCall":
+                    {
+                        string callId = c.TryGetProperty("callId", out var ci) ? ci.GetString() ?? "" : "";
+                        string name = c.TryGetProperty("name", out var nm) ? nm.GetString() ?? "tool" : "tool";
+                        string? args = c.TryGetProperty("arguments", out var ar) && ar.ValueKind == JsonValueKind.Object ? ar.GetRawText() : null;
+                        if (callId.Length == 0) break;
+                        updates.Add(AcpProtocol.ToolCallWithLocations(callId, AcpProtocol.ToolTitle(name, args), AcpProtocol.ToolKind(name),
+                            "in_progress", args is null ? null : ar.Clone(), AcpProtocol.Locations(args)));
+                        open.Add(callId);
+                        break;
+                    }
+                    case "functionResult":
+                    {
+                        string callId = c.TryGetProperty("callId", out var ci) ? ci.GetString() ?? "" : "";
+                        if (!open.Remove(callId)) break;   // result for a call that was never announced
+                        string body = StripInsight(c.TryGetProperty("result", out var rv) ? ResultText(rv) : "");
+                        bool failed = ContextPruner.IsErrorText(body);
+                        if (body.Length > 4000) body = body[..4000] + "\n... (truncated)";
+                        updates.Add(AcpProtocol.ToolCallUpdateRich(callId, failed ? "failed" : "completed",
+                            body.Trim().Length == 0 ? null : new[] { AcpProtocol.TextContent(body) }));
+                        break;
+                    }
+                }
+            }
         }
+        foreach (var callId in open)   // interrupted before a result was saved
+            updates.Add(AcpProtocol.ToolCallUpdateRich(callId, "failed", null));
+        return updates;
+    }
+
+    /// <summary>Text of a serialized tool result: a string, the text parts of a content list, or raw JSON.</summary>
+    private static string ResultText(JsonElement result) => result.ValueKind switch
+    {
+        JsonValueKind.String => result.GetString() ?? "",
+        JsonValueKind.Array => string.Join("\n", result.EnumerateArray()
+            .Where(p => p.ValueKind == JsonValueKind.Object && p.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
+            .Select(p => p.GetProperty("text").GetString())),
+        JsonValueKind.Null or JsonValueKind.Undefined => "",
+        _ => result.GetRawText()
+    };
+
+    /// <summary>Drop the runtime's "[mux context: ...]" gauge line (/insight max), which is saved
+    /// with the message but was never typed or seen by the user.</summary>
+    private static string StripInsight(string text)
+    {
+        int i = text.IndexOf("[mux context:", StringComparison.Ordinal);
+        return (i >= 0 ? text[..i] : text).TrimEnd();
     }
 
     private static object UserMessageChunk(string text, string messageId) =>
@@ -478,6 +629,20 @@ public sealed class AcpServer
         _cancelRequested = false;
         _currentMessageId = "msg_" + (++_messageCounter);
 
+        // First prompt of a new session: record its working directory beside the session file
+        // (for session/list) and give the client a title for its thread list.
+        if (_titlePending && !string.IsNullOrWhiteSpace(text))
+        {
+            _titlePending = false;
+            WriteCwdSidecar(Path.Combine(PlatformContext.SessionsDirectory, _sessionId), _sessionCwd);
+            WriteMessage(AcpProtocol.SessionUpdate(_sessionId, new Dictionary<string, object?>
+            {
+                ["sessionUpdate"] = "session_info_update",
+                ["title"] = Title(text),
+                ["updatedAt"] = DateTimeOffset.UtcNow.ToString("o")
+            }));
+        }
+
         // A blank/whitespace prompt would be treated as quit by the orchestrator; substitute a
         // no-op nudge so the turn still produces a clean end_turn.
         _reader.Push(string.IsNullOrWhiteSpace(text) ? "(no input)" : text);
@@ -500,6 +665,7 @@ public sealed class AcpServer
         if (id is null) return;
         _pendingPromptId = null;
 
+        CloseOpenTools();
         EmitUsage();
 
         string stop = _cancelRequested ? AcpProtocol.StopReason.Cancelled : AcpProtocol.StopReason.EndTurn;
@@ -529,43 +695,11 @@ public sealed class AcpServer
                 break;
             }
             case "tool_call":
-            {
-                // Explicit tool_call frame (swarm/parallel paths). Emit a pending->in_progress
-                // ACP tool_call; the matching tool_result completes it.
-                string tool = Str(payload, "tool");
-                string args = Str(payload, "args");
-                string toolId = "call_" + (++_toolCounter);
-                _pendingToolIds.Enqueue(toolId);
-                _lastToolArgs = args;
-                EmitToolCall(sid, toolId, tool, args);
+                OnToolCall(sid, payload);
                 break;
-            }
             case "tool_result":
-            {
-                // The single-agent path emits ONLY a tool_result frame (no preceding tool_call),
-                // carrying {agent, tool, result}. Swarm paths use {agent, summary} after a
-                // tool_call. Synthesize whatever the client has not seen yet so every tool shows
-                // a pending->completed lifecycle.
-                string tool = Str(payload, "tool");
-                string body = payload.TryGetValue("result", out var rv) && rv is string rs && rs.Length > 0
-                    ? rs : Str(payload, "summary");
-                string toolId;
-                if (_pendingToolIds.TryDequeue(out var tid))
-                {
-                    toolId = tid;   // completes a tool_call already announced
-                }
-                else
-                {
-                    // No preceding tool_call (single-agent): announce one first.
-                    toolId = "call_" + (++_toolCounter);
-                    EmitToolCall(sid, toolId, string.IsNullOrEmpty(tool) ? "tool" : tool, _lastToolArgs);
-                }
-                var content = BuildToolContent(tool, _lastToolArgs, body);
-                WriteMessage(AcpProtocol.SessionUpdate(sid,
-                    AcpProtocol.ToolCallUpdateRich(toolId, "completed", content)));
-                _lastToolArgs = null;
+                OnToolResult(sid, payload);
                 break;
-            }
             case "step":
             {
                 // A WriteStep frame is a single plan item becoming the in-progress focus. ACP
@@ -586,36 +720,134 @@ public sealed class AcpServer
         }
     }
 
-    private void EmitToolCall(string sid, string toolId, string tool, string? args)
+    /// <summary>
+    /// A tool was invoked: announce it right away (before it runs) with a readable title,
+    /// rawInput and follow-along locations. Edit/write tools snapshot the target file first so
+    /// the result can carry a real old/new diff.
+    /// </summary>
+    private void OnToolCall(string sid, IReadOnlyDictionary<string, object?> payload)
     {
-        var raw = string.IsNullOrEmpty(args) ? null : new Dictionary<string, object?> { ["args"] = args };
-        var locations = AcpProtocol.Locations(args);
-        WriteMessage(AcpProtocol.SessionUpdate(sid,
-            AcpProtocol.ToolCallWithLocations(toolId, tool, AcpProtocol.ToolKind(tool), "in_progress", raw, locations)));
+        string tool = Str(payload, "tool");
+        string args = Str(payload, "args");
+        string callId = Str(payload, "callId");
+        string kind = AcpProtocol.ToolKind(tool);
+        string? path = AcpProtocol.ExtractAbsolutePath(args);
+        string? oldText = null;
+        bool snapshot = false;
+        if (kind == "edit" && path is not null)
+            snapshot = TrySnapshot(path, out oldText);
+
+        string acpId;
+        lock (_toolLock)
+        {
+            acpId = callId.Length > 0 && !_openTools.ContainsKey(callId) ? callId : "call_" + (++_toolCounter);
+            _openTools[acpId] = new OpenTool(acpId, tool, args, path, oldText, snapshot);
+            if (callId.Length == 0) _fifoToolIds.Enqueue(acpId);
+        }
+        EmitToolCall(sid, acpId, tool, args, "in_progress");
     }
 
     /// <summary>
-    /// Build the completed tool_call_update content. Edit-tool results that contain a git-style
-    /// unified diff are surfaced as an ACP diff block (path from the tool args); everything else
-    /// becomes a text block. Empty bodies yield no content.
+    /// A tool finished: complete its card (failed when the result is an error). A result with no
+    /// announced call (older event shapes) announces one first, so the client never sees an
+    /// update for an unknown id.
     /// </summary>
-    private object[]? BuildToolContent(string tool, string? args, string body)
+    private void OnToolResult(string sid, IReadOnlyDictionary<string, object?> payload)
     {
-        if (string.IsNullOrWhiteSpace(body)) return null;
-        string kind = AcpProtocol.ToolKind(tool);
-        string? path = AcpProtocol.ExtractAbsolutePath(args);
-        if (kind == "edit" && path is not null && LooksLikeDiff(body))
+        string tool = Str(payload, "tool");
+        string callId = Str(payload, "callId");
+        string body = payload.TryGetValue("result", out var rv) && rv is string rs && rs.Length > 0
+            ? rs : Str(payload, "summary");
+        bool isError = payload.TryGetValue("isError", out var ev) && ev is true;
+
+        OpenTool? open = null;
+        bool announced = true;
+        lock (_toolLock)
         {
-            // Surface the unified diff as both a diff block (rich UI) and the raw text.
-            return new[] { AcpProtocol.DiffContent(path, null, body) };
+            if (callId.Length > 0 && _openTools.Remove(callId, out var byId)) open = byId;
+            else
+            {
+                while (open is null && _fifoToolIds.TryDequeue(out var fid))
+                    if (_openTools.Remove(fid, out var byFifo)) open = byFifo;
+            }
+            if (open is null)
+            {
+                announced = false;
+                string acpId = callId.Length > 0 ? callId : "call_" + (++_toolCounter);
+                open = new OpenTool(acpId, string.IsNullOrEmpty(tool) ? "tool" : tool, null, null, null, false);
+            }
         }
+        if (!announced)
+            EmitToolCall(sid, open.AcpId, open.Tool, null, "in_progress");
+
+        var content = BuildToolContent(open, body, isError);
+        WriteMessage(AcpProtocol.SessionUpdate(sid,
+            AcpProtocol.ToolCallUpdateRich(open.AcpId, isError ? "failed" : "completed", content)));
+    }
+
+    /// <summary>Finish every still-open call as failed (turn ended or was cancelled before its
+    /// result arrived). Must run before the session/prompt response.</summary>
+    private void CloseOpenTools()
+    {
+        string? sid = _sessionId;
+        List<OpenTool> open;
+        lock (_toolLock)
+        {
+            open = _openTools.Values.ToList();
+            _openTools.Clear();
+            _fifoToolIds.Clear();
+        }
+        if (sid is null) return;
+        foreach (var t in open)
+            WriteMessage(AcpProtocol.SessionUpdate(sid, AcpProtocol.ToolCallUpdateRich(t.AcpId, "failed", null)));
+    }
+
+    private void EmitToolCall(string sid, string toolId, string tool, string? args, string status)
+    {
+        object? raw = null;
+        if (!string.IsNullOrWhiteSpace(args))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(args);
+                raw = doc.RootElement.Clone();
+            }
+            catch (JsonException) { raw = new Dictionary<string, object?> { ["args"] = args }; }
+        }
+        WriteMessage(AcpProtocol.SessionUpdate(sid,
+            AcpProtocol.ToolCallWithLocations(toolId, AcpProtocol.ToolTitle(tool, args), AcpProtocol.ToolKind(tool),
+                status, raw, AcpProtocol.Locations(args))));
+    }
+
+    /// <summary>Read a file's current text for a diff card. Missing file = new file (true, null).</summary>
+    private static bool TrySnapshot(string path, out string? text)
+    {
+        text = null;
+        try
+        {
+            var fi = new FileInfo(path);
+            if (!fi.Exists) return true;
+            if (fi.Length > MaxDiffBytes) return false;
+            text = File.ReadAllText(path);
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+
+    /// <summary>
+    /// Build the finished tool_call_update content. A successful edit/write with a snapshot
+    /// becomes an ACP diff block {path, oldText, newText} read from disk; everything else is a
+    /// text block (truncated at 4000 chars). Empty bodies yield no content.
+    /// </summary>
+    private static object[]? BuildToolContent(OpenTool t, string body, bool isError)
+    {
+        if (!isError && t.Snapshot && t.Path is not null && TrySnapshot(t.Path, out var newText) && newText is not null
+            && !string.Equals(newText, t.OldText, StringComparison.Ordinal))
+            return new[] { AcpProtocol.DiffContent(t.Path, t.OldText, newText) };
+        if (string.IsNullOrWhiteSpace(body)) return null;
         string text = body.Length > 4000 ? body[..4000] + "\n... (truncated)" : body;
         return new[] { AcpProtocol.TextContent(text) };
     }
-
-    private static bool LooksLikeDiff(string s) =>
-        s.Contains("@@") || s.Contains("--- ") || s.Contains("+++ ") ||
-        (s.Contains("\n+") && s.Contains("\n-"));
 
     private void EmitUsage()
     {
@@ -662,10 +894,100 @@ public sealed class AcpServer
     private static object? ExtractId(JsonElement idEl) => idEl.ValueKind switch
     {
         JsonValueKind.String => idEl.GetString(),
-        JsonValueKind.Number => idEl.TryGetInt64(out var l) ? l : idEl.GetDouble(),
+        // Explicit (object) casts: a bare `? l : d` is typed double, which boxed every numeric id
+        // as a double and broke matching responses to our own requests by long id.
+        JsonValueKind.Number => idEl.TryGetInt64(out var l) ? (object)l : idEl.GetDouble(),
         _ => null
     };
 
-    /// <summary>Resume payload for session/load: the persisted session JSON + its directory.</summary>
-    public readonly record struct AcpResume(System.Text.Json.JsonElement Data, string Dir);
+    /// <summary>Session payload for the loop: the persisted session JSON (null for a new
+    /// session) + the Sessions directory it persists to.</summary>
+    public readonly record struct AcpResume(System.Text.Json.JsonElement? Data, string Dir);
+
+    // ----- session/list ------------------------------------------------------------------
+
+    /// <summary>Sidecar beside a session's *_session.json holding the client cwd (not *.json, so
+    /// session readers and the lead-session detector ignore it).</summary>
+    internal const string CwdFileName = "acp.muxcwd";
+    private const int ListPageSize = 50;
+
+    /// <summary>A new session id: the Sessions folder-name timestamp, suffixed if that folder exists.</summary>
+    private string NewSessionId()
+    {
+        string baseId = DateTime.Now.ToString("yyyy-MM-dd_HH-mm-ss");
+        string sid = baseId;
+        for (int n = 2; Directory.Exists(Path.Combine(PlatformContext.SessionsDirectory, sid)) || sid == _sessionId; n++)
+            sid = $"{baseId}-{n}";
+        return sid;
+    }
+
+    private static void WriteCwdSidecar(string sessionDir, string? cwd)
+    {
+        if (string.IsNullOrWhiteSpace(cwd) || !Path.IsPathFullyQualified(cwd)) return;
+        try
+        {
+            Directory.CreateDirectory(sessionDir);
+            File.WriteAllText(Path.Combine(sessionDir, CwdFileName), cwd);
+        }
+        catch (Exception ex) { Log($"cwd sidecar: {ex.Message}"); }
+    }
+
+    /// <summary>One-line thread title from a first prompt (whitespace collapsed, at most 80 chars).</summary>
+    internal static string Title(string text)
+    {
+        string t = System.Text.RegularExpressions.Regex.Replace(text, @"\s+", " ").Trim();
+        return t.Length > 80 ? t[..77] + "..." : t;
+    }
+
+    /// <summary>
+    /// session/list result: lead-agent sessions with a saved file, newest first, paged by an
+    /// opaque offset cursor. Each row: sessionId (folder name), absolute cwd, title (tag, else
+    /// first user message), updatedAt (RFC 3339, session file write time). Sessions without a
+    /// recorded cwd (started outside ACP) report <paramref name="cwdFilter"/> or
+    /// <paramref name="fallbackCwd"/>, so they show in every project; recorded ones are filtered.
+    /// </summary>
+    internal static object ListSessions(string sessionsDir, string? cwdFilter, string? cursor, string fallbackCwd)
+    {
+        var rows = new List<(string Id, string Cwd, string? Title, DateTime Updated)>();
+        if (Directory.Exists(sessionsDir))
+        {
+            foreach (var d in Directory.GetDirectories(sessionsDir))
+            {
+                var files = Directory.GetFiles(d, "*.json");
+                var file = files.FirstOrDefault(f => f.EndsWith("_session.json", StringComparison.OrdinalIgnoreCase));
+                if (files.Length > 2 || file is null) continue;   // swarm sessions / not saved yet
+                string? recorded = null;
+                try { recorded = File.ReadAllText(Path.Combine(d, CwdFileName)).Trim(); } catch { /* none */ }
+                if (!string.IsNullOrEmpty(recorded) && cwdFilter is not null && !SamePath(recorded, cwdFilter)) continue;
+                string cwd = !string.IsNullOrEmpty(recorded) ? recorded : cwdFilter ?? fallbackCwd;
+                string? title = SessionTags.TagLabel(d);
+                if (string.IsNullOrEmpty(title))
+                {
+                    string first = Common.GetFirstUserMessage(file, int.MaxValue);
+                    title = first == "No preview" ? null : Title(first);
+                }
+                rows.Add((Path.GetFileName(d), cwd, title, File.GetLastWriteTimeUtc(file)));
+            }
+        }
+        rows.Sort((a, b) => b.Updated.CompareTo(a.Updated));
+        int start = int.TryParse(cursor, out var c) && c > 0 ? c : 0;
+        var page = rows.Skip(start).Take(ListPageSize).Select(r => new Dictionary<string, object?>
+        {
+            ["sessionId"] = r.Id,
+            ["cwd"] = r.Cwd,
+            ["title"] = r.Title,
+            ["updatedAt"] = new DateTimeOffset(r.Updated, TimeSpan.Zero).ToString("o")
+        }).ToArray();
+        var result = new Dictionary<string, object?> { ["sessions"] = page };
+        if (start + ListPageSize < rows.Count) result["nextCursor"] = (start + ListPageSize).ToString();
+        return result;
+    }
+
+    private static bool SamePath(string a, string b) =>
+        string.Equals(Path.TrimEndingDirectorySeparator(a), Path.TrimEndingDirectorySeparator(b),
+            OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+
+    private static string? StrProp(JsonElement e, string key) =>
+        e.ValueKind == JsonValueKind.Object && e.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String
+            ? v.GetString() : null;
 }

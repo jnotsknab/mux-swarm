@@ -878,7 +878,7 @@ Flags can be combined. Common stacks:
 ```
 /resume         Resume a previous single-agent session (inside a session it switches straight away;
                 set console.confirmResume true to be asked first)
-/sessions       List saved sessions with type + agent count
+/sessions       Alias of /history (classic/stdio: saved sessions with type + agent count)
 /history        Browse past sessions full-screen (fuzzy find, open, scroll, search)
 /attach [id]    Re-enter a session parked via /detach (no id = pick from list)
 /background, /bg  Manage detached background jobs (alias of the old /detach job command)
@@ -938,6 +938,9 @@ Flags can be combined. Common stacks:
 /classic, /tui  Switch renderer (classic line-by-line / live full-screen TUI)
 /mouse [preset] Mouse preset for the frame engine (off | wheel | buttons; default buttons)
 /telemetry [p|off]  Start/stop the standalone telemetry dashboard (default port 6725)
+/logs              Recent notices (incl. the quiet startup lines: provider, skills, telemetry...) and runtime log
+                   lines in a panel. Startup prints only warnings/errors; MUXSWARM_VERBOSE=1 prints everything.
+                   The hooks confirm ("Proceed with hooks enabled?") is asked once the TUI is up.
 /daemonview, /dv  Toggle collapsed/expanded daemon-fired goal output
 /delimiter      Toggle the multi-line input delimiter
 /help           Full command reference
@@ -1187,6 +1190,11 @@ Real `$` comes from `ModelPricing.cs` (list-price estimate, input+output) for pr
 subscription/cliproxy providers render tokens-only (flat-rate, no `$`). System-prompt and tool-schema
 rows are the one-time static estimates already shown in the footer breakdown.
 
+Token figures are SUMS of per-call usage: each model call reports its own usage, and Mux adds them
+(session + rolling, `/cost`, the `Telemetry/metrics-*.jsonl` `kind=usage` lines - one line per model
+call - and the OTel `mux.tokens.*` counters). `input` includes cached prompt tokens. `/cost`'s
+`context now` is the size of the latest request, not a sum.
+
 ## Task auto-decomposition - `task_decompose` + `/taskgraph`
 
 `task_decompose(goal)` is a lead/giga tool (and an opt-in background dispatcher) that turns a high-
@@ -1365,8 +1373,67 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
     `checked` (`◉`), `checkedFg`, `unchecked` (`○`).
   - `panel` (rules under picker and panel headers, docked panel tabs): `rule`, `ruleFg`, `tabFg`, `tabActiveFg`,
     `focusFg` / `focusBg` (the focused tab).
+  - `block` (titled command-output blocks, e.g. /status, /cost, /daemon): `rail` (`│`), `railFg`, `titleFg`.
+    Output longer than 12 rows (or the screen) opens in a scrollable full-screen panel (`panel.*` chrome;
+    j/k, PgUp/PgDn, `/` search, Esc/q close) and leaves a one-line note in the transcript.
   - `splash`: `show` (false = one version line instead of the banner card), `art` (1-12 lines, at most 80 cells each,
     replacing the MUX/SWARM art), `artFg`, `accentFg` (the built-in robot).
+  **Layout (shape) keys.** These change the shape of the live band, not just its colours:
+  - `compose.shape`: `classic` (default: rule, footer, rule, `›` input), `rule` (one rule, input under it), `bracket`
+    (rules above and below the input), `box` (a frame around the input), `bubble` (a filled field with round end
+    caps), `rail` (a filled field with one coloured left rail), `bare` (just the prompt). With a shape, the stock
+    footer and input rules are not drawn; the shape draws its own chrome.
+  - `compose.border` (`box`): `rounded` (default), `square`, `double`, `thick`, `ascii`. `compose.padX` 0-3 (default
+    1), `compose.padY` 0-1, `compose.gap` 0-2 blank rows above the footer and compose block. Colours/glyphs:
+    `compose.borderFg`, `compose.rule`, `compose.fill` (bubble/rail), `compose.capLeft`/`capRight`, `compose.rail`,
+    `compose.railFg`.
+  - `footer.position`: `above` (default), `below` the input, `hidden`, or `border`: inside the top edge of a `box`,
+    `rule` or `bracket` shape (`╭─ ultra · 45% ──── model ─╮`); other shapes fall back to `above`.
+  - `footer.style`: `dot` (default), `pipe`, `space`, `powerline` (needs a Nerd/powerline font), `ascii`.
+    `footer.strip: true` fills the row with `footer.bg`; `footer.fill: rule` draws a line between the left and right
+    groups. Split the footer into groups with `||` in `footer.template`: `"{mode} {context} || {model} {effort}"`
+    puts model and effort at the right edge (a single `|` stays plain text). Clickable chips follow their text.
+  - `header.template`: the session card text with `{agent}`, `{model}`, `{provider}`, `{tools}`; `header.frame:
+    box` draws a rounded card around it.
+  - `splash.frame`: `rounded` (default), `square`, `double`, `thick`, `ascii`, `none`; `splash.borderFg`;
+    `splash.padY` 0-2 (default 1); `splash.align`: `left` (default) or `center` (the panel hugs its content and
+    is centered); `splash.columns`: `all` (logo, getting-started, recent; default), `logo`, `logo,recent`,
+    `logo,getting-started`, `getting-started,logo`, `recent,logo` (choose and order the wide-screen columns;
+    a single column keeps the compact one-panel look at any width).
+  - `splash.layout` (replaces the stock arrangement and `splash.columns`): 1-8 row strings; a row holds 1-3 cells
+    split by `|`, a cell is a stack of section names split by spaces. Sections: `logo` (the stock art + version +
+    message + link block), `art`, `title` (`splash.title`, default `MUX-SWARM`, in `splash.titleFg`), `version`,
+    `message` (the random quote/tip), `hint` (`/agent to start ...`), `link`, `getting-started`, `commands`, `tips`,
+    `recent`, `text` (`splash.text`: 1-12 theme lines in `splash.textFg`), `gap` (a blank row). Cells in a row share
+    the width (art keeps its width, text cells take the rest); a row too wide for the terminal stacks its cells.
+    `splash.divider` `rule` (default; lines between rows and cells) or `gap`. `splash.width` 1-100 = panel width in
+    percent of the terminal (0 = default: full width, or hug the content when centered). `splash.contentAlign`
+    `left`/`center` centers each section in its cell. `splash.borderTitle` puts text in the top border
+    (`╭─ mux 0.16.0 ───╮`). `{version}` and `{cwd}` work in `title`, `borderTitle` and `text`.
+  - Section styles (any layout, including the stock one): `splash.headings` `plain` (default) / `rule` (`── Title ──`)
+    / `strip` (filled with `splash.headingBg`) / `none`, in `splash.headingFg`; `splash.bullet` (one cell, e.g. `•`)
+    leads list rows, in `splash.bulletFg`; `splash.recentCount` 0-10 (default 5; 0 hides recent sessions).
+    Example, a two-row grid:
+    ```jsonc
+    "splash": { "layout": ["art | title version message", "commands | recent"], "width": 90, "align": "center",
+                "headings": "rule", "bullet": "›", "borderTitle": "mux {version}" }
+    ```
+  - Full-screen views (`/extensions`, the model/settings/agent/theme pickers, history, extension panels opened
+    full screen): `panel.header` `plain` (default) / `strip` (filled with `panel.headerBg`) / `rule` (title set in a
+    `panel.rule` run), `panel.headerAlign` `left`/`center`; `panel.selectedStyle` `chevron` (default) / `bar`
+    (`panel.bar`) / `fill` (`panel.selectedBg` behind the row); `panel.hints` `plain`/`strip` (`panel.hintBg`);
+    `panel.frame` `none` (default) / `rounded` / `square` / `double` / `thick` / `ascii` (`panel.frameFg`) draws a box
+    around the whole view (skipped below 24x8). Clicks keep working in every style.
+  - `toolCard.style`: `bullet` (default), `gutter` (one prefix glyph per tool line, `toolCard.gutter`, default `┊`)
+    or `box` (side rails `toolCard.boxLeft`/`boxRight`).
+  Example, an editor-style box with the status line in its border:
+  ```jsonc
+  "footer": { "template": "{mode} {context} || {model} {effort}" },
+  "tui": { "regions": {
+    "compose": { "shape": "box", "border": "rounded", "padX": 1 },
+    "footer":  { "position": "border", "style": "pipe" }
+  } }
+  ```
   `"glyphs": "ascii"` (next to `regions`) swaps every built-in glyph for plain ASCII (`+ * > | - #`) for terminals or
   fonts without box drawing; region keys still override single glyphs on top. Default `unicode`.
   Your own `console.tui` in config.json (same schema, see TUI color themes) wins over every extension.
@@ -1721,6 +1788,7 @@ or a JSON-RPC `error`). Requests are answered while a command, tool or event is 
 | `ui/close` | `{ id }` | `{ closed }`: closes panel `id` |
 | `prompt/submit` | `{ text }` | `{ queued: true }`: sent to the agent as the next user turn |
 | `command/run` | `{ line }` | `{ queued: true }`: runs a slash command as if typed |
+| `status/set` | `{ key, text? }` | `{ changed }`: keyed status text in the footer (chip `<name>.<key>`; empty text removes it). Same as the `footer/set` notification, with an answer |
 
 - `surface` is `tui`, `classic`, `web` (`--serve`), `stdio` or `acp`. `mode` is the running mode
   (`agent`, `swarm`, `pswarm`, `interactive` at the menu, ...).
@@ -2012,14 +2080,21 @@ agent model to a real id (e.g. `claude-opus-4-6`, `gpt-5-codex`), and chat.
 stdout is pure protocol, logs go to stderr). This lets ACP-capable editors/clients (Zed,
 GitHub Copilot CLI agent panel, the Intelligent Terminal) drive a Mux single-agent session.
 
-- Supports: `initialize`, `session/new`, `session/load` (transcript replay -> context
-  resume), `session/prompt` (text + resource_link + embedded text), `session/cancel`,
+- Supports: `initialize`, `session/new`, `session/list` (thread history: id = Sessions
+  folder name, absolute cwd from an `acp.muxcwd` sidecar, title, updatedAt), `session/load` (full replay incl. reasoning + tool calls ->
+  context resume), `session/prompt` (text + resource_link + embedded text), `session/cancel`,
   `session/set_mode`, `session/resume`, model selection (both the canonical
   `configOptions` and the Zed `models` / `session/set_model` mechanisms), `logout`.
 - Streams: `agent_message_chunk`, `agent_thought_chunk` (reasoning), `tool_call` +
-  `tool_call_update` (with diffs + locations), `plan`, `usage_update`; stop reasons
-  `end_turn` / `cancelled`.
-- Filesystem + terminal execution and permission prompting deliberately stay inside Mux's
+  `tool_call_update`, `plan`, `usage_update`; stop reasons `end_turn` / `cancelled`.
+  Tool calls are announced when invoked (readable title, `rawInput`, `locations`), keyed by
+  the provider call id, finished `completed`/`failed`; edits carry a real old/new `diff`;
+  calls left open at turn end or cancel are closed as `failed` before the prompt response.
+- Stdio NDJSON: the single-agent `tool_call` event carries `callId` + `args` (JSON string)
+  and `tool_result` carries `callId` + `isError` (additive fields).
+- `ask_user` under ACP: confirm/select/multi_select -> `session/request_permission` on the
+  same tool call; free-text asks tell the model to ask in its reply (never reads stdin).
+- Filesystem + terminal execution and tool permission gating deliberately stay inside Mux's
   own tool layer (not rerouted through the ACP client) - this is spec-compliant (those
   client capabilities are optional).
 

@@ -1443,7 +1443,7 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
                 // read clearly without a heavy bordered panel. The expanded red panel is reserved
                 // for /verbose (ToolOutputCompact == false). Diffs always render as their own card.
                 if (IsDiffTool(tool) && LooksLikeDiff(text)) { _driver!.CommitDiffCollapsible(tool, text); }
-                else if (ToolOutputCompact) { _driver!.ResolveMergedToolResult(text, error: err, expandBody: expandBody); }
+                else if (ToolOutputCompact) { _driver!.ResolveMergedToolResult(text, error: err, expandBody: expandBody, toolName: tool); }
                 else { _driver!.FlushPendingToolCall(); _driver!.Commit(TuiComponents.ToolResultPanel(tool, expandBody ?? text, err, width, swarm ? 500 : 2000)); }
             }
             return;
@@ -1614,6 +1614,15 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
         WithConsole(() =>
         {
             var f = (filter ?? "").TrimStart('/').Trim().ToLowerInvariant();
+            if (ViaDriver)
+            {
+                // Under the driver: the same command list as a themed panel/block, never a raw Spectre table.
+                var match = ReplPaletteEntries.Where(e => f.Length == 0 || e.Cmd.ToLowerInvariant().Contains(f) || e.Desc.ToLowerInvariant().Contains(f)).ToList();
+                int w = match.Count == 0 ? 0 : match.Max(e => e.Cmd.Length);
+                var rows = match.Count == 0 ? new List<string> { $"[{TC.Dim}]no commands match '{Esc(f)}'[/]" }
+                    : match.Select(e => $"[{TC.Accent}]{Esc(e.Cmd.PadRight(w))}[/]  [{TC.Text}]{Esc(e.Desc)}[/]").ToList();
+                if (TryLongPanel("Commands", rows) || TuiCommitBlock(BlockTitle("Commands"), rows)) return;
+            }
             var table = new Table()
                 .Border(TableBorder.Rounded)
                 .BorderStyle(new Style(HexColor(TC.Border)))

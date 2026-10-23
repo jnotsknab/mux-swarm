@@ -184,7 +184,8 @@ public class InsightGaugeTests
         string app = File.ReadAllText(Path.Combine(RepoRoot(), "App.cs"));
         var plain = System.Text.RegularExpressions.Regex.Matches(app, @"ChatAgentAsync\(\s*client:\s*CreateChatClient\((\w+)\)");
         Assert.All(plain, m => Assert.StartsWith("helperModel", m.Groups[1].Value));   // /newagent,/createhook helpers only
-        Assert.True(System.Text.RegularExpressions.Regex.Matches(app, @"client:\s*CreateLeadChatClient\(").Count >= 5);
+        // /agent and /resume use CreateAgentLeadClient (steer + reflection + insight); the other leads CreateLeadChatClient.
+        Assert.True(System.Text.RegularExpressions.Regex.Matches(app, @"client:\s*Create(Lead|AgentLead)C\w*\(").Count >= 6);
     }
 
     private static string RepoRoot()

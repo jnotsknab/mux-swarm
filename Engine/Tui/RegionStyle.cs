@@ -13,16 +13,19 @@ namespace MuxSwarm.Engine.Tui;
 internal static class RegionStyle
 {
     /// <summary>What a property holds: a colour, a glyph of bounded terminal width, or an on/off flag.</summary>
-    internal enum Kind { Color, Glyph, Flag, Lines }
+    internal enum Kind { Color, Glyph, Flag, Lines, Choice, Number, Layout }
 
-    /// <summary>One styleable property: its kind, built-in value and (glyphs) allowed width in cells.</summary>
-    internal sealed record Prop(Kind Kind, string Default, int MinCells = 1, int MaxCells = 1);
+    /// <summary>One styleable property: its kind, built-in value, (glyphs) allowed width in cells or (numbers)
+    /// allowed range, and (choices) the allowed values.</summary>
+    internal sealed record Prop(Kind Kind, string Default, int MinCells = 1, int MaxCells = 1, string[]? Choices = null);
 
     private static Prop C(string d) => new(Kind.Color, d);
     private static Prop G(string d, int max = 1) => new(Kind.Glyph, d, 1, max);
     private static Prop T(string d, int min, int max) => new(Kind.Glyph, d, min, max);   // free text of bounded width
     private static Prop F(bool d) => new(Kind.Flag, d ? "true" : "false");
     private static Prop A() => new(Kind.Lines, "", 0, 80);   // 1-12 text lines, each at most 80 cells; "" = built-in
+    private static Prop O(params string[] choices) => new(Kind.Choice, choices[0], Choices: choices);   // first = default
+    private static Prop N(int d, int min, int max) => new(Kind.Number, d.ToString(System.Globalization.CultureInfo.InvariantCulture), min, max);
 
     /// <summary>Every styleable property, keyed <c>region.name</c> (case-insensitive).</summary>
     internal static readonly IReadOnlyDictionary<string, Prop> Props = new Dictionary<string, Prop>(StringComparer.OrdinalIgnoreCase)
@@ -30,6 +33,7 @@ internal static class RegionStyle
         ["notice.okMark"] = G("\u2713", 2), ["notice.warnMark"] = G("!", 2), ["notice.errorMark"] = G("x", 2),
         ["notice.ok"] = C("success"), ["notice.warn"] = C("warning"), ["notice.error"] = C("error"), ["notice.info"] = C("info"),
         ["header.mark"] = G("\u2503", 2), ["header.accent"] = C("accent"), ["header.show"] = F(true),
+        ["header.template"] = T("", 0, 80), ["header.frame"] = O("none", "box"),
         ["userMessage.bar"] = G("\u258e"), ["userMessage.barFg"] = C("accent"), ["userMessage.fg"] = C("text"),
         ["agentHeader.mark"] = G("\u25b8", 2), ["agentHeader.rule"] = G("\u2500"), ["agentHeader.fg"] = C("agent"), ["agentHeader.ruleFg"] = C("#3A3A3A"),
         ["answer.lead"] = G("\u25cf"), ["answer.leadFg"] = C("muted"),
@@ -39,6 +43,8 @@ internal static class RegionStyle
         ["scrollbar.thumb"] = G("\u2588"), ["scrollbar.track"] = G("\u2502"), ["scrollbar.thumbFg"] = C("accent"), ["scrollbar.trackFg"] = C("muted"),
         ["toolCard.dot"] = G("\u25cf"), ["toolCard.ok"] = G("\u2713"), ["toolCard.error"] = G("\u2717"), ["toolCard.result"] = G("\u23bf"),
         ["toolCard.rail"] = G("\u2502"), ["toolCard.pendingFg"] = C("warning"), ["toolCard.okFg"] = C("success"), ["toolCard.errorFg"] = C("error"),
+        ["toolCard.style"] = O("bullet", "gutter", "box"), ["toolCard.gutter"] = G("\u250a"),
+        ["toolCard.boxLeft"] = G("\u2595"), ["toolCard.boxRight"] = G("\u258f"),
         ["toolCard.labelFg"] = C("accent"), ["toolCard.railFg"] = C("#3A3A3A"), ["toolCard.bg"] = C("cardBg"),
         ["diff.rail"] = G("\u2502"), ["diff.railFg"] = C("#3A3A3A"), ["diff.addFg"] = C("success"), ["diff.delFg"] = C("error"), ["diff.ctxFg"] = C("#A0A0A0"),
         ["diff.addBg"] = C("diffAddBg"), ["diff.delBg"] = C("diffDelBg"), ["diff.hunkBg"] = C("diffHunkBg"), ["diff.gutterFg"] = C("#5A6675"),
@@ -56,7 +62,31 @@ internal static class RegionStyle
         ["modal.checked"] = G("\u25c9"), ["modal.checkedFg"] = C("success"), ["modal.unchecked"] = G("\u25cb"),
         ["panel.rule"] = G("\u2500"), ["panel.ruleFg"] = C("#3A3A3A"), ["panel.tabFg"] = C("muted"), ["panel.tabActiveFg"] = C("accent"),
         ["panel.focusFg"] = C("black"), ["panel.focusBg"] = C("accent"),
+        ["panel.header"] = O("plain", "strip", "rule"), ["panel.headerAlign"] = O("left", "center"), ["panel.headerBg"] = C("cardBg"),
+        ["panel.selectedStyle"] = O("chevron", "bar", "fill"), ["panel.bar"] = G("\u258c"), ["panel.selectedBg"] = C("cardBg"),
+        ["panel.hints"] = O("plain", "strip"), ["panel.hintBg"] = C("cardBg"),
+        ["panel.frame"] = O("none", "rounded", "square", "double", "thick", "ascii"), ["panel.frameFg"] = C("border"),
+        ["block.rail"] = G("\u2502"), ["block.railFg"] = C("step"), ["block.titleFg"] = C("step"),
         ["splash.show"] = F(true), ["splash.art"] = A(), ["splash.artFg"] = C("banner"), ["splash.accentFg"] = C("success"),
+        ["splash.frame"] = O("rounded", "square", "double", "thick", "ascii", "none"), ["splash.borderFg"] = C("muted"),
+        ["splash.align"] = O("left", "center"), ["splash.padY"] = N(1, 0, 2),
+        ["splash.columns"] = O("all", "logo", "logo,recent", "logo,getting-started", "getting-started,logo", "recent,logo"),
+        ["splash.layout"] = new(Kind.Layout, ""), ["splash.width"] = N(0, 0, 100), ["splash.contentAlign"] = O("left", "center"),
+        ["splash.divider"] = O("rule", "gap"), ["splash.title"] = T("", 0, 60), ["splash.titleFg"] = C("banner"),
+        ["splash.borderTitle"] = T("", 0, 60), ["splash.text"] = A(), ["splash.textFg"] = C("muted"), ["splash.recentCount"] = N(5, 0, 10),
+        ["splash.headings"] = O("plain", "rule", "strip", "none"), ["splash.headingFg"] = C("step"), ["splash.headingBg"] = C("cardBg"),
+        ["splash.bullet"] = T("", 0, 1), ["splash.bulletFg"] = C("muted"),
+        // Layout (shape) properties: where the footer sits relative to the compose box, and blank rows above them.
+        ["footer.position"] = O("above", "below", "hidden", "border"),
+        ["footer.style"] = O("dot", "pipe", "space", "powerline", "ascii"),
+        ["footer.strip"] = F(false), ["footer.bg"] = C("cardBg"), ["footer.fill"] = O("space", "rule"),
+        ["compose.gap"] = N(0, 0, 2),
+        ["compose.shape"] = O("classic", "rule", "bracket", "box", "bubble", "rail", "bare"),
+        ["compose.border"] = O("rounded", "square", "double", "thick", "ascii"),
+        ["compose.padX"] = N(1, 0, 3), ["compose.padY"] = N(0, 0, 1),
+        ["compose.borderFg"] = C("border"), ["compose.rule"] = G("─"),
+        ["compose.fill"] = C("inputBg"), ["compose.capLeft"] = G("▐"), ["compose.capRight"] = G("▌"),
+        ["compose.rail"] = G("▎"), ["compose.railFg"] = C("accent"),
     };
 
     /// <summary>The <c>glyphs: "ascii"</c> set: plain-ASCII replacements for every built-in glyph, for terminals
@@ -70,8 +100,12 @@ internal static class RegionStyle
         ["delegation.arrow"] = ">", ["delegation.branch"] = "`", ["delegation.mark"] = ">", ["delegation.done"] = "+", ["delegation.failed"] = "x",
         ["footer.separator"] = "|", ["footer.rule"] = "-", ["input.prompt"] = ">", ["input.continuation"] = "|", ["input.rail"] = "|",
         ["palette.selected"] = ">", ["palette.titleMark"] = "|", ["palette.up"] = "^", ["palette.down"] = "v",
-        ["modal.title"] = ">", ["modal.selected"] = ">", ["modal.checked"] = "*", ["modal.unchecked"] = "o", ["panel.rule"] = "-",
+        ["modal.title"] = ">", ["modal.selected"] = ">", ["modal.checked"] = "*", ["modal.unchecked"] = "o", ["panel.rule"] = "-", ["panel.bar"] = "|", ["block.rail"] = "|",
     };
+
+    /// <summary>Section names a <c>splash.layout</c> row may place (see the splash docs in DOCS.md).</summary>
+    internal static readonly string[] SplashSections =
+        ["logo", "art", "title", "version", "message", "hint", "link", "getting-started", "commands", "tips", "recent", "text", "gap"];
 
     /// <summary>Glyph set names for <c>tui.glyphs</c>.</summary>
     internal static readonly IReadOnlyList<string> GlyphSets = ["unicode", "ascii"];
@@ -132,6 +166,12 @@ internal static class RegionStyle
     /// <summary>The flag value for <paramref name="key"/>.</summary>
     internal static bool Flag(string key) => Raw(key) == "true";
 
+    /// <summary>The chosen value for a choice property (one of its <see cref="Prop.Choices"/>, lower case).</summary>
+    internal static string Choice(string key) => Raw(key);
+
+    /// <summary>The value of a number property.</summary>
+    internal static int Number(string key) => int.Parse(Raw(key), System.Globalization.CultureInfo.InvariantCulture);
+
     /// <summary>The text lines for <paramref name="key"/> (plain, unescaped); empty = use the built-in content.</summary>
     internal static string[] Lines(string key) => Raw(key) is { Length: > 0 } v ? v.Split('\n') : [];
 
@@ -174,6 +214,18 @@ internal static class RegionStyle
                     return $"'{key}' lines must be at most {prop.MaxCells} terminal cells without control characters";
                 normalized = string.Join('\n', lines);
                 return null;
+            case Kind.Layout:
+                return ValidateLayout(key, value, out normalized);
+            case Kind.Choice:
+                var choice = value.ValueKind == JsonValueKind.String ? value.GetString()!.Trim().ToLowerInvariant() : "";
+                if (!prop.Choices!.Contains(choice)) return $"'{key}' must be one of {string.Join(", ", prop.Choices!)}";
+                normalized = choice;
+                return null;
+            case Kind.Number:
+                if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out int n) || n < prop.MinCells || n > prop.MaxCells)
+                    return $"'{key}' must be a whole number from {prop.MinCells} to {prop.MaxCells}";
+                normalized = n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+                return null;
             case Kind.Color:
                 var c = value.ValueKind == JsonValueKind.String ? value.GetString()!.Trim() : "";
                 if (Roles.ContainsKey(c)) { normalized = char.ToLowerInvariant(c[0]) + c[1..]; return null; }
@@ -190,5 +242,33 @@ internal static class RegionStyle
                 normalized = g;
                 return null;
         }
+    }
+
+    // splash.layout: 1-8 row strings; a row holds 1-3 cells split by '|', a cell 1-8 section names split by
+    // spaces or '+'. Normalized to "a b | c" rows joined by newlines.
+    private static string? ValidateLayout(string key, JsonElement value, out string normalized)
+    {
+        normalized = "";
+        if (value.ValueKind != JsonValueKind.Array || value.GetArrayLength() is 0 or > 8
+            || value.EnumerateArray().Any(e => e.ValueKind != JsonValueKind.String))
+            return $"'{key}' must be a list of 1-8 row strings";
+        var rows = new List<string>();
+        foreach (var row in value.EnumerateArray())
+        {
+            var cells = row.GetString()!.Split('|', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            if (cells.Length is 0 or > 3) return $"'{key}' rows must hold 1-3 cells split by |";
+            var norm = new List<string>();
+            foreach (var cell in cells)
+            {
+                var ids = cell.Split([' ', '+'], StringSplitOptions.RemoveEmptyEntries).Select(s => s.ToLowerInvariant()).ToArray();
+                if (ids.Length > 8) return $"'{key}' cells hold at most 8 sections";
+                if (ids.FirstOrDefault(i => !SplashSections.Contains(i)) is { } bad)
+                    return $"'{key}': unknown section '{bad}' (one of {string.Join(", ", SplashSections)})";
+                norm.Add(string.Join(' ', ids));
+            }
+            rows.Add(string.Join(" | ", norm));
+        }
+        normalized = string.Join('\n', rows);
+        return null;
     }
 }

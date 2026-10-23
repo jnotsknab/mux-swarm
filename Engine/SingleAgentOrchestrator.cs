@@ -40,6 +40,7 @@ public static class SingleAgentOrchestrator
     // Snapped from each UsageContent checkpoint's running totals; cleared on /wipe.
     private static long _cumInputTokens;
     private static long _cumOutputTokens;
+    private static long _cumCachedTokens;
     // Session tool-call count surfaced as the footer "calls N" chip; cleared on /wipe.
     private static uint _sessionToolCalls;
 
@@ -629,7 +630,7 @@ public static class SingleAgentOrchestrator
     {
         long inTok = _cumInputTokens;
         long outTok = _cumOutputTokens;
-        long cached = _cachedTokens;
+        long cached = _cumCachedTokens;
         long total = _sessionTokens;
 
         bool isSubscription = string.Equals(
@@ -639,10 +640,10 @@ public static class SingleAgentOrchestrator
 
         var sb = new System.Text.StringBuilder();
         sb.Append($"model: {(string.IsNullOrWhiteSpace(resolvedModelId) ? "(unknown)" : resolvedModelId)}\n");
-        sb.Append($"input tokens:  {inTok:N0}\n");
+        sb.Append($"input tokens:  {inTok:N0}  (all calls this session)\n");
         sb.Append($"output tokens: {outTok:N0}\n");
         sb.Append($"cached input:  {cached:N0}\n");
-        sb.Append($"session total: {total:N0}\n");
+        sb.Append($"context now:   {total:N0}\n");
 
         if (isSubscription)
         {
@@ -2293,6 +2294,7 @@ public static class SingleAgentOrchestrator
                         // A cut pass is not committed to the session, so keep its updates for the compaction.
                         var passUpdates = new List<AgentResponseUpdate>();
                         var midTurnCut = new MidTurnCompactionCut();
+                        string? lastUsageResponseId = null;   // a repeated usage chunk counts once
                         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session)
                                            .WithCancellation(activityTimeout.Token))
                         {
@@ -2377,7 +2379,7 @@ public static class SingleAgentOrchestrator
                                     // tool activity, and the tool_call hook is enqueued below -
                                     // calling WriteToolCall unconditionally would double both.
                                     if (MuxConsole.StdioMode)
-                                        MuxConsole.EmitToolCallStdio(singleAgentDef.Name, functionCall.Name);
+                                        MuxConsole.EmitToolCallStdio(singleAgentDef.Name, functionCall.Name, functionCall.CallId, functionCall.Arguments);
                                     // NOTE: do NOT tick the live meter on tool-call name/args. They become part of
                                     // the provider's InputTokenCount on the next iteration's UsageContent frame, so
                                     // counting their chars here double-counts and inflates the estimate (the old
@@ -2424,8 +2426,9 @@ public static class SingleAgentOrchestrator
 
                                     HookWorker.Enqueue(HookWorker.ToolResultEvent(singleAgentDef.Name, functionResult));
 
-                                    if (resultText != null)
-                                        MuxConsole.WriteToolResult(singleAgentDef.Name, lastToolName ?? "unknown", resultText);
+                                    if (resultText != null || MuxConsole.AcpSink is not null)
+                                        MuxConsole.WriteToolResult(singleAgentDef.Name, lastToolName ?? "unknown", resultText ?? "",
+                                            callId: functionResult.CallId, isError: ContextPruner.ResultError(functionResult));
 
                                     // A tool result ALWAYS transitions back to thinking state. If a
                                     // stream was open when the result landed (e.g. a reasoning stream
@@ -2455,7 +2458,8 @@ public static class SingleAgentOrchestrator
                                             thinking.UpdateStatus(calledTools);
                                     }
                                 }
-                                else if (content is UsageContent usageContent)
+                                else if (content is UsageContent usageContent
+                                    && Telemetry.TelemetryUsageTracker.FirstForResponse(update.ResponseId, ref lastUsageResponseId))
                                 {
                                     var details = usageContent.Details;
                                     // Authoritative checkpoint: snap to the provider's real counts. A multi-iteration
@@ -2465,9 +2469,10 @@ public static class SingleAgentOrchestrator
                                     if (details.TotalTokenCount is long total && total > 0)
                                         _sessionTokens = (uint)total;
                                     _cachedTokens = (uint)(details.CachedInputTokenCount ?? _cachedTokens);
-                                    // Track cumulative input/output for the /cost gauge (authoritative running totals).
-                                    if (details.InputTokenCount is long inTok && inTok > 0) _cumInputTokens = inTok;
-                                    if (details.OutputTokenCount is long outTok && outTok > 0) _cumOutputTokens = outTok;
+                                    // /cost sums: each UsageContent frame is ONE model call's usage, so add it.
+                                    if (details.InputTokenCount is long inTok && inTok > 0) _cumInputTokens += inTok;
+                                    if (details.OutputTokenCount is long outTok && outTok > 0) _cumOutputTokens += outTok;
+                                    if (details.CachedInputTokenCount is long cTok && cTok > 0) _cumCachedTokens += cTok;
                                     // Reset the per-checkpoint char accumulator so the next live tick bridges only the
                                     // gap SINCE this checkpoint -- not the whole turn (kills the "drops on turn end"
                                     // artifact), and repaint the meter immediately with the real number.
@@ -2923,6 +2928,7 @@ public static class SingleAgentOrchestrator
                     _cachedTokens = 0;
                     _cumInputTokens = 0;
                     _cumOutputTokens = 0;
+                    _cumCachedTokens = 0;
                     _sessionToolCalls = 0;
                     MuxConsole.SetTuiToolCalls(0);
                     MuxConsole.ResetTuiTurnClock();

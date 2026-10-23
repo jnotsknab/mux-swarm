@@ -59,8 +59,10 @@ internal sealed partial class TuiDriver
                 if (ExtensionPanels.Get(panel.Extension, panel.Id) is not { } latest) return true;
                 if (latest.Version != view.Panel.Version) view.Update(latest);
 
-                int width = Math.Max(1, _term.Width - 1), height = Math.Max(1, _term.Height);
-                var rows = view.Render(width, height, hits).Select(TuiMarkup.ToAnsi).ToList();
+                int outerW = Math.Max(1, _term.Width - 1), outerH = Math.Max(1, _term.Height);
+                var (width, height) = ViewFrame.Inner(outerW, outerH);
+                ViewFrame.Prepare(hits, outerW, outerH);
+                var rows = ViewFrame.Wrap(view.Render(width, height, hits), outerW, outerH).Select(TuiMarkup.ToAnsi).ToList();
                 lock (MuxConsole.ConsoleLock) presenter.Present(rows);
                 if (!pump.TryTake(out var ev, 100)) continue;
                 if (ev.Kind is ConsoleInputPump.EventKind.Paste or ConsoleInputPump.EventKind.InferredPaste)

@@ -90,26 +90,27 @@ public static class DaemonCommand
         switch (verb)
         {
             case "on": case "start":
-                MuxConsole.WriteMuted(EnsureRunner() is not null ? "[daemon] Running." : "[daemon] Failed to start.");
+                if (EnsureRunner() is not null) MuxConsole.WriteSuccess("Daemon running.");
+                else MuxConsole.WriteError("Daemon failed to start.");
                 return;
             case "off": case "stop":
                 if (App.DaemonRunner is not null)
                 {
                     _ = App.DaemonRunner.DisposeAsync();
                     App.DaemonRunner = null;
-                    MuxConsole.WriteSuccess("[daemon] Stopped.");
+                    MuxConsole.WriteSuccess("Daemon stopped.");
                 }
-                else MuxConsole.WriteMuted("[daemon] Not running.");
+                else MuxConsole.WriteInfo("Daemon is not running.");
                 return;
             case "cron":  AddCron(rest); return;
             case "watch": AddWatch(rest); return;
             case "cancel": case "kill":
                 if (rest.Length == 0) { MuxConsole.WriteWarning("Usage: /daemon cancel <id>"); return; }
-                MuxConsole.WriteMuted(App.DaemonRunner?.CancelTrigger(rest) == true
-                    ? $"[daemon] Cancelled {rest}." : $"[daemon] No runtime trigger '{rest}'.");
+                if (App.DaemonRunner?.CancelTrigger(rest) == true) MuxConsole.WriteSuccess($"Daemon trigger {rest} cancelled.");
+                else MuxConsole.WriteWarning($"No runtime daemon trigger '{rest}'.");
                 return;
             case "help": case "?":
-                foreach (var h in HelpLines) MuxConsole.WriteMuted(h);
+                MuxConsole.WritePanel("Daemon commands", string.Join("\n", HelpLines));
                 return;
             default:
                 MuxConsole.WriteWarning($"Unknown /daemon action '{verb}'. Try /daemon help.");
