@@ -7,6 +7,19 @@
 /// </summary>
 public static class TelemetryUsageTracker
 {
+    /// <summary>
+    /// True for the first usage frame of a model response. Some OpenAI-compatible proxies repeat the final
+    /// usage chunk (same response id, same numbers), which must not count the call twice. Frames without a
+    /// response id always count. <paramref name="lastId"/> is the caller's per-stream state.
+    /// </summary>
+    public static bool FirstForResponse(string? responseId, ref string? lastId)
+    {
+        if (string.IsNullOrEmpty(responseId)) return true;
+        if (responseId == lastId) return false;
+        lastId = responseId;
+        return true;
+    }
+
     /// <summary>Record the usage of one model call by <paramref name="agent"/>. Null or negative values count as 0.</summary>
     public static void RecordCall(string agent, string model,
         long? input, long? output, long? cached, long? reasoning, long? total)

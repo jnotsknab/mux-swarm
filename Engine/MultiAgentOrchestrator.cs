@@ -1299,6 +1299,7 @@ public static class MultiAgentOrchestrator
                 orchTurnSpan?.SetTag("iteration", i);
 
 
+                string? lastUsageResponseId = null;   // a repeated usage chunk counts once
                 await foreach (var update in orchestratorAgent
                     .RunStreamingAsync(messages, orchestratorSession)
                     .WithCancellation(cancellationToken))
@@ -1417,7 +1418,8 @@ public static class MultiAgentOrchestrator
                                 goto streamComplete;
                             }
                         }
-                        else if (content is UsageContent usageContent)
+                        else if (content is UsageContent usageContent
+                            && Telemetry.TelemetryUsageTracker.FirstForResponse(update.ResponseId, ref lastUsageResponseId))
                         {
                             _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
                             Telemetry.TelemetryUsageTracker.RecordCall("Orchestrator", _orchestratorModelId,
@@ -1671,6 +1673,7 @@ public static class MultiAgentOrchestrator
                 using var activityTimeout = ActivityTimeout.Start(TimeSpan.FromSeconds(ExecutionLimits.Current.ActivityTimeoutSeconds), cancellationToken);
                 var pendingAskUser = new HashSet<string>();
 
+                string? lastUsageResponseId = null;   // a repeated usage chunk counts once
                 await foreach (var update in specialist.Agent
                     .RunStreamingAsync(messages, specialist.Session)
                     .WithCancellation(cancellationToken))
@@ -1809,7 +1812,8 @@ public static class MultiAgentOrchestrator
                                     thinking.UpdateStatus(iterToolCalls);
                             }
                         }
-                        else if (content is UsageContent usageContent)
+                        else if (content is UsageContent usageContent
+                            && Telemetry.TelemetryUsageTracker.FirstForResponse(update.ResponseId, ref lastUsageResponseId))
                         {
                             _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
                             Telemetry.TelemetryUsageTracker.RecordCall(specialist.Def.Name, specialist.Agent.Id,

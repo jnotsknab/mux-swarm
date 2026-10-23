@@ -196,6 +196,16 @@ public class TelemetryTests : IDisposable
     }
 
     [Fact]
+    public void FirstForResponse_CountsARepeatedUsageChunkOnce()
+    {
+        string? last = null;
+        Assert.True(TelemetryUsageTracker.FirstForResponse("msg_1", ref last));
+        Assert.False(TelemetryUsageTracker.FirstForResponse("msg_1", ref last));   // proxy repeats the final usage chunk
+        Assert.True(TelemetryUsageTracker.FirstForResponse("msg_2", ref last));    // next call in the tool loop
+        Assert.True(TelemetryUsageTracker.FirstForResponse(null, ref last));       // no id: always count
+    }
+
+    [Fact]
     public void CostLedger_PersistsEachCall_ToTheSink()
     {
         foreach (var (i, o, c) in new[] { (10402L, 300L, 10000L), (10621L, 250L, 10400L), (10987L, 410L, 10600L) })
