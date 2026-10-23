@@ -2186,16 +2186,68 @@ internal sealed partial class TuiDriver
         _bandLine = band.Count > 0 ? lines.Count : -1;   // the tab row; body row r is line _bandLine + 1 + r
         lines.AddRange(band);
 
-        // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
+        // Pinned zone: footer block (rule + status row) and compose block (rule + input + completions). The
+        // footer.position style puts the footer above (default), below, or nowhere; compose.gap adds blank
+        // rows above the zone. Everything from here down is never trimmed for competing live activity.
+        for (int g = RegionStyle.Number("compose.gap"); g > 0; g--) lines.Add("");
         int footerStart = lines.Count;
+        string footerPos = RegionStyle.Choice("footer.position");
+        _footerLine = -1;
+        if (footerPos == "hidden") _footerBadges.Clear();
+        if (footerPos == "above") AddFooterBlock(lines, width);
+
+        if (_inInput)
+        {
+            // A second full-width rule gives the input/compose area its own visible band,
+            // clearly separated from the footer above it.
+            if (TuiComponents.FooterRule(width) is { } inputRule) lines.Add(inputRule);
+            // While reverse-incremental search (Ctrl+R) is active, the readline-style search row
+            // replaces the normal input row and its completions; accepting/cancelling restores them.
+            if (_editor.IsSearching)
+                lines.Add(TuiComponents.ReverseSearchRow(_editor.SearchQuery, _editor.SearchMatch, width));
+            else
+            {
+                int pinnedRows = lines.Skip(footerStart).Sum(row => LiveRegion.WrapMarkupLine(row, width).Count)
+                    + (footerPos == "below" ? FooterBlockRows(width) : 0);
+                RenderCompose(lines, width, Math.Max(1, Height - pinnedRows));
+                AddCompletions(lines, width);
+            }
+        }
+        if (footerPos == "below") AddFooterBlock(lines, width);
+
+        if (_inInput && !_editor.IsSearching && _editor.Attachments.Items.Count > 0)
+        {
+            // Budget physical rows once for BOTH render engines. Preserve footer + compose;
+            // competing live activity gets only the remaining space, never another full viewport.
+            int rows = lines.Sum(row => LiveRegion.WrapMarkupLine(row, width).Count);
+            int remove = 0;
+            while (rows > Height && remove < footerStart)
+                rows -= LiveRegion.WrapMarkupLine(lines[remove++], width).Count;
+            if (remove > 0) { lines.RemoveRange(0, remove); ShiftLiveLines(remove); }
+        }
+        return lines;
+    }
+
+    /// <summary>The footer block: its rule (when shown) and the status row, recording the row for badge clicks.</summary>
+    private void AddFooterBlock(List<string> lines, int width)
+    {
+        // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
         if (TuiComponents.FooterRule(width) is { } footerRule) lines.Add(footerRule);
+        _footerLine = lines.Count;
+        lines.Add(BuildFooterRow(width));
+    }
+
+    /// <summary>Physical rows the footer block takes (for the compose budget when it sits below the input).</summary>
+    private int FooterBlockRows(int width) => (TuiComponents.FooterRule(width) is null ? 0 : 1) + 1;
+
+    private string BuildFooterRow(int width)
+    {
         // Mode-pulse frame: derived from the wall clock (~100ms ticker cadence) only inside the
         // short post-activation window; -1 renders the chip static and schedules nothing extra.
         int pulseFrame = _modePulseUntil is { } pu && DateTime.UtcNow < pu
             ? (int)(Environment.TickCount64 / 150)
             : -1;
-        _footerLine = lines.Count;
-        lines.Add(TuiComponents.Footer(_tokens, _threshold, _plan, _ultra, _psub, _sub, _effort,
+        return TuiComponents.Footer(_tokens, _threshold, _plan, _ultra, _psub, _sub, _effort,
             OnModeCycle is not null, _cached,
             _sysTokens, _toolTokens,
             DateTime.UtcNow - _sessionStart,
@@ -2207,50 +2259,51 @@ internal sealed partial class TuiDriver
             width,
             pulseFrame,
             ServeMode.ActiveMode,
-            _footerBadges));
+            _footerBadges);
+    }
 
-        if (_inInput)
+    /// <summary>The completion list under the input: @files, /skill, /tools, /resume, or the slash palette.</summary>
+    private void AddCompletions(List<string> lines, int width)
+    {
+        // "/skill[s]" gets a live, web-app-style skills autocomplete; any other "/" token
+        // gets the command palette. Skills check first so "/skills" isn't eaten by the
+        // generic slash filter.
+        if (!_editor.Attachments.Focused && _editor.IsAtFilter)
+            lines.AddRange(TuiComponents.FilesPreview(_editor.AtFilter, _files, width, _paletteSel, _filesAreInstallDir));
+        else if (!_editor.Attachments.Focused && _editor.IsSkillsFilter)
+            lines.AddRange(TuiComponents.SkillsPreview(_editor.SkillsFilter, _skills, width, _paletteSel));
+        else if (!_editor.Attachments.Focused && _editor.IsToolsFilter)
+            lines.AddRange(TuiComponents.ToolsPreview(_editor.ToolsFilter, CurrentTools, width, _paletteSel, Math.Max(1, Height - lines.Sum(row => LiveRegion.WrapMarkupLine(row, width).Count))));
+        else if (!_editor.Attachments.Focused && _editor.IsResumeFilter)
         {
-            // A second full-width rule gives the input/compose area its own visible band,
-            // clearly separated from the footer above it.
-            if (TuiComponents.FooterRule(width) is { } inputRule) lines.Add(inputRule);
-            // While reverse-incremental search (Ctrl+R) is active, the readline-style search row
-            // replaces the normal input row; accepting/cancelling restores the input row.
-            if (_editor.IsSearching)
+            if (_paletteSel != _resumeMarqueeSel) { _resumeMarqueeSel = _paletteSel; _resumeMarqueeOffset = 0; _resumeMarqueeTick = 0; }
+            lines.AddRange(TuiComponents.SessionsPreview(_editor.ResumeFilter, _sessions, width, _paletteSel, _resumeMarqueeOffset));
+        }
+        else if (!_editor.Attachments.Focused && _editor.IsSlashFilter)
+            lines.AddRange(TuiComponents.SlashPalette(_editor.SlashFilter, _paletteEntries, _paletteSel));
+    }
+
+    /// <summary>
+    /// Keep every recorded live-band line index valid after the first <paramref name="removed"/> lines were
+    /// trimmed off the top: indexes shift up, and regions whose rows were trimmed are dropped.
+    /// </summary>
+    private void ShiftLiveLines(int removed)
+    {
+        static int Shift(int line, int by) => line < 0 ? line : line >= by ? line - by : -1;
+        _footerLine = Shift(_footerLine, removed);
+        _bandLine = Shift(_bandLine, removed);
+        void ShiftList<T>(List<(int Line, T Value)> list)
+        {
+            for (int i = list.Count - 1; i >= 0; i--)
             {
-                lines.Add(TuiComponents.ReverseSearchRow(_editor.SearchQuery, _editor.SearchMatch, width));
-                return lines;
-            }
-            int footerRows = lines.Skip(footerStart).Sum(row => LiveRegion.WrapMarkupLine(row, width).Count);
-            RenderCompose(lines, width, Math.Max(1, Height - footerRows));
-            // "/skill[s]" gets a live, web-app-style skills autocomplete; any other "/" token
-            // gets the command palette. Skills check first so "/skills" isn't eaten by the
-            // generic slash filter.
-            if (!_editor.Attachments.Focused && _editor.IsAtFilter)
-                lines.AddRange(TuiComponents.FilesPreview(_editor.AtFilter, _files, width, _paletteSel, _filesAreInstallDir));
-            else if (!_editor.Attachments.Focused && _editor.IsSkillsFilter)
-                lines.AddRange(TuiComponents.SkillsPreview(_editor.SkillsFilter, _skills, width, _paletteSel));
-            else if (!_editor.Attachments.Focused && _editor.IsToolsFilter)
-                lines.AddRange(TuiComponents.ToolsPreview(_editor.ToolsFilter, CurrentTools, width, _paletteSel, Math.Max(1, Height - lines.Sum(row => LiveRegion.WrapMarkupLine(row, width).Count))));
-            else if (!_editor.Attachments.Focused && _editor.IsResumeFilter)
-            {
-                if (_paletteSel != _resumeMarqueeSel) { _resumeMarqueeSel = _paletteSel; _resumeMarqueeOffset = 0; _resumeMarqueeTick = 0; }
-                lines.AddRange(TuiComponents.SessionsPreview(_editor.ResumeFilter, _sessions, width, _paletteSel, _resumeMarqueeOffset));
-            }
-            else if (!_editor.Attachments.Focused && _editor.IsSlashFilter)
-                lines.AddRange(TuiComponents.SlashPalette(_editor.SlashFilter, _paletteEntries, _paletteSel));
-            if (_editor.Attachments.Items.Count > 0)
-            {
-                // Budget physical rows once for BOTH render engines. Preserve footer + compose;
-                // competing live activity gets only the remaining space, never another full viewport.
-                int rows = lines.Sum(row => LiveRegion.WrapMarkupLine(row, width).Count);
-                int remove = 0;
-                while (rows > Height && remove < footerStart)
-                    rows -= LiveRegion.WrapMarkupLine(lines[remove++], width).Count;
-                if (remove > 0) lines.RemoveRange(0, remove);
+                int line = Shift(list[i].Line, removed);
+                if (line < 0) list.RemoveAt(i); else list[i] = (line, list[i].Value);
             }
         }
-        return lines;
+        ShiftList(_composeVisible);
+        ShiftList(_liveLaneLines);
+        ShiftList(_liveJobLines);
+        ShiftList(_promptModalOptionLines);
     }
 
     private void Repaint()

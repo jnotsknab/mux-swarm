@@ -13,16 +13,19 @@ namespace MuxSwarm.Engine.Tui;
 internal static class RegionStyle
 {
     /// <summary>What a property holds: a colour, a glyph of bounded terminal width, or an on/off flag.</summary>
-    internal enum Kind { Color, Glyph, Flag, Lines }
+    internal enum Kind { Color, Glyph, Flag, Lines, Choice, Number }
 
-    /// <summary>One styleable property: its kind, built-in value and (glyphs) allowed width in cells.</summary>
-    internal sealed record Prop(Kind Kind, string Default, int MinCells = 1, int MaxCells = 1);
+    /// <summary>One styleable property: its kind, built-in value, (glyphs) allowed width in cells or (numbers)
+    /// allowed range, and (choices) the allowed values.</summary>
+    internal sealed record Prop(Kind Kind, string Default, int MinCells = 1, int MaxCells = 1, string[]? Choices = null);
 
     private static Prop C(string d) => new(Kind.Color, d);
     private static Prop G(string d, int max = 1) => new(Kind.Glyph, d, 1, max);
     private static Prop T(string d, int min, int max) => new(Kind.Glyph, d, min, max);   // free text of bounded width
     private static Prop F(bool d) => new(Kind.Flag, d ? "true" : "false");
     private static Prop A() => new(Kind.Lines, "", 0, 80);   // 1-12 text lines, each at most 80 cells; "" = built-in
+    private static Prop O(params string[] choices) => new(Kind.Choice, choices[0], Choices: choices);   // first = default
+    private static Prop N(int d, int min, int max) => new(Kind.Number, d.ToString(System.Globalization.CultureInfo.InvariantCulture), min, max);
 
     /// <summary>Every styleable property, keyed <c>region.name</c> (case-insensitive).</summary>
     internal static readonly IReadOnlyDictionary<string, Prop> Props = new Dictionary<string, Prop>(StringComparer.OrdinalIgnoreCase)
@@ -57,6 +60,9 @@ internal static class RegionStyle
         ["panel.rule"] = G("\u2500"), ["panel.ruleFg"] = C("#3A3A3A"), ["panel.tabFg"] = C("muted"), ["panel.tabActiveFg"] = C("accent"),
         ["panel.focusFg"] = C("black"), ["panel.focusBg"] = C("accent"),
         ["splash.show"] = F(true), ["splash.art"] = A(), ["splash.artFg"] = C("banner"), ["splash.accentFg"] = C("success"),
+        // Layout (shape) properties: where the footer sits relative to the compose box, and blank rows above them.
+        ["footer.position"] = O("above", "below", "hidden"),
+        ["compose.gap"] = N(0, 0, 2),
     };
 
     /// <summary>The <c>glyphs: "ascii"</c> set: plain-ASCII replacements for every built-in glyph, for terminals
@@ -132,6 +138,12 @@ internal static class RegionStyle
     /// <summary>The flag value for <paramref name="key"/>.</summary>
     internal static bool Flag(string key) => Raw(key) == "true";
 
+    /// <summary>The chosen value for a choice property (one of its <see cref="Prop.Choices"/>, lower case).</summary>
+    internal static string Choice(string key) => Raw(key);
+
+    /// <summary>The value of a number property.</summary>
+    internal static int Number(string key) => int.Parse(Raw(key), System.Globalization.CultureInfo.InvariantCulture);
+
     /// <summary>The text lines for <paramref name="key"/> (plain, unescaped); empty = use the built-in content.</summary>
     internal static string[] Lines(string key) => Raw(key) is { Length: > 0 } v ? v.Split('\n') : [];
 
@@ -173,6 +185,16 @@ internal static class RegionStyle
                 if (lines.Any(l => l.Any(char.IsControl) || TuiMarkup.Width(l) > prop.MaxCells))
                     return $"'{key}' lines must be at most {prop.MaxCells} terminal cells without control characters";
                 normalized = string.Join('\n', lines);
+                return null;
+            case Kind.Choice:
+                var choice = value.ValueKind == JsonValueKind.String ? value.GetString()!.Trim().ToLowerInvariant() : "";
+                if (!prop.Choices!.Contains(choice)) return $"'{key}' must be one of {string.Join(", ", prop.Choices!)}";
+                normalized = choice;
+                return null;
+            case Kind.Number:
+                if (value.ValueKind != JsonValueKind.Number || !value.TryGetInt32(out int n) || n < prop.MinCells || n > prop.MaxCells)
+                    return $"'{key}' must be a whole number from {prop.MinCells} to {prop.MaxCells}";
+                normalized = n.ToString(System.Globalization.CultureInfo.InvariantCulture);
                 return null;
             case Kind.Color:
                 var c = value.ValueKind == JsonValueKind.String ? value.GetString()!.Trim() : "";
