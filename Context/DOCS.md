@@ -1365,6 +1365,33 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
     `focusFg` / `focusBg` (the focused tab).
   - `splash`: `show` (false = one version line instead of the banner card), `art` (1-12 lines, at most 80 cells each,
     replacing the MUX/SWARM art), `artFg`, `accentFg` (the built-in robot).
+  **Layout (shape) keys.** These change the shape of the live band, not just its colours:
+  - `compose.shape`: `classic` (default: rule, footer, rule, `›` input), `rule` (one rule, input under it), `bracket`
+    (rules above and below the input), `box` (a frame around the input), `bubble` (a filled field with round end
+    caps), `rail` (a filled field with one coloured left rail), `bare` (just the prompt). With a shape, the stock
+    footer and input rules are not drawn; the shape draws its own chrome.
+  - `compose.border` (`box`): `rounded` (default), `square`, `double`, `thick`, `ascii`. `compose.padX` 0-3 (default
+    1), `compose.padY` 0-1, `compose.gap` 0-2 blank rows above the footer and compose block. Colours/glyphs:
+    `compose.borderFg`, `compose.rule`, `compose.fill` (bubble/rail), `compose.capLeft`/`capRight`, `compose.rail`,
+    `compose.railFg`.
+  - `footer.position`: `above` (default), `below` the input, `hidden`, or `border`: inside the top edge of a `box`,
+    `rule` or `bracket` shape (`╭─ ultra · 45% ──── model ─╮`); other shapes fall back to `above`.
+  - `footer.style`: `dot` (default), `pipe`, `space`, `powerline` (needs a Nerd/powerline font), `ascii`.
+    `footer.strip: true` fills the row with `footer.bg`; `footer.fill: rule` draws a line between the left and right
+    groups. Split the footer into groups with `||` in `footer.template`: `"{mode} {context} || {model} {effort}"`
+    puts model and effort at the right edge (a single `|` stays plain text). Clickable chips follow their text.
+  - `header.template`: the session card text with `{agent}`, `{model}`, `{provider}`, `{tools}`; `header.frame:
+    box` draws a rounded card around it.
+  - `toolCard.style`: `bullet` (default), `gutter` (one prefix glyph per tool line, `toolCard.gutter`, default `┊`)
+    or `box` (side rails `toolCard.boxLeft`/`boxRight`).
+  Example, an editor-style box with the status line in its border:
+  ```jsonc
+  "footer": { "template": "{mode} {context} || {model} {effort}" },
+  "tui": { "regions": {
+    "compose": { "shape": "box", "border": "rounded", "padX": 1 },
+    "footer":  { "position": "border", "style": "pipe" }
+  } }
+  ```
   `"glyphs": "ascii"` (next to `regions`) swaps every built-in glyph for plain ASCII (`+ * > | - #`) for terminals or
   fonts without box drawing; region keys still override single glyphs on top. Default `unicode`.
   Your own `console.tui` in config.json (same schema, see TUI color themes) wins over every extension.
@@ -1719,6 +1746,7 @@ or a JSON-RPC `error`). Requests are answered while a command, tool or event is 
 | `ui/close` | `{ id }` | `{ closed }`: closes panel `id` |
 | `prompt/submit` | `{ text }` | `{ queued: true }`: sent to the agent as the next user turn |
 | `command/run` | `{ line }` | `{ queued: true }`: runs a slash command as if typed |
+| `status/set` | `{ key, text? }` | `{ changed }`: keyed status text in the footer (chip `<name>.<key>`; empty text removes it). Same as the `footer/set` notification, with an answer |
 
 - `surface` is `tui`, `classic`, `web` (`--serve`), `stdio` or `acp`. `mode` is the running mode
   (`agent`, `swarm`, `pswarm`, `interactive` at the menu, ...).
