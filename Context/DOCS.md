@@ -2090,7 +2090,9 @@ GitHub Copilot CLI agent panel, the Intelligent Terminal) drive a Mux single-age
   calls left open at turn end or cancel are closed as `failed` before the prompt response.
 - Stdio NDJSON: the single-agent `tool_call` event carries `callId` + `args` (JSON string)
   and `tool_result` carries `callId` + `isError` (additive fields).
-- Filesystem + terminal execution and permission prompting deliberately stay inside Mux's
+- `ask_user` under ACP: confirm/select/multi_select -> `session/request_permission` on the
+  same tool call; free-text asks tell the model to ask in its reply (never reads stdin).
+- Filesystem + terminal execution and tool permission gating deliberately stay inside Mux's
   own tool layer (not rerouted through the ACP client) - this is spec-compliant (those
   client capabilities are optional).
 
