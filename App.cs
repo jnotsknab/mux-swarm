@@ -992,7 +992,7 @@ internal class App
                         ServeMode.ActiveMode = "agent";
                         try {
                         await SingleAgentOrchestrator.ChatAgentAsync(
-                            client: CreateChatClient(resumeModel),
+                            client: CreateLeadChatClient(resumeModel),
                             resumeCts.Token,
                             maxIterations: 3,
                             mcpTools: McpTools,
@@ -1005,7 +1005,8 @@ internal class App
                             resumedSession: resumeData.Value.data,
                             resumedSessionDir: resumeData.Value.sessionDir,
                             allowSubAgents: AllowSubagents,
-                            allowParallelSubAgents: AllowParallelSubAgents
+                            allowParallelSubAgents: AllowParallelSubAgents,
+                            leadClientFactory: modelId => CreateLeadChatClient(modelId)
                         );
                         } finally { ServeMode.ActiveMode = "interactive"; }
                     }

@@ -1,5 +1,4 @@
-﻿using Microsoft.Extensions.AI;
-using MuxSwarm.Engine;
+﻿using MuxSwarm.Engine;
 using MuxSwarm.Engine.Memory;
 using Xunit;
 
@@ -22,16 +21,19 @@ public class LeadClientSteerTests
         finally { App.ActiveProvider = prior; }
     }
 
-    [Fact]
-    public void AgentLaunch_PassesTheLeadFactory_ForModelSwitches()
+    [Theory]
+    [InlineData("agentHandle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(", "client: CreateLeadChatClient(singleAgentModel)")]
+    [InlineData("client: CreateLeadChatClient(resumeModel)", "resumedSession: resumeData.Value.data")]
+    public void AgentAndResume_UseTheLeadClient_AndPassItForModelSwitches(string start, string inCall)
     {
-        // The /agent launch must hand ChatAgentAsync a lead factory; without one a /setmodel rebuild
-        // falls back to the plain client and Ctrl+N only lands after the turn ends.
-        string app = File.ReadAllText(Path.Combine(SourceRoot(), "App.cs"));
-        int launch = app.IndexOf("agentHandle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(", StringComparison.Ordinal);
-        Assert.True(launch > 0);
-        int end = app.IndexOf(");", app.IndexOf("interactiveHandle: agentHandle", launch, StringComparison.Ordinal), StringComparison.Ordinal);
-        Assert.Contains("leadClientFactory: modelId => CreateLeadChatClient(modelId)", app[launch..end]);
+        // /agent and /resume start with the steer-wrapped lead client and hand ChatAgentAsync the same factory;
+        // without it a /setmodel rebuild falls back to the plain client and Ctrl+N only lands after the turn ends.
+        string app = File.ReadAllText(Path.Combine(SourceRoot(), "App.cs")).Replace("\r\n", "\n");
+        int launch = app.IndexOf(start, StringComparison.Ordinal);
+        Assert.True(launch > 0, start);
+        string call = app[launch..app.IndexOf(");", launch, StringComparison.Ordinal)];
+        Assert.Contains(inCall, call);
+        Assert.Contains("leadClientFactory: modelId => CreateLeadChatClient(modelId)", call);
     }
 
     private static string SourceRoot([System.Runtime.CompilerServices.CallerFilePath] string path = "")
