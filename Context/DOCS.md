@@ -2079,8 +2079,8 @@ stdout is pure protocol, logs go to stderr). This lets ACP-capable editors/clien
 GitHub Copilot CLI agent panel, the Intelligent Terminal) drive a Mux single-agent session.
 
 - Supports: `initialize`, `session/new`, `session/list` (thread history: id = Sessions
-  folder name, absolute cwd from an `acp.muxcwd` sidecar, title, updatedAt), `session/load` (transcript replay -> context
-  resume), `session/prompt` (text + resource_link + embedded text), `session/cancel`,
+  folder name, absolute cwd from an `acp.muxcwd` sidecar, title, updatedAt), `session/load` (full replay incl. reasoning + tool calls ->
+  context resume), `session/prompt` (text + resource_link + embedded text), `session/cancel`,
   `session/set_mode`, `session/resume`, model selection (both the canonical
   `configOptions` and the Zed `models` / `session/set_model` mechanisms), `logout`.
 - Streams: `agent_message_chunk`, `agent_thought_chunk` (reasoning), `tool_call` +

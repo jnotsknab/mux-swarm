@@ -46,7 +46,7 @@ On Linux/macOS the `command` is the `MuxSwarm` binary and paths use `/`.
 |---|---|---|
 | `initialize` | ✅ | `protocolVersion: 1`; advertises `agentInfo{name:"mux-swarm"}`, `loadSession`. Prompt caps: text + `resource_link` baseline only (no image/audio/embeddedContext). |
 | `session/new` | ✅ | One ACP session = one Mux single-agent loop. |
-| `session/load` | ✅ | Resolves a persisted session by id, replays its transcript as `user_message_chunk` / `agent_message_chunk` updates, then resumes that context. |
+| `session/load` | ✅ | Resolves a persisted session by id and, before responding, replays it in order: `user_message_chunk`, `agent_thought_chunk` (saved reasoning), `tool_call` + finished `tool_call_update` (failed for error results or calls that never finished), `agent_message_chunk`; then resumes that context. `available_commands_update` is sent after the new/load/resume response. |
 | `session/prompt` | ✅ | Text content blocks (and embedded text / `resource_link` references) flattened into the user turn. |
 | `session/cancel` | ✅ | Aborts the in-flight turn; the prompt is answered with `stopReason: "cancelled"`. |
 | `session/close` | ✅ | Ends the active session loop. |
