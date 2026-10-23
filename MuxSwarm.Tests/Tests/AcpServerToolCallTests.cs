@@ -184,6 +184,11 @@ public class AcpServerToolCallTests
         Assert.Matches(@"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(-\d+)?$", sid);
         Assert.Equal(Path.Combine(PlatformContext.SessionsDirectory, sid), h.LastResume?.Dir);
         Assert.Null(h.LastResume?.Data);
+        var msgs = h.Messages();
+        int respAt = msgs.FindIndex(m => m.TryGetProperty("id", out var i) && i.ValueKind == JsonValueKind.Number && i.GetInt32() == 1);
+        int cmdsAt = msgs.FindIndex(m => m.TryGetProperty("params", out var p) && p.TryGetProperty("update", out var u)
+            && u.GetProperty("sessionUpdate").GetString() == "available_commands_update");
+        Assert.True(cmdsAt > respAt, "available_commands_update must follow the session/new response");
         var info = h.Updates().Single(u => u.GetProperty("sessionUpdate").GetString() == "session_info_update");
         Assert.Equal("go", info.GetProperty("title").GetString());
         h.EndTurn();

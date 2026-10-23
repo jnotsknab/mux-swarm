@@ -265,6 +265,7 @@ public sealed class AcpServer
         var models = BuildModelState();
         if (models is not null) result["models"] = models;   // Models-API clients (e.g. Zed agent-panel model picker)
         Respond(id, result);
+        AdvertiseCommands(sid);   // after the response: clients attach commands to a known session
     }
 
     private void HandleSessionLoad(object? id, JsonElement prms)
@@ -298,6 +299,7 @@ public sealed class AcpServer
         var lmodels = BuildModelState();
         if (lmodels is not null) lres["models"] = lmodels;
         Respond(id, lres);
+        AdvertiseCommands(sid);   // after the response: clients attach commands to a known session
     }
 
     private void HandleSessionResume(object? id, JsonElement prms)
@@ -324,6 +326,7 @@ public sealed class AcpServer
         var rmodels = BuildModelState();
         if (rmodels is not null) rres["models"] = rmodels;
         Respond(id, rres);
+        AdvertiseCommands(sid);   // after the response: clients attach commands to a known session
     }
 
     private void HandleSetConfigOption(object? id, JsonElement prms)
@@ -438,7 +441,6 @@ public sealed class AcpServer
             finally { if (ReferenceEquals(MuxConsole.InputOverride, reader)) MuxConsole.InputOverride = Console.In; }
         });
 
-        AdvertiseCommands(sid);
     }
 
     /// <summary>
@@ -462,24 +464,94 @@ public sealed class AcpServer
     }
 
     /// <summary>
-    /// Replay a persisted session's messages to the client as session/update notifications
-    /// (user_message_chunk for user turns, agent_message_chunk for assistant turns), per the
-    /// session/load contract. Each message gets its own messageId.
+    /// Replay a persisted session to the client, per the session/load contract: user text as
+    /// user_message_chunk, reasoning as agent_thought_chunk, assistant text as agent_message_chunk,
+    /// and each tool call as a tool_call + finished tool_call_update (completed, or failed for
+    /// error results / calls that never got one), in conversation order.
     /// </summary>
     private void ReplayHistory(string sid, JsonElement data)
     {
-        int n = 0;
-        foreach (var msg in Common.ExtractMessagesFromSession(data))
-        {
-            string txt = msg.Text ?? string.Empty;
-            if (txt.Length == 0) continue;
-            bool isUser = msg.Role == Microsoft.Extensions.AI.ChatRole.User;
-            string mid = (isUser ? "msg_user_" : "msg_agent_") + (++n);
-            object update = isUser
-                ? UserMessageChunk(txt, mid)
-                : AcpProtocol.AgentMessageChunk(txt, mid);
+        foreach (var update in ReplayUpdates(data))
             WriteMessage(AcpProtocol.SessionUpdate(sid, update));
+    }
+
+    /// <summary>The session/update payloads that replay a serialized agent session (pure; testable).</summary>
+    internal static List<object> ReplayUpdates(JsonElement data)
+    {
+        var updates = new List<object>();
+        if (!Common.TryGetSessionMessages(data, out var messages)) return updates;
+        var open = new List<string>();
+        int n = 0;
+        foreach (var msg in messages.EnumerateArray())
+        {
+            string role = msg.TryGetProperty("role", out var r) && r.ValueKind == JsonValueKind.String ? r.GetString() ?? "" : "";
+            if (!msg.TryGetProperty("contents", out var contents) || contents.ValueKind != JsonValueKind.Array) continue;
+            string mid = "msg_replay_" + (++n);
+            foreach (var c in contents.EnumerateArray())
+            {
+                string type = c.TryGetProperty("$type", out var ty) && ty.ValueKind == JsonValueKind.String ? ty.GetString() ?? "" : "";
+                switch (type)
+                {
+                    case "text" when role is "user" or "assistant":
+                    {
+                        string text = StripInsight(c.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "");
+                        if (text.Length == 0) break;
+                        updates.Add(role == "user" ? UserMessageChunk(text, mid) : AcpProtocol.AgentMessageChunk(text, mid));
+                        break;
+                    }
+                    case "reasoning" when role == "assistant":
+                    {
+                        string text = c.TryGetProperty("text", out var tx) ? tx.GetString() ?? "" : "";
+                        if (text.Length > 0) updates.Add(AcpProtocol.AgentThoughtChunk(text, mid));
+                        break;
+                    }
+                    case "functionCall":
+                    {
+                        string callId = c.TryGetProperty("callId", out var ci) ? ci.GetString() ?? "" : "";
+                        string name = c.TryGetProperty("name", out var nm) ? nm.GetString() ?? "tool" : "tool";
+                        string? args = c.TryGetProperty("arguments", out var ar) && ar.ValueKind == JsonValueKind.Object ? ar.GetRawText() : null;
+                        if (callId.Length == 0) break;
+                        updates.Add(AcpProtocol.ToolCallWithLocations(callId, AcpProtocol.ToolTitle(name, args), AcpProtocol.ToolKind(name),
+                            "in_progress", args is null ? null : ar.Clone(), AcpProtocol.Locations(args)));
+                        open.Add(callId);
+                        break;
+                    }
+                    case "functionResult":
+                    {
+                        string callId = c.TryGetProperty("callId", out var ci) ? ci.GetString() ?? "" : "";
+                        if (!open.Remove(callId)) break;   // result for a call that was never announced
+                        string body = StripInsight(c.TryGetProperty("result", out var rv) ? ResultText(rv) : "");
+                        bool failed = ContextPruner.IsErrorText(body);
+                        if (body.Length > 4000) body = body[..4000] + "\n... (truncated)";
+                        updates.Add(AcpProtocol.ToolCallUpdateRich(callId, failed ? "failed" : "completed",
+                            body.Trim().Length == 0 ? null : new[] { AcpProtocol.TextContent(body) }));
+                        break;
+                    }
+                }
+            }
         }
+        foreach (var callId in open)   // interrupted before a result was saved
+            updates.Add(AcpProtocol.ToolCallUpdateRich(callId, "failed", null));
+        return updates;
+    }
+
+    /// <summary>Text of a serialized tool result: a string, the text parts of a content list, or raw JSON.</summary>
+    private static string ResultText(JsonElement result) => result.ValueKind switch
+    {
+        JsonValueKind.String => result.GetString() ?? "",
+        JsonValueKind.Array => string.Join("\n", result.EnumerateArray()
+            .Where(p => p.ValueKind == JsonValueKind.Object && p.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String)
+            .Select(p => p.GetProperty("text").GetString())),
+        JsonValueKind.Null or JsonValueKind.Undefined => "",
+        _ => result.GetRawText()
+    };
+
+    /// <summary>Drop the runtime's "[mux context: ...]" gauge line (/insight max), which is saved
+    /// with the message but was never typed or seen by the user.</summary>
+    private static string StripInsight(string text)
+    {
+        int i = text.IndexOf("[mux context:", StringComparison.Ordinal);
+        return (i >= 0 ? text[..i] : text).TrimEnd();
     }
 
     private static object UserMessageChunk(string text, string messageId) =>
