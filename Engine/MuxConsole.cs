@@ -1897,11 +1897,19 @@ public static partial class MuxConsole
 
     /// <summary>Stdio-ONLY tool_call event (no TUI render, no hook enqueue) - used by the
     /// orchestrator's invocation site where rendering + hooks are already handled separately.
-    /// Headless drivers (SDK / dynamic workflows) rely on this for tool counting.</summary>
-    public static void EmitToolCallStdio(string agent, string tool)
+    /// Headless drivers (SDK / dynamic workflows) rely on this for tool counting. <paramref name="callId"/>
+    /// is the provider's tool-call id (matches the later tool_result's callId) and
+    /// <paramref name="args"/> the call arguments, emitted as a JSON string in <c>args</c>.</summary>
+    public static void EmitToolCallStdio(string agent, string tool, string? callId = null, IDictionary<string, object?>? args = null)
     {
         if (!StdioMode) return;
-        WithConsole(() => EmitJson("tool_call", D(("agent", agent), ("tool", tool))));
+        string? argsJson = null;
+        if (args is { Count: > 0 })
+        {
+            try { argsJson = JsonSerializer.Serialize(args, _jsonOpts); }
+            catch (Exception) { /* unserializable argument value: omit args, keep the event */ }
+        }
+        WithConsole(() => EmitJson("tool_call", D(("agent", agent), ("tool", tool), ("callId", callId), ("args", argsJson))));
     }
 
     public static void WriteToolCall(string agent, string tool, string? args = null)
@@ -1962,12 +1970,21 @@ public static partial class MuxConsole
         ReflectionGatherer.Touch();
     }
 
-    public static void WriteToolResult(string agent, string tool, string fullResult, bool swarm = false)
+    /// <summary>Render or emit a tool's full result. <paramref name="callId"/> (provider tool-call id)
+    /// and <paramref name="isError"/> are added to the stdio tool_result event when known.</summary>
+    public static void WriteToolResult(string agent, string tool, string fullResult, bool swarm = false,
+        string? callId = null, bool isError = false)
     {
         //no need to display this unnecessary
         //TODO: We have to filter out .AIContent[] as there is currently no check for if the returned function content is a flat obj or not, update logic in agent orchestrators to check for dict etc
         if (fullResult.Length <= 0 || fullResult.Trim().Equals("Task marked as complete.", StringComparison.OrdinalIgnoreCase)
-            || fullResult.Trim().Equals("Microsoft.Extensions.AI.AIContent[]", StringComparison.OrdinalIgnoreCase)) return;
+            || fullResult.Trim().Equals("Microsoft.Extensions.AI.AIContent[]", StringComparison.OrdinalIgnoreCase))
+        {
+            // Nothing worth displaying, but an ACP client still needs the call to finish.
+            if (AcpSink is not null && callId is not null)
+                EmitJson("tool_result", D(("agent", agent), ("tool", tool), ("result", ""), ("callId", callId), ("isError", isError ? true : null)));
+            return;
+        }
 
         // Collapsed sub-agent: fold the tool result into the buffered transcript (the hook
         // below still fires) instead of rendering a panel/merged line inline.
@@ -2004,7 +2021,8 @@ public static partial class MuxConsole
             WriteRule();
             return;
         }
-        EmitJson("tool_result", D(("agent", agent), ("tool", tool), ("result", fullResult)));
+        EmitJson("tool_result", D(("agent", agent), ("tool", tool), ("result", fullResult),
+            ("callId", callId), ("isError", isError ? true : null)));
     }
 
     public static void WriteTaskComplete(string agent, string summary)

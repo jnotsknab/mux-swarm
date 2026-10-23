@@ -46,11 +46,20 @@ public sealed class AcpServer
     private int _messageCounter;
     private string _currentMessageId = "msg_0";
 
-    // Tool-call correlation: Mux tool_call/tool_result carry no id, so synthesize one and pair
-    // results to calls FIFO (single-agent tools run sequentially).
+    // Tool-call correlation. Single-agent events carry the provider callId on both tool_call and
+    // tool_result; events without one (swarm paths) pair FIFO. Every announced call stays in
+    // _openTools until a result or the turn boundary closes it, so no card is left spinning.
     private int _toolCounter;
-    private readonly ConcurrentQueue<string> _pendingToolIds = new();
-    private string? _lastToolArgs;
+    private readonly object _toolLock = new();
+    private readonly Dictionary<string, OpenTool> _openTools = new(StringComparer.Ordinal);
+    private readonly Queue<string> _fifoToolIds = new();
+
+    /// <summary>An announced, not yet finished tool call. OldText/Snapshot hold the edited file's
+    /// content captured before the tool ran (Snapshot=false when it could not be read).</summary>
+    private sealed record OpenTool(string AcpId, string Tool, string? Args, string? Path, string? OldText, bool Snapshot);
+
+    // Files larger than this are not snapshotted for diff cards.
+    private const long MaxDiffBytes = 1_000_000;
 
     // Client capabilities (from initialize) gating agent->client callbacks (fs/*, terminal/*).
     private AcpClientCaps _clientCaps;
@@ -400,9 +409,7 @@ public sealed class AcpServer
         _pendingPromptId = null;
         _cancelRequested = false;
         _messageCounter = 0;
-        _toolCounter = 0;
-        while (_pendingToolIds.TryDequeue(out _)) { }   // drop any stale tool ids
-        _lastToolArgs = null;
+        lock (_toolLock) { _toolCounter = 0; _openTools.Clear(); _fifoToolIds.Clear(); }
 
         reader.ReadEntered += OnTurnBoundary;
         MuxConsole.InputOverride = reader;
@@ -510,6 +517,7 @@ public sealed class AcpServer
         if (id is null) return;
         _pendingPromptId = null;
 
+        CloseOpenTools();
         EmitUsage();
 
         string stop = _cancelRequested ? AcpProtocol.StopReason.Cancelled : AcpProtocol.StopReason.EndTurn;
@@ -539,43 +547,11 @@ public sealed class AcpServer
                 break;
             }
             case "tool_call":
-            {
-                // Explicit tool_call frame (swarm/parallel paths). Emit a pending->in_progress
-                // ACP tool_call; the matching tool_result completes it.
-                string tool = Str(payload, "tool");
-                string args = Str(payload, "args");
-                string toolId = "call_" + (++_toolCounter);
-                _pendingToolIds.Enqueue(toolId);
-                _lastToolArgs = args;
-                EmitToolCall(sid, toolId, tool, args);
+                OnToolCall(sid, payload);
                 break;
-            }
             case "tool_result":
-            {
-                // The single-agent path emits ONLY a tool_result frame (no preceding tool_call),
-                // carrying {agent, tool, result}. Swarm paths use {agent, summary} after a
-                // tool_call. Synthesize whatever the client has not seen yet so every tool shows
-                // a pending->completed lifecycle.
-                string tool = Str(payload, "tool");
-                string body = payload.TryGetValue("result", out var rv) && rv is string rs && rs.Length > 0
-                    ? rs : Str(payload, "summary");
-                string toolId;
-                if (_pendingToolIds.TryDequeue(out var tid))
-                {
-                    toolId = tid;   // completes a tool_call already announced
-                }
-                else
-                {
-                    // No preceding tool_call (single-agent): announce one first.
-                    toolId = "call_" + (++_toolCounter);
-                    EmitToolCall(sid, toolId, string.IsNullOrEmpty(tool) ? "tool" : tool, _lastToolArgs);
-                }
-                var content = BuildToolContent(tool, _lastToolArgs, body);
-                WriteMessage(AcpProtocol.SessionUpdate(sid,
-                    AcpProtocol.ToolCallUpdateRich(toolId, "completed", content)));
-                _lastToolArgs = null;
+                OnToolResult(sid, payload);
                 break;
-            }
             case "step":
             {
                 // A WriteStep frame is a single plan item becoming the in-progress focus. ACP
@@ -596,36 +572,134 @@ public sealed class AcpServer
         }
     }
 
-    private void EmitToolCall(string sid, string toolId, string tool, string? args)
+    /// <summary>
+    /// A tool was invoked: announce it right away (before it runs) with a readable title,
+    /// rawInput and follow-along locations. Edit/write tools snapshot the target file first so
+    /// the result can carry a real old/new diff.
+    /// </summary>
+    private void OnToolCall(string sid, IReadOnlyDictionary<string, object?> payload)
     {
-        var raw = string.IsNullOrEmpty(args) ? null : new Dictionary<string, object?> { ["args"] = args };
-        var locations = AcpProtocol.Locations(args);
-        WriteMessage(AcpProtocol.SessionUpdate(sid,
-            AcpProtocol.ToolCallWithLocations(toolId, tool, AcpProtocol.ToolKind(tool), "in_progress", raw, locations)));
+        string tool = Str(payload, "tool");
+        string args = Str(payload, "args");
+        string callId = Str(payload, "callId");
+        string kind = AcpProtocol.ToolKind(tool);
+        string? path = AcpProtocol.ExtractAbsolutePath(args);
+        string? oldText = null;
+        bool snapshot = false;
+        if (kind == "edit" && path is not null)
+            snapshot = TrySnapshot(path, out oldText);
+
+        string acpId;
+        lock (_toolLock)
+        {
+            acpId = callId.Length > 0 && !_openTools.ContainsKey(callId) ? callId : "call_" + (++_toolCounter);
+            _openTools[acpId] = new OpenTool(acpId, tool, args, path, oldText, snapshot);
+            if (callId.Length == 0) _fifoToolIds.Enqueue(acpId);
+        }
+        EmitToolCall(sid, acpId, tool, args, "in_progress");
     }
 
     /// <summary>
-    /// Build the completed tool_call_update content. Edit-tool results that contain a git-style
-    /// unified diff are surfaced as an ACP diff block (path from the tool args); everything else
-    /// becomes a text block. Empty bodies yield no content.
+    /// A tool finished: complete its card (failed when the result is an error). A result with no
+    /// announced call (older event shapes) announces one first, so the client never sees an
+    /// update for an unknown id.
     /// </summary>
-    private object[]? BuildToolContent(string tool, string? args, string body)
+    private void OnToolResult(string sid, IReadOnlyDictionary<string, object?> payload)
     {
-        if (string.IsNullOrWhiteSpace(body)) return null;
-        string kind = AcpProtocol.ToolKind(tool);
-        string? path = AcpProtocol.ExtractAbsolutePath(args);
-        if (kind == "edit" && path is not null && LooksLikeDiff(body))
+        string tool = Str(payload, "tool");
+        string callId = Str(payload, "callId");
+        string body = payload.TryGetValue("result", out var rv) && rv is string rs && rs.Length > 0
+            ? rs : Str(payload, "summary");
+        bool isError = payload.TryGetValue("isError", out var ev) && ev is true;
+
+        OpenTool? open = null;
+        bool announced = true;
+        lock (_toolLock)
         {
-            // Surface the unified diff as both a diff block (rich UI) and the raw text.
-            return new[] { AcpProtocol.DiffContent(path, null, body) };
+            if (callId.Length > 0 && _openTools.Remove(callId, out var byId)) open = byId;
+            else
+            {
+                while (open is null && _fifoToolIds.TryDequeue(out var fid))
+                    if (_openTools.Remove(fid, out var byFifo)) open = byFifo;
+            }
+            if (open is null)
+            {
+                announced = false;
+                string acpId = callId.Length > 0 ? callId : "call_" + (++_toolCounter);
+                open = new OpenTool(acpId, string.IsNullOrEmpty(tool) ? "tool" : tool, null, null, null, false);
+            }
         }
+        if (!announced)
+            EmitToolCall(sid, open.AcpId, open.Tool, null, "in_progress");
+
+        var content = BuildToolContent(open, body, isError);
+        WriteMessage(AcpProtocol.SessionUpdate(sid,
+            AcpProtocol.ToolCallUpdateRich(open.AcpId, isError ? "failed" : "completed", content)));
+    }
+
+    /// <summary>Finish every still-open call as failed (turn ended or was cancelled before its
+    /// result arrived). Must run before the session/prompt response.</summary>
+    private void CloseOpenTools()
+    {
+        string? sid = _sessionId;
+        List<OpenTool> open;
+        lock (_toolLock)
+        {
+            open = _openTools.Values.ToList();
+            _openTools.Clear();
+            _fifoToolIds.Clear();
+        }
+        if (sid is null) return;
+        foreach (var t in open)
+            WriteMessage(AcpProtocol.SessionUpdate(sid, AcpProtocol.ToolCallUpdateRich(t.AcpId, "failed", null)));
+    }
+
+    private void EmitToolCall(string sid, string toolId, string tool, string? args, string status)
+    {
+        object? raw = null;
+        if (!string.IsNullOrWhiteSpace(args))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(args);
+                raw = doc.RootElement.Clone();
+            }
+            catch (JsonException) { raw = new Dictionary<string, object?> { ["args"] = args }; }
+        }
+        WriteMessage(AcpProtocol.SessionUpdate(sid,
+            AcpProtocol.ToolCallWithLocations(toolId, AcpProtocol.ToolTitle(tool, args), AcpProtocol.ToolKind(tool),
+                status, raw, AcpProtocol.Locations(args))));
+    }
+
+    /// <summary>Read a file's current text for a diff card. Missing file = new file (true, null).</summary>
+    private static bool TrySnapshot(string path, out string? text)
+    {
+        text = null;
+        try
+        {
+            var fi = new FileInfo(path);
+            if (!fi.Exists) return true;
+            if (fi.Length > MaxDiffBytes) return false;
+            text = File.ReadAllText(path);
+            return true;
+        }
+        catch (Exception) { return false; }
+    }
+
+    /// <summary>
+    /// Build the finished tool_call_update content. A successful edit/write with a snapshot
+    /// becomes an ACP diff block {path, oldText, newText} read from disk; everything else is a
+    /// text block (truncated at 4000 chars). Empty bodies yield no content.
+    /// </summary>
+    private static object[]? BuildToolContent(OpenTool t, string body, bool isError)
+    {
+        if (!isError && t.Snapshot && t.Path is not null && TrySnapshot(t.Path, out var newText) && newText is not null
+            && !string.Equals(newText, t.OldText, StringComparison.Ordinal))
+            return new[] { AcpProtocol.DiffContent(t.Path, t.OldText, newText) };
+        if (string.IsNullOrWhiteSpace(body)) return null;
         string text = body.Length > 4000 ? body[..4000] + "\n... (truncated)" : body;
         return new[] { AcpProtocol.TextContent(text) };
     }
-
-    private static bool LooksLikeDiff(string s) =>
-        s.Contains("@@") || s.Contains("--- ") || s.Contains("+++ ") ||
-        (s.Contains("\n+") && s.Contains("\n-"));
 
     private void EmitUsage()
     {
