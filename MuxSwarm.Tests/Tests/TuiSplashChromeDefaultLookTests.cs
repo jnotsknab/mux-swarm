@@ -53,7 +53,9 @@ public class TuiSplashChromeDefaultLookTests
             model.SetModels(["model-a", "model-b"], null);
             Add(model.Render(90, 22));
             Add(new HistoryView([("2026-10-20_17-52-09", "fix the login bug", "release"), ("2026-10-19_09-00-00", "notes", null)], resumePicker: true).Render(90, 20));
-            Add(new ExtensionsPanelView([ExtensionsPanelTests.Item("ember"), ExtensionsPanelTests.Item("meter", process: true, trusted: true)]).Render(110, 24));
+            // Platform-neutral folder paths (Path.Combine would differ between Windows and Linux).
+            Add(new ExtensionsPanelView([ExtensionsPanelTests.Item("ember") with { Dir = "ext/ember" },
+                ExtensionsPanelTests.Item("meter", process: true, trusted: true) with { Dir = "ext/meter" }]).Render(110, 24));
             Engine.Extensions.ExtensionPanels.Surface = () => null;
             using var doc = System.Text.Json.JsonDocument.Parse("""
                 { "type": "box", "children": [ { "type": "text", "text": "Notes" }, { "type": "input", "key": "new", "placeholder": "add" },
@@ -73,5 +75,5 @@ public class TuiSplashChromeDefaultLookTests
     }
 
     [Fact]
-    public void Views_NoStyles_AreUnchanged() => Assert.Equal("88F714EE36C302EF", Hash(RenderViews()));
+    public void Views_NoStyles_AreUnchanged() => Assert.Equal("A4EA0B2EBB666420", Hash(RenderViews()));
 }
