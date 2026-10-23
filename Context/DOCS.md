@@ -1387,6 +1387,24 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
     is centered); `splash.columns`: `all` (logo, getting-started, recent; default), `logo`, `logo,recent`,
     `logo,getting-started`, `getting-started,logo`, `recent,logo` (choose and order the wide-screen columns;
     a single column keeps the compact one-panel look at any width).
+  - `splash.layout` (replaces the stock arrangement and `splash.columns`): 1-8 row strings; a row holds 1-3 cells
+    split by `|`, a cell is a stack of section names split by spaces. Sections: `logo` (the stock art + version +
+    message + link block), `art`, `title` (`splash.title`, default `MUX-SWARM`, in `splash.titleFg`), `version`,
+    `message` (the random quote/tip), `hint` (`/agent to start ...`), `link`, `getting-started`, `commands`, `tips`,
+    `recent`, `text` (`splash.text`: 1-12 theme lines in `splash.textFg`), `gap` (a blank row). Cells in a row share
+    the width (art keeps its width, text cells take the rest); a row too wide for the terminal stacks its cells.
+    `splash.divider` `rule` (default; lines between rows and cells) or `gap`. `splash.width` 1-100 = panel width in
+    percent of the terminal (0 = default: full width, or hug the content when centered). `splash.contentAlign`
+    `left`/`center` centers each section in its cell. `splash.borderTitle` puts text in the top border
+    (`╭─ mux 0.16.0 ───╮`). `{version}` and `{cwd}` work in `title`, `borderTitle` and `text`.
+  - Section styles (any layout, including the stock one): `splash.headings` `plain` (default) / `rule` (`── Title ──`)
+    / `strip` (filled with `splash.headingBg`) / `none`, in `splash.headingFg`; `splash.bullet` (one cell, e.g. `•`)
+    leads list rows, in `splash.bulletFg`; `splash.recentCount` 0-10 (default 5; 0 hides recent sessions).
+    Example, a two-row grid:
+    ```jsonc
+    "splash": { "layout": ["art | title version message", "commands | recent"], "width": 90, "align": "center",
+                "headings": "rule", "bullet": "›", "borderTitle": "mux {version}" }
+    ```
   - Full-screen views (`/extensions`, the model/settings/agent/theme pickers, history, extension panels opened
     full screen): `panel.header` `plain` (default) / `strip` (filled with `panel.headerBg`) / `rule` (title set in a
     `panel.rule` run), `panel.headerAlign` `left`/`center`; `panel.selectedStyle` `chevron` (default) / `bar`
