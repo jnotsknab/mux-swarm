@@ -1420,7 +1420,7 @@ public static class MultiAgentOrchestrator
                         else if (content is UsageContent usageContent)
                         {
                             _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
-                            Telemetry.TelemetryUsageTracker.RecordCumulative(orchestratorSession, "Orchestrator", _orchestratorModelId,
+                            Telemetry.TelemetryUsageTracker.RecordCall("Orchestrator", _orchestratorModelId,
                                 usageContent.Details.InputTokenCount, usageContent.Details.OutputTokenCount,
                                 usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount);
                         }
@@ -1812,7 +1812,7 @@ public static class MultiAgentOrchestrator
                         else if (content is UsageContent usageContent)
                         {
                             _swarmTokens += (uint)(usageContent.Details.TotalTokenCount ?? 0);
-                            Telemetry.TelemetryUsageTracker.RecordCumulative(specialist.Session, specialist.Def.Name, specialist.Agent.Id,
+                            Telemetry.TelemetryUsageTracker.RecordCall(specialist.Def.Name, specialist.Agent.Id,
                                 usageContent.Details.InputTokenCount, usageContent.Details.OutputTokenCount,
                                 usageContent.Details.CachedInputTokenCount, usageContent.Details.ReasoningTokenCount, usageContent.Details.TotalTokenCount);
                         }
