@@ -9,32 +9,22 @@ namespace MuxSwarm.Tests.Tests;
 public class CostLedgerTests
 {
     [Fact]
-    public void RecordUsage_SessionSnapsToLatestCumulative()
+    public void RecordUsage_SumsPerCallUsage_SessionAndRolling()
     {
-        string m = "test-model-snap-" + Guid.NewGuid().ToString("N");
-        CostLedger.RecordUsage(m, input: 100, output: 20, cached: 10, reasoning: 5, total: 120);
-        CostLedger.RecordUsage(m, input: 250, output: 60, cached: 40, reasoning: 15, total: 310);
+        // Each UsageContent frame is ONE call's usage (harbor trial, claude via the chat path): 3 calls.
+        string m = "test-model-sum-" + Guid.NewGuid().ToString("N");
+        CostLedger.RecordUsage(m, input: 10402, output: 300, cached: 10000, reasoning: 5, total: 10702);
+        CostLedger.RecordUsage(m, input: 10621, output: 250, cached: 10400, reasoning: 0, total: 10871);
+        CostLedger.RecordUsage(m, input: 10987, output: 410, cached: 10600, reasoning: 7, total: 11397);
 
         var row = Find(m);
-        Assert.Equal(250, row.SessInput);
-        Assert.Equal(60, row.SessOutput);
-        Assert.Equal(40, row.SessCached);
-        Assert.Equal(15, row.SessReasoning);
-        Assert.Equal(310, row.SessTotal);
-    }
-
-    [Fact]
-    public void RecordUsage_RollingAccumulatesByDelta()
-    {
-        string m = "test-model-roll-" + Guid.NewGuid().ToString("N");
-        // Two cumulative snapshots: rolling should equal the latest snapshot (single contiguous run).
-        CostLedger.RecordUsage(m, 100, 20, 0, 0, 120);
-        CostLedger.RecordUsage(m, 250, 60, 0, 0, 310);
-
-        var row = Find(m);
-        Assert.Equal(250, row.RollInput);
-        Assert.Equal(60, row.RollOutput);
-        Assert.Equal(310, row.RollTotal);
+        Assert.Equal(32010, row.SessInput);
+        Assert.Equal(960, row.SessOutput);
+        Assert.Equal(31000, row.SessCached);
+        Assert.Equal(12, row.SessReasoning);
+        Assert.Equal(32970, row.SessTotal);
+        Assert.Equal(32010, row.RollInput);
+        Assert.Equal(32970, row.RollTotal);
     }
 
     [Fact]
@@ -48,11 +38,9 @@ public class CostLedgerTests
         var row = Find(m);
         Assert.Equal(0, row.SessInput);
         Assert.Equal(0, row.SessTotal);
-        // Rolling survives the wipe.
-        Assert.Equal(200, row.RollInput);
+        Assert.Equal(200, row.RollInput);   // rolling survives the wipe
         Assert.Equal(250, row.RollTotal);
 
-        // After reset, a new snapshot is treated as a fresh baseline (advances rolling by full value).
         CostLedger.RecordUsage(m, 80, 10, 0, 0, 90);
         row = Find(m);
         Assert.Equal(80, row.SessInput);

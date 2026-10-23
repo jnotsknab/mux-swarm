@@ -180,26 +180,30 @@ public class TelemetryTests : IDisposable
     }
 
     [Fact]
-    public void UsageTracker_SessionScopedBaselines_EmitDeltas_NotCumulative()
+    public void UsageTracker_RecordsEachCall_AsIs()
     {
-        var sessionA = new object();
-        var sessionB = new object();
-        // Same model, two concurrent sessions reporting cumulative snapshots.
-        Telemetry_RecordCumulative(sessionA, "CodeAgent", "m", 100, 10);
-        Telemetry_RecordCumulative(sessionB, "WebAgent", "m", 40, 4);
-        Telemetry_RecordCumulative(sessionA, "CodeAgent", "m", 150, 15); // +50/+5
-        Telemetry_RecordCumulative(sessionB, "WebAgent", "m", 90, 9);    // +50/+5
+        // Swarm: interleaved per-call frames from two agents on the same model; every call is stored whole.
+        TelemetryUsageTracker.RecordCall("CodeAgent", "m", 10402, 300, 10000, 0, 10702);
+        TelemetryUsageTracker.RecordCall("WebAgent", "m", 4000, 100, 0, 0, 4100);
+        TelemetryUsageTracker.RecordCall("CodeAgent", "m", 10621, 250, 10400, 0, 10871);
+        TelemetryUsageTracker.RecordCall("CodeAgent", "m", 10987, 410, 10600, 0, 11397);
 
         var usage = TelemetryStore.Load(null).Where(e => e.Kind == "usage").ToList();
-        Assert.Equal(4, usage.Count);
-        Assert.Equal(100 + 40 + 50 + 50, usage.Sum(e => e.In));
-        Assert.Equal(10 + 4 + 5 + 5, usage.Sum(e => e.Out));
+        Assert.Equal(new long[] { 10402, 4000, 10621, 10987 }, usage.Select(e => e.In).ToArray());
         var agents = TelemetryStore.ByAgent(usage);
-        Assert.Equal(150, agents.Single(a => a.Agent == "CodeAgent").In);
-        Assert.Equal(90, agents.Single(a => a.Agent == "WebAgent").In);
+        Assert.Equal(32010, agents.Single(a => a.Agent == "CodeAgent").In);
+        Assert.Equal(4000, agents.Single(a => a.Agent == "WebAgent").In);
+    }
 
-        static void Telemetry_RecordCumulative(object scope, string agent, string model, long input, long output)
-            => TelemetryUsageTracker.RecordCumulative(scope, agent, model, input, output, 0, 0, input + output);
+    [Fact]
+    public void CostLedger_PersistsEachCall_ToTheSink()
+    {
+        foreach (var (i, o, c) in new[] { (10402L, 300L, 10000L), (10621L, 250L, 10400L), (10987L, 410L, 10600L) })
+            CostLedger.RecordUsage("sink-m", i, o, c, 0, i + o, "MuxAgent");
+        var usage = TelemetryStore.Load(null).Where(e => e.Kind == "usage" && e.Model == "sink-m").ToList();
+        Assert.Equal(new long[] { 10402, 10621, 10987 }, usage.Select(e => e.In).ToArray());
+        Assert.Equal(960, usage.Sum(e => e.Out));
+        Assert.Equal(31000, usage.Sum(e => e.Cached));
     }
 
     [Fact]
