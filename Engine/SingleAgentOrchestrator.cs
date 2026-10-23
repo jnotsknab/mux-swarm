@@ -2089,6 +2089,7 @@ public static class SingleAgentOrchestrator
                         {
                         turnCts.Token.ThrowIfCancellationRequested();
                         lastFinishReason = null;
+                        string? lastUsageResponseId = null;   // a repeated usage chunk counts once
                         await foreach (AgentResponseUpdate update in agent.RunStreamingAsync(messages, session)
                                            .WithCancellation(activityTimeout.Token))
                         {
@@ -2262,7 +2263,8 @@ public static class SingleAgentOrchestrator
                                             thinking.UpdateStatus(calledTools);
                                     }
                                 }
-                                else if (content is UsageContent usageContent)
+                                else if (content is UsageContent usageContent
+                                    && Telemetry.TelemetryUsageTracker.FirstForResponse(update.ResponseId, ref lastUsageResponseId))
                                 {
                                     var details = usageContent.Details;
                                     // Authoritative checkpoint: snap to the provider's real counts. A multi-iteration
