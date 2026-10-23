@@ -3647,6 +3647,9 @@ internal sealed partial class TuiDriver
                     case LineEditSignal.Submit:
                     {
                         string line = _editor.Buffer;
+                        // Enter on an empty (or blank) box sends nothing: callers read "" as quit. /qc and /qm
+                        // still quit; Ctrl+D (Eof) still returns null.
+                        if (string.IsNullOrWhiteSpace(line)) { _editor.Reset(); Repaint(); break; }
                         // A draft a share guest typed into stays guest-authored: same policy on host submit.
                         if (!RemoteSubmitAllowed(line)) { Repaint(); break; }
                         return SubmitDraft(line);
