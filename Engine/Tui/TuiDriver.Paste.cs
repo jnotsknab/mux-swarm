@@ -137,7 +137,10 @@ internal sealed partial class TuiDriver
     {
         var display = _editor.Display;
         _composeMeta.Clear();
-        var input = TuiComponents.InputRowsWithCursor(display.Text, display.Cursor, width, _inputHighlight, _composeMeta);
+        string shape = ComposeShape.Active;
+        // Shaped boxes draw their own field; the highlight band is for the classic look only.
+        var input = TuiComponents.InputRowsWithCursor(display.Text, display.Cursor, ComposeShape.InnerWidth(shape, width),
+            _inputHighlight && shape == "classic", _composeMeta);
         // Keep the cursor neighborhood visible when ordinary composed text itself spans many rows.
         int statusRows = _pasteStatus is null ? 0 : 1;
         int minCardRows = _editor.Attachments.Items.Count == 0 ? 0 : _editor.Attachments.Expanded ? 3 : 2;
@@ -152,11 +155,24 @@ internal sealed partial class TuiDriver
         // ComposeFrameRows can register ComposeArea regions (click-to-position). Meta rows are
         // parallel to `input`; the visible window is input[start .. start+maxInput).
         _composeVisible.Clear();
+        _composeLeftCols = 0;
         int shown = Math.Min(maxInput, Math.Max(0, input.Count - start));
-        for (int i = 0; i < shown; i++)
-            _composeVisible.Add((lines.Count + i, start + i));
-        lines.AddRange(input.Skip(start).Take(maxInput));
+        if (shape == "classic")
+        {
+            for (int i = 0; i < shown; i++)
+                _composeVisible.Add((lines.Count + i, start + i));
+            lines.AddRange(input.Skip(start).Take(maxInput));
+            return;
+        }
+        var frame = ComposeShape.Wrap(shape, input.Skip(start).Take(maxInput).ToList(), width);
+        for (int i = 0; i < frame.InputLines.Count; i++)
+            _composeVisible.Add((lines.Count + frame.InputLines[i], start + i));
+        _composeLeftCols = frame.LeftCols;
+        lines.AddRange(frame.Lines);
     }
+
+    // Columns a compose shape draws before each input row's own lead (box/bubble border + padding, rail).
+    private int _composeLeftCols;
 
     private void EchoDraft(string fullText)
     {

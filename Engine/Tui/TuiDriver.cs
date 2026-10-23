@@ -2199,8 +2199,8 @@ internal sealed partial class TuiDriver
         if (_inInput)
         {
             // A second full-width rule gives the input/compose area its own visible band,
-            // clearly separated from the footer above it.
-            if (TuiComponents.FooterRule(width) is { } inputRule) lines.Add(inputRule);
+            // clearly separated from the footer above it (shaped compose boxes draw their own chrome).
+            if (!ComposeShape.OwnsTopRule && TuiComponents.FooterRule(width) is { } inputRule) lines.Add(inputRule);
             // While reverse-incremental search (Ctrl+R) is active, the readline-style search row
             // replaces the normal input row and its completions; accepting/cancelling restores them.
             if (_editor.IsSearching)
@@ -2231,14 +2231,15 @@ internal sealed partial class TuiDriver
     /// <summary>The footer block: its rule (when shown) and the status row, recording the row for badge clicks.</summary>
     private void AddFooterBlock(List<string> lines, int width)
     {
-        // Full-width rule separates the transcript from the docked footer (Claude-Code feel).
-        if (TuiComponents.FooterRule(width) is { } footerRule) lines.Add(footerRule);
+        // Full-width rule separates the transcript from the docked footer (Claude-Code feel). A shaped compose box
+        // draws its own chrome, so the footer's rule would double it: shapes keep the footer row bare.
+        if (!ComposeShape.OwnsTopRule && TuiComponents.FooterRule(width) is { } footerRule) lines.Add(footerRule);
         _footerLine = lines.Count;
         lines.Add(BuildFooterRow(width));
     }
 
     /// <summary>Physical rows the footer block takes (for the compose budget when it sits below the input).</summary>
-    private int FooterBlockRows(int width) => (TuiComponents.FooterRule(width) is null ? 0 : 1) + 1;
+    private int FooterBlockRows(int width) => (ComposeShape.OwnsTopRule || TuiComponents.FooterRule(width) is null ? 0 : 1) + 1;
 
     private string BuildFooterRow(int width)
     {
@@ -3186,7 +3187,7 @@ internal sealed partial class TuiDriver
                 var m = _composeMeta[captured.Payload];
                 var disp = _editor.Display;
                 // Column left of the lead = start of the chunk; beyond the chunk = its end.
-                int chunkCol = Math.Clamp((ev.Col - captured.Left + 1) - 1 - m.LeadCols, 0, m.Take);
+                int chunkCol = Math.Clamp((ev.Col - captured.Left + 1) - 1 - _composeLeftCols - m.LeadCols, 0, m.Take);
                 int displayOffset = 0;
                 var segs = disp.Text.Split('\n');
                 for (int s = 0; s < m.Seg && s < segs.Length; s++) displayOffset += segs[s].Length + 1;
