@@ -256,6 +256,10 @@ internal class App
         }
         
         Activity? startupSpan = null;
+
+        // Routine startup notices (provider, skills, telemetry ...) go to the startup log (/logs) instead of
+        // the screen; warnings and errors still print. MUXSWARM_VERBOSE=1 keeps the old output.
+        MuxConsole.QuietStartup = !MuxConsole.StdioMode && !VerboseInit;
         
         // In-proc OTel ingestion for the telemetry dashboard (metrics/traces/logs tabs).
         // Always on, independent of the OTLP exporter gate; bounded memory.
@@ -288,12 +292,9 @@ internal class App
         InitLlmProvider();
         SkillLoader.LoadSkills();
         
-        // Hooks confirm BEFORE the MCP kickoff: HookWorker.Start shows a blocking
-        // Confirm prompt when hooks are configured (interactive path), and putting it
-        // after the MCP fan-out landed the prompt in the middle of the subprocess spawn
-        // storm - key handling turned sluggish and startup felt slow. On a quiet machine
-        // the prompt is instant; MCP init still overlaps everything after it and is
-        // awaited lazily via EnsureMcpReadyAsync() before the first tool use.
+        // Hooks load here; on interactive runs the "Proceed with hooks enabled?" prompt is deferred to
+        // HookWorker.ConfirmPending() once the TUI is up (it then shows in the frame). MCP init still
+        // overlaps everything and is awaited lazily via EnsureMcpReadyAsync() before the first tool use.
         HookWorker.Start(SwarmConfig?.Hooks ?? []);
         OtelLogger.Info("Hook Worker Started");
 
@@ -513,12 +514,16 @@ internal class App
         if (!string.IsNullOrWhiteSpace(parsed.Goal))
         {
             DaemonPending = false;   // daemon never starts on this path; health must not stay "starting"
+            MuxConsole.EndQuietStartup();
+            HookWorker.ConfirmPending();
             await EnsureMcpReadyAsync();
             return await HandleParsedRun(parsed);
         }
 
         if (parsed.ReportAll || parsed.ReportSessionId != null)
         {
+            MuxConsole.EndQuietStartup();
+            HookWorker.ConfirmPending();
             CliCmdUtils.GenerateSessionReports(parsed.ReportSessionId);
             OtelLogger.Info("Generated Session Reports From parsed --report arg");
             DaemonPending = false;
@@ -541,6 +546,8 @@ internal class App
                 }
             }
 
+            MuxConsole.EndQuietStartup();
+            HookWorker.ConfirmPending();
             await EnsureMcpReadyAsync();
             DaemonRunner.Start(
                 chatClientFactory: modelId => CreateChatClient(modelId),
@@ -554,6 +561,8 @@ internal class App
         if (OnboardRequested)
         {
             OnboardRequested = false;
+            MuxConsole.EndQuietStartup();
+            HookWorker.ConfirmPending();
             await EnsureMcpReadyAsync();
             var onboardModel = LoadSingleAgentModel();
             var onboardCts = GetOrResetCts();
@@ -571,6 +580,8 @@ internal class App
         // agent/swarm sessions. At the menu it runs in "top-level" palette scope (mode-select
         // commands); sessions switch it to the in-session command set. No-op outside TUI.
         MuxConsole.EnableDockedFooter(topLevel: true);
+        MuxConsole.EndQuietStartup();
+        HookWorker.ConfirmPending();   // in the frame modal when the frame engine is up
         // Interactive loop
         while (!Environment.HasShutdownStarted)
         {
@@ -1561,6 +1572,10 @@ internal class App
                     MuxConsole.TuiForceRedraw();
                     break;
                 }
+
+                case "/logs":
+                    LogsCommand.Run();
+                    break;
 
                 case var extCmd when Engine.Extensions.ExtensionCommands.Match(extCmd) is not null:
                 {
