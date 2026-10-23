@@ -808,9 +808,7 @@ internal class App
                     var agentHandle = InteractiveSessionRegistry.Create(
                         "agent", SingleAgentOrchestrator.AgentDef?.Name ?? "agent");
                     agentHandle.ChatTask = SingleAgentOrchestrator.ChatAgentAsync(
-                        client: CreateChatClient(singleAgentModel, null,
-                            wrapMidTurnReflection: true,
-                            reflectionAgentName: SingleAgentOrchestrator.AgentDef?.Name ?? "Agent"),
+                        client: CreateLeadChatClient(singleAgentModel),
                         agentCts.Token,
                         maxIterations: 3,
                         mcpTools: McpTools,
@@ -822,7 +820,10 @@ internal class App
                         chatClientFactory: modelId => CreateChatClient(modelId),
                         allowSubAgents: AllowSubagents,
                         allowParallelSubAgents: AllowParallelSubAgents,
-                        interactiveHandle: agentHandle
+                        interactiveHandle: agentHandle,
+                        // A /setmodel switch rebuilds the lead with this; keep the steer (Ctrl+N) and
+                        // mid-turn reflection wrappers the launch client has.
+                        leadClientFactory: modelId => CreateLeadChatClient(modelId)
                     );
                     await PumpSessionAsync(agentHandle);   // returns when the session parks or finishes
                     } finally { ServeMode.ActiveMode = "interactive"; }
@@ -2692,6 +2693,12 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
     public static IChatClient CreateChatClient(string modelId, ChatOptions? chatOptions = null)
         => CreateChatClient(modelId, chatOptions, wrapMidTurnReflection: false, reflectionAgentName: null);
+
+    /// <summary>The /agent lead's client: <see cref="CreateChatClient(string, ChatOptions?, bool, string?)"/> with the
+    /// mid-turn steer and reflection wrappers. Used at launch and when a model switch rebuilds the lead.</summary>
+    internal static IChatClient CreateLeadChatClient(string modelId)
+        => CreateChatClient(modelId, null, wrapMidTurnReflection: true,
+            reflectionAgentName: SingleAgentOrchestrator.AgentDef?.Name ?? "Agent");
 
     /// <summary>
     /// Build a chat client. When <paramref name="wrapMidTurnReflection"/> is true the client is
