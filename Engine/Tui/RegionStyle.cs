@@ -63,6 +63,9 @@ internal static class RegionStyle
         ["panel.rule"] = G("\u2500"), ["panel.ruleFg"] = C("#3A3A3A"), ["panel.tabFg"] = C("muted"), ["panel.tabActiveFg"] = C("accent"),
         ["panel.focusFg"] = C("black"), ["panel.focusBg"] = C("accent"),
         ["splash.show"] = F(true), ["splash.art"] = A(), ["splash.artFg"] = C("banner"), ["splash.accentFg"] = C("success"),
+        ["splash.frame"] = O("rounded", "square", "double", "thick", "ascii", "none"), ["splash.borderFg"] = C("muted"),
+        ["splash.align"] = O("left", "center"), ["splash.padY"] = N(1, 0, 2),
+        ["splash.columns"] = O("all", "logo", "logo,recent", "logo,getting-started", "getting-started,logo", "recent,logo"),
         // Layout (shape) properties: where the footer sits relative to the compose box, and blank rows above them.
         ["footer.position"] = O("above", "below", "hidden", "border"),
         ["footer.style"] = O("dot", "pipe", "space", "powerline", "ascii"),
