@@ -2382,7 +2382,8 @@ internal class App
         if (_mcpStrictMode)
             return enabledCount > 0 && successCount == enabledCount;
 
-        return successCount > 0;
+        // Non-strict: no enabled servers is a valid setup (native tools only), not a failed connection.
+        return enabledCount == 0 || successCount > 0;
     }
 
     private sealed record McpInitResult(string Name, McpClient Client, IReadOnlyList<McpClientTool> Tools, bool IsHttp);
