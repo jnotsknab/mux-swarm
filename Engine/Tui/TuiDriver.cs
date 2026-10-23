@@ -930,12 +930,12 @@ internal sealed partial class TuiDriver
 
     /// <summary>
     /// Resolve the pending tool call by committing ONE merged "call + compact result" line.
-    /// No-op fallback: if there is no pending call, commits the merged line as-is so the
-    /// result is never lost.
+    /// When no call is pending (the single-agent loop does not announce calls in the TUI), the merged
+    /// line is labelled with <paramref name="toolName"/>, so the result never shows a blank tool name.
     /// </summary>
-    public void ResolveMergedToolResult(string resultText, bool error = false, string? expandBody = null)
+    public void ResolveMergedToolResult(string resultText, bool error = false, string? expandBody = null, string? toolName = null)
     {
-        var (tool, args) = _pendingTool ?? ("", null);
+        var (tool, args) = _pendingTool ?? (toolName ?? "", null);
         _pendingTool = null;
         _thinkingText = null;
         int infoLines = (resultText ?? "").Replace("\r\n", "\n").Split('\n').Count(l => l.Trim().Length > 0);
