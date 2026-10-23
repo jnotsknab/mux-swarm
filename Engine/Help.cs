@@ -85,7 +85,7 @@ public struct Help
         "  /memory         Deep-memory status/toggle/tune (/memory [deep|standard|show|set <key> <value>])",
         "  /deep           Toggle deep memory on/off (/deep [off])",
         "  /taskgraph      Auto-decompose a goal into a blockedBy task graph (/taskgraph on|off|status)",
-        "  /sessions       List all saved sessions with type and agent count",
+        "  /sessions       Alias of /history (outside the TUI: saved sessions with type and agent count)",
         "  /dockerexec     Toggle the docker sandbox (microVM) on/off",
         "  /sandbox        Show/swap exec sandbox backend (host|docker|docker-container|podman|gvisor|kata|...)",
         "  /delimiter      Toggle multi-line input delimiter",

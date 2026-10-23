@@ -1314,7 +1314,8 @@ internal class App
                     break;
 
                 case "/sessions":
-                    CliCmdUtils.ListSessions();
+                    // Alias of /history: the full-screen viewer in the TUI, the session list elsewhere.
+                    CliCmdUtils.HandleHistory();
                     break;
 
                 case "/config":

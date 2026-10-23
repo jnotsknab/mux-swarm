@@ -876,7 +876,7 @@ Flags can be combined. Common stacks:
 ```
 /resume         Resume a previous single-agent session (inside a session it switches straight away;
                 set console.confirmResume true to be asked first)
-/sessions       List saved sessions with type + agent count
+/sessions       Alias of /history (classic/stdio: saved sessions with type + agent count)
 /history        Browse past sessions full-screen (fuzzy find, open, scroll, search)
 /attach [id]    Re-enter a session parked via /detach (no id = pick from list)
 /background, /bg  Manage detached background jobs (alias of the old /detach job command)

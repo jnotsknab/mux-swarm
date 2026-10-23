@@ -873,7 +873,7 @@ public static partial class MuxConsole
         lines.Add("");
         if (plain) lines.Add($"[{C.Muted}]────────────────────────────────[/]");
         lines.Add(SplashItem($"[{C.Muted}]/resume to continue a session[/]"));
-        lines.Add(SplashItem($"[{C.Muted}]/sessions to view session info[/]"));
+        lines.Add(SplashItem($"[{C.Muted}]/history to browse sessions[/]"));
         return lines;
     }
 
