@@ -249,6 +249,10 @@ internal class App
         }
         
         Activity? startupSpan = null;
+
+        // Routine startup notices (provider, skills, telemetry ...) go to the startup log (/logs) instead of
+        // the screen; warnings and errors still print. MUXSWARM_VERBOSE=1 keeps the old output.
+        MuxConsole.QuietStartup = !MuxConsole.StdioMode && !VerboseInit;
         
         // In-proc OTel ingestion for the telemetry dashboard (metrics/traces/logs tabs).
         // Always on, independent of the OTLP exporter gate; bounded memory.
@@ -281,12 +285,9 @@ internal class App
         InitLlmProvider();
         SkillLoader.LoadSkills();
         
-        // Hooks confirm BEFORE the MCP kickoff: HookWorker.Start shows a blocking
-        // Confirm prompt when hooks are configured (interactive path), and putting it
-        // after the MCP fan-out landed the prompt in the middle of the subprocess spawn
-        // storm - key handling turned sluggish and startup felt slow. On a quiet machine
-        // the prompt is instant; MCP init still overlaps everything after it and is
-        // awaited lazily via EnsureMcpReadyAsync() before the first tool use.
+        // Hooks load here; on interactive runs the "Proceed with hooks enabled?" prompt is deferred to
+        // HookWorker.ConfirmPending() once the TUI is up (it then shows in the frame). MCP init still
+        // overlaps everything and is awaited lazily via EnsureMcpReadyAsync() before the first tool use.
         HookWorker.Start(SwarmConfig?.Hooks ?? []);
         OtelLogger.Info("Hook Worker Started");
 
@@ -517,12 +518,16 @@ internal class App
         if (!string.IsNullOrWhiteSpace(parsed.Goal))
         {
             DaemonPending = false;   // daemon never starts on this path; health must not stay "starting"
+            MuxConsole.EndQuietStartup();
+            HookWorker.ConfirmPending();
             await EnsureMcpReadyAsync();
             return await HandleParsedRun(parsed);
         }
 
         if (parsed.ReportAll || parsed.ReportSessionId != null)
         {
+            MuxConsole.EndQuietStartup();
+            HookWorker.ConfirmPending();
             CliCmdUtils.GenerateSessionReports(parsed.ReportSessionId);
             OtelLogger.Info("Generated Session Reports From parsed --report arg");
             DaemonPending = false;
@@ -545,19 +550,23 @@ internal class App
                 }
             }
 
+            MuxConsole.EndQuietStartup();
+            HookWorker.ConfirmPending();
             await EnsureMcpReadyAsync();
             DaemonRunner.Start(
                 chatClientFactory: modelId => CreateChatClient(modelId),
                 mcpTools: McpTools!.Cast<AITool>().ToList(),
                 agentModels: Common.LoadAgentModels());
 
-            MuxConsole.WriteInfo("[Daemon] Running in background.");
+            MuxConsole.WriteInfo("[daemon] Running in background.");
             OtelLogger.Info("Daemon enabled and initialized successfully in background");
         }
         
         if (OnboardRequested)
         {
             OnboardRequested = false;
+            MuxConsole.EndQuietStartup();
+            HookWorker.ConfirmPending();
             await EnsureMcpReadyAsync();
             var onboardModel = LoadSingleAgentModel();
             var onboardCts = GetOrResetCts();
@@ -575,6 +584,8 @@ internal class App
         // agent/swarm sessions. At the menu it runs in "top-level" palette scope (mode-select
         // commands); sessions switch it to the in-session command set. No-op outside TUI.
         MuxConsole.EnableDockedFooter(topLevel: true);
+        MuxConsole.EndQuietStartup();
+        HookWorker.ConfirmPending();   // in the frame modal when the frame engine is up
         // Interactive loop
         while (!Environment.HasShutdownStarted)
         {
@@ -1175,10 +1186,8 @@ internal class App
 
                 case "/model":
                     var currentModel = LoadSingleAgentModel();
-                    MuxConsole.WriteInfo($"Selected lead model: {currentModel}");
-                    var models = Common.LoadAgentModels();
-                    foreach (var kvp in models)
-                        MuxConsole.WriteInfo($"  {kvp.Key} -> {kvp.Value}");
+                    MuxConsole.WriteSummaryTable($"Models (lead: {currentModel})",
+                        Common.LoadAgentModels().Select(kvp => (kvp.Key, kvp.Value)));
                     break;
 
                 case "/dbg":
@@ -1309,6 +1318,14 @@ internal class App
                     break;
 
                 case "/config":
+                {
+                    // Bare /config lists the settings (TuiConfigCommands.Handle); it used to fall into /workspace.
+                    var res = TuiConfigCommands.Handle(userInput);
+                    if (res.Ok) MuxConsole.WritePanel("Config", res.Message);
+                    else MuxConsole.WriteWarning(res.Message);
+                    break;
+                }
+
                 case var wsCmd when wsCmd == "/workspace" || wsCmd.StartsWith("/workspace ", StringComparison.Ordinal):
                 {
                     // Runtime mirror of the --workspace CLI arg: with no path, report the current
@@ -1488,14 +1505,13 @@ internal class App
                         {
                             var status = MuxSwarm.State.HookWorker.Enabled ? "ON" : "OFF";
                             var sb = new System.Text.StringBuilder();
-                            sb.AppendLine($"Hooks: {status}  ({MuxSwarm.State.HookWorker.Count} configured)");
                             foreach (var h in MuxSwarm.State.HookWorker.Loaded)
-                                sb.AppendLine($"  - {h.Id}: on {string.Join(", ", h.When.Events)}" +
+                                sb.AppendLine($"{h.Id}: on {string.Join(", ", h.When.Events)}" +
                                     (h.When.Agent is not null ? $" [agent={h.When.Agent}]" : "") +
                                     (h.When.Tool is not null ? $" [tool={h.When.Tool}]" : "") +
                                     $"  ({h.Mode})");
-                            sb.Append("Usage: /hooks on|off|create");
-                            MuxConsole.WriteInfo(sb.ToString().TrimEnd());
+                            sb.AppendLine().Append("Usage: /hooks on|off|create");
+                            MuxConsole.WritePanel($"Hooks: {status} ({MuxSwarm.State.HookWorker.Count} configured)", sb.ToString());
                             break;
                         }
                     }
@@ -1565,6 +1581,10 @@ internal class App
                     MuxConsole.TuiForceRedraw();
                     break;
                 }
+
+                case "/logs":
+                    LogsCommand.Run();
+                    break;
 
                 case var extCmd when Engine.Extensions.ExtensionCommands.Match(extCmd) is not null:
                 {

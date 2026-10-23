@@ -97,6 +97,10 @@ internal static class MetaCommandDispatch
                 KanbanCommand.Run(line);
                 return Result.Handled;
 
+            case "/logs":
+                LogsCommand.Run();
+                return Result.Handled;
+
             case "/share":
             case "/join":
                 await Share.ShareCommand.RunAsync(line);

@@ -66,6 +66,7 @@ internal static class RegionStyle
         ["panel.selectedStyle"] = O("chevron", "bar", "fill"), ["panel.bar"] = G("\u258c"), ["panel.selectedBg"] = C("cardBg"),
         ["panel.hints"] = O("plain", "strip"), ["panel.hintBg"] = C("cardBg"),
         ["panel.frame"] = O("none", "rounded", "square", "double", "thick", "ascii"), ["panel.frameFg"] = C("border"),
+        ["block.rail"] = G("\u2502"), ["block.railFg"] = C("step"), ["block.titleFg"] = C("step"),
         ["splash.show"] = F(true), ["splash.art"] = A(), ["splash.artFg"] = C("banner"), ["splash.accentFg"] = C("success"),
         ["splash.frame"] = O("rounded", "square", "double", "thick", "ascii", "none"), ["splash.borderFg"] = C("muted"),
         ["splash.align"] = O("left", "center"), ["splash.padY"] = N(1, 0, 2),
@@ -99,7 +100,7 @@ internal static class RegionStyle
         ["delegation.arrow"] = ">", ["delegation.branch"] = "`", ["delegation.mark"] = ">", ["delegation.done"] = "+", ["delegation.failed"] = "x",
         ["footer.separator"] = "|", ["footer.rule"] = "-", ["input.prompt"] = ">", ["input.continuation"] = "|", ["input.rail"] = "|",
         ["palette.selected"] = ">", ["palette.titleMark"] = "|", ["palette.up"] = "^", ["palette.down"] = "v",
-        ["modal.title"] = ">", ["modal.selected"] = ">", ["modal.checked"] = "*", ["modal.unchecked"] = "o", ["panel.rule"] = "-", ["panel.bar"] = "|",
+        ["modal.title"] = ">", ["modal.selected"] = ">", ["modal.checked"] = "*", ["modal.unchecked"] = "o", ["panel.rule"] = "-", ["panel.bar"] = "|", ["block.rail"] = "|",
     };
 
     /// <summary>Section names a <c>splash.layout</c> row may place (see the splash docs in DOCS.md).</summary>
