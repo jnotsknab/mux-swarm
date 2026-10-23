@@ -63,6 +63,12 @@ internal static class RegionStyle
         // Layout (shape) properties: where the footer sits relative to the compose box, and blank rows above them.
         ["footer.position"] = O("above", "below", "hidden"),
         ["compose.gap"] = N(0, 0, 2),
+        ["compose.shape"] = O("classic", "rule", "bracket", "box", "bubble", "rail", "bare"),
+        ["compose.border"] = O("rounded", "square", "double", "thick", "ascii"),
+        ["compose.padX"] = N(1, 0, 3), ["compose.padY"] = N(0, 0, 1),
+        ["compose.borderFg"] = C("border"), ["compose.rule"] = G("─"),
+        ["compose.fill"] = C("inputBg"), ["compose.capLeft"] = G("▐"), ["compose.capRight"] = G("▌"),
+        ["compose.rail"] = G("▎"), ["compose.railFg"] = C("accent"),
     };
 
     /// <summary>The <c>glyphs: "ascii"</c> set: plain-ASCII replacements for every built-in glyph, for terminals
