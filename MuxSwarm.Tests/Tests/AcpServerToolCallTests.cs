@@ -27,6 +27,7 @@ public class AcpServerToolCallTests
         private readonly StringWriter _out = new();
         private readonly SemaphoreSlim _turnDone = new(0);
         private readonly AcpServer _server;
+        public AcpServer Server => _server;
         private readonly MethodInfo _dispatch;
         private readonly MethodInfo _onEvent;
         private AcpInputReader? _reader;
@@ -193,6 +194,71 @@ public class AcpServerToolCallTests
         Assert.Equal("go", info.GetProperty("title").GetString());
         h.EndTurn();
         try { Directory.Delete(Path.Combine(PlatformContext.SessionsDirectory, sid), true); } catch { }
+    }
+
+    private static Task<string> Ask(Harness h, string q, string type, string[] choices) =>
+        (Task<string>)typeof(AcpServer).GetMethod("AskUserAsync", BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(h.Server, new object?[] { q, type, choices, "toolu_ask" })!;
+
+    private static JsonElement WaitPermissionRequest(Harness h)
+    {
+        for (int i = 0; i < 500; i++)
+        {
+            var req = h.Messages().FirstOrDefault(m => m.TryGetProperty("method", out var me) && me.GetString() == "session/request_permission");
+            if (req.ValueKind == JsonValueKind.Object) return req;
+            Thread.Sleep(10);
+        }
+        throw new Xunit.Sdk.XunitException("no session/request_permission sent");
+    }
+
+    [Fact]
+    public void AskUser_Select_IsAPermissionPrompt_OnTheSameToolCall()
+    {
+        using var h = new Harness();
+        h.StartTurn();
+        var task = Ask(h, "Which db?", "select", new[] { "sqlite", "postgres" });
+        var req = WaitPermissionRequest(h);
+        var p = req.GetProperty("params");
+        Assert.Equal("toolu_ask", p.GetProperty("toolCall").GetProperty("toolCallId").GetString());
+        Assert.Equal("Ask: Which db?", p.GetProperty("toolCall").GetProperty("title").GetString());
+        Assert.Equal(new[] { "sqlite", "postgres" }, p.GetProperty("options").EnumerateArray().Select(o => o.GetProperty("name").GetString()).ToArray());
+        string optId = p.GetProperty("options")[1].GetProperty("optionId").GetString()!;
+        h.Send(JsonSerializer.Serialize(new { jsonrpc = "2.0", id = req.GetProperty("id").GetInt64(), result = new { outcome = new { outcome = "selected", optionId = optId } } }));
+        Assert.True(task.Wait(5000));
+        Assert.Equal("User selected: postgres", task.Result);
+        h.EndTurn();
+    }
+
+    [Fact]
+    public void AskUser_Confirm_Cancelled_And_Text_DoNotBlock()
+    {
+        using var h = new Harness();
+        h.StartTurn();
+        var confirm = Ask(h, "Delete it?", "confirm", Array.Empty<string>());
+        var req = WaitPermissionRequest(h);
+        Assert.Equal(new[] { "allow_once", "reject_once" },
+            req.GetProperty("params").GetProperty("options").EnumerateArray().Select(o => o.GetProperty("kind").GetString()).ToArray());
+        h.Send(JsonSerializer.Serialize(new { jsonrpc = "2.0", id = req.GetProperty("id").GetInt64(), result = new { outcome = new { outcome = "cancelled" } } }));
+        Assert.True(confirm.Wait(5000));
+        Assert.Equal("User cancelled the prompt (no yes/no answer given).", confirm.Result);
+
+        var text = Ask(h, "Your name?", "text", Array.Empty<string>());
+        Assert.True(text.Wait(1000), "a free-text ask must never wait on stdin");
+        Assert.Contains("Ask the question in your reply", text.Result);
+        h.EndTurn();
+    }
+
+    [Fact]
+    public void AskUser_Released_By_SessionCancel()
+    {
+        using var h = new Harness();
+        h.StartTurn();
+        var task = Ask(h, "Go?", "confirm", Array.Empty<string>());
+        WaitPermissionRequest(h);
+        h.Send("""{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"x"}}""");
+        Assert.True(task.Wait(5000), "session/cancel must release the pending ask");
+        Assert.Contains("cancelled", task.Result);
+        h.EndTurn();
     }
 
     [Fact]
