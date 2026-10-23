@@ -241,8 +241,8 @@ internal sealed class ExtensionsPanelView
             : $"[{TuiComponents.Muted}] / to search[/]";
         var rows = new List<string>
         {
-            $"[{TuiComponents.Accent} bold] EXTENSIONS[/] [{TuiComponents.Muted}]({enabled}/{_items.Count} enabled" +
-            (conflicts > 0 ? $", {conflicts} conflict{(conflicts == 1 ? "" : "s")}" : "") + ")[/]",
+            TuiComponents.PanelHeader($"[{TuiComponents.Accent} bold] EXTENSIONS[/] [{TuiComponents.Muted}]({enabled}/{_items.Count} enabled" +
+            (conflicts > 0 ? $", {conflicts} conflict{(conflicts == 1 ? "" : "s")}" : "") + ")[/]", width),
             search,
             TuiComponents.FullRule(width),
         };
@@ -263,10 +263,11 @@ internal sealed class ExtensionsPanelView
                 var it = _items[_matches[mi]];
                 bool cur = mi == _index;
                 hits?.Add(new HitRegion(rows.Count + 1, 1, 1, listW, MouseTargetKind.PickerItem, mi));
-                string marker = cur ? $"[{TuiComponents.Accent}]\u203a[/]" : " ";
+                string marker = cur ? TuiComponents.PanelMarker($"[{TuiComponents.Accent}]\u203a[/]") : " ";
                 string name = cur ? $"[{TuiComponents.Text} bold]{Esc(it.Name)}[/]"
                     : it.Enabled ? $"[{TuiComponents.Text}]{Esc(it.Name)}[/]" : $"[{TuiComponents.Muted}]{Esc(it.Name)}[/]";
                 left = TuiMarkup.TruncateMarkup($"{marker} {Badges(it)} {name}", listW, "\u2026");
+                if (cur) left = TuiComponents.PanelSelectedRow(left, listW);
             }
             else if (r == 0 && _matches.Count == 0)
                 left = $"[{TuiComponents.Muted}] {(_items.Count == 0 ? "None installed. n creates one." : "No matches. Ctrl+U clears.")}[/]";
@@ -304,7 +305,7 @@ internal sealed class ExtensionsPanelView
             col += w;
         }
         rows.Add(bar.ToString());
-        rows.Add($"[{TuiComponents.Muted}] \u2191\u2193 select \u00b7 Enter/double-click toggle \u00b7 wheel scrolls \u00b7 \u25cf on \u25cb off \u25b6 process \u21c4 conflict ! problems[/]");
+        rows.Add(TuiComponents.PanelHint($"[{TuiComponents.Muted}] \u2191\u2193 select \u00b7 Enter/double-click toggle \u00b7 wheel scrolls \u00b7 \u25cf on \u25cb off \u25b6 process \u21c4 conflict ! problems[/]", width));
         while (rows.Count < height) rows.Insert(rows.Count - 4, "");
         return rows.Take(height).Select(Clip).ToList();
     }

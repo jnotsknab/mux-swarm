@@ -318,7 +318,7 @@ internal sealed class HistoryView
         {
             LayoutRead(width);
             string title = _resumePicker ? "SESSION PREVIEW" : "SESSION HISTORY";
-            rows.Add($"[{TuiComponents.Accent} bold] {title}[/] [{TuiComponents.Muted}]{Spectre.Console.Markup.Escape(_openId ?? "")}[/]");
+            rows.Add(TuiComponents.PanelHeader($"[{TuiComponents.Accent} bold] {title}[/] [{TuiComponents.Muted}]{Spectre.Console.Markup.Escape(_openId ?? "")}[/]", width));
             string searchLabel = _searching
                 ? $"/{Spectre.Console.Markup.Escape(_search)}▏"
                 : _hits.Count > 0 ? $"match {_hit + 1}/{_hits.Count} · n/N next/prev" : "/ search";
@@ -337,12 +337,12 @@ internal sealed class HistoryView
             }
             while (rows.Count < height - 2) rows.Add("");
             rows.Add($"[{TuiComponents.Muted}] {Math.Min(_lines.Count, _scroll + room)}/{_lines.Count} rows[/]");
-            rows.Add($"[{TuiComponents.Accent}] j/k ↑↓ PgUp/PgDn g/G scroll · / search · Esc back · Ctrl+Q close[/]");
+            rows.Add(TuiComponents.PanelHint($"[{TuiComponents.Accent}] j/k ↑↓ PgUp/PgDn g/G scroll · / search · Esc back · Ctrl+Q close[/]", width));
             return rows.Select(Clip).ToList();
         }
 
         string caption = _resumePicker ? "RESUME SESSION" : "SESSION HISTORY";
-        rows.Add($"[{TuiComponents.Accent} bold] {caption}[/] [{TuiComponents.Muted}]({_matches.Count}/{_sessions.Count})[/]");
+        rows.Add(TuiComponents.PanelHeader($"[{TuiComponents.Accent} bold] {caption}[/] [{TuiComponents.Muted}]({_matches.Count}/{_sessions.Count})[/]", width));
         rows.Add($"[{TuiComponents.Accent}] Search: {Spectre.Console.Markup.Escape(_query)}▏[/]");
         rows.Add(TuiComponents.FullRule(width));
         int listRoom = height - 6;
@@ -361,12 +361,12 @@ internal sealed class HistoryView
                 Math.Max(8, width - primary.Length - 6));
             hits?.Add(new HitRegion(rows.Count + 1, 1, 1, width, MouseTargetKind.PickerItem, i));
             rows.Add(i == _index
-                ? $"[{TuiComponents.Accent}]›[/] [{TuiComponents.Text}]{Spectre.Console.Markup.Escape(primary)}[/]  [{TuiComponents.Text}]{Spectre.Console.Markup.Escape(one)}[/]"
+                ? TuiComponents.PanelSelectedRow($"{TuiComponents.PanelMarker($"[{TuiComponents.Accent}]›[/]")} [{TuiComponents.Text}]{Spectre.Console.Markup.Escape(primary)}[/]  [{TuiComponents.Text}]{Spectre.Console.Markup.Escape(one)}[/]", width)
                 : $"  [{TuiComponents.Agent}]{Spectre.Console.Markup.Escape(primary)}[/]  [{TuiComponents.Muted}]{Spectre.Console.Markup.Escape(one)}[/]");
         }
         while (rows.Count < height - 2) rows.Add("");
-        rows.Add($"[{TuiComponents.Accent}] {(_resumePicker ? "Enter resume · v preview" : "Enter open")} · ↑↓/PgUp/PgDn navigate[/]");
-        rows.Add($"[{TuiComponents.Muted}] Type to search · Ctrl+U clear · Esc/Ctrl+Q close[/]");
+        rows.Add(TuiComponents.PanelHint($"[{TuiComponents.Accent}] {(_resumePicker ? "Enter resume · v preview" : "Enter open")} · ↑↓/PgUp/PgDn navigate[/]", width));
+        rows.Add(TuiComponents.PanelHint($"[{TuiComponents.Muted}] Type to search · Ctrl+U clear · Esc/Ctrl+Q close[/]", width));
         return rows.Select(Clip).ToList();
     }
 }

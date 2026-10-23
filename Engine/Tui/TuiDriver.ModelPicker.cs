@@ -45,8 +45,10 @@ internal sealed partial class TuiDriver
         var clicks = new MouseClickTracker();
         void Paint()
         {
-            int width = Math.Max(1, _term.Width - 1);
-            var rows = view.Render(width, Math.Max(1, _term.Height), hits).Select(TuiMarkup.ToAnsi).ToList();
+            int outerW = Math.Max(1, _term.Width - 1), outerH = Math.Max(1, _term.Height);
+            var (width, height) = ViewFrame.Inner(outerW, outerH);
+            ViewFrame.Prepare(hits, outerW, outerH);
+            var rows = ViewFrame.Wrap(view.Render(width, height, hits), outerW, outerH).Select(TuiMarkup.ToAnsi).ToList();
             lock (MuxConsole.ConsoleLock) presenter.Present(rows);
         }
         try
@@ -91,13 +93,13 @@ internal sealed partial class TuiDriver
                             view.ClickItem(hit.Payload);
                             if (clickCount == 2)
                             {
-                                var clickAction = view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, _term.Height - 10));
+                                var clickAction = view.Handle(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false), Math.Max(1, ViewFrame.Inner(Math.Max(1, _term.Width - 1), Math.Max(1, _term.Height)).Height - 10));
                                 if (clickAction == ModelPickerView.Action.Cancel) break;
                                 if (clickAction == ModelPickerView.Action.Refresh) Refresh();
                             }
                         }
                         if (clickCount == 3
-                            && view.Handle(new ConsoleKeyInfo('\0', ConsoleKey.F4, false, false, false), Math.Max(1, _term.Height - 10))
+                            && view.Handle(new ConsoleKeyInfo('\0', ConsoleKey.F4, false, false, false), Math.Max(1, ViewFrame.Inner(Math.Max(1, _term.Width - 1), Math.Max(1, _term.Height)).Height - 10))
                                 == ModelPickerView.Action.Apply)
                         {
                             try { apply(view.Slot!.Id, view.Model, view.Effort); return true; }
@@ -114,7 +116,7 @@ internal sealed partial class TuiDriver
                 if (ev.Kind != ConsoleInputPump.EventKind.Key) continue;
                 if (_term.Height < 12 && ev.Key.Key != ConsoleKey.Escape
                     && !(ev.Key.Key == ConsoleKey.Q && ev.Key.Modifiers.HasFlag(ConsoleModifiers.Control))) continue;
-                var action = view.Handle(ev.Key, Math.Max(1, _term.Height - 10));
+                var action = view.Handle(ev.Key, Math.Max(1, ViewFrame.Inner(Math.Max(1, _term.Width - 1), Math.Max(1, _term.Height)).Height - 10));
                 if (action == ModelPickerView.Action.Cancel) break;
                 if (action == ModelPickerView.Action.Refresh) { Refresh(); continue; }
                 if (action != ModelPickerView.Action.Apply) continue;
