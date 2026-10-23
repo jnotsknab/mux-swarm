@@ -913,6 +913,9 @@ Flags can be combined. Common stacks:
 /classic, /tui  Switch renderer (classic line-by-line / live full-screen TUI)
 /mouse [preset] Mouse preset for the frame engine (off | wheel | buttons; default buttons)
 /telemetry [p|off]  Start/stop the standalone telemetry dashboard (default port 6725)
+/logs              Recent notices (incl. the quiet startup lines: provider, skills, telemetry...) and runtime log
+                   lines in a panel. Startup prints only warnings/errors; MUXSWARM_VERBOSE=1 prints everything.
+                   The hooks confirm ("Proceed with hooks enabled?") is asked once the TUI is up.
 /daemonview, /dv  Toggle collapsed/expanded daemon-fired goal output
 /delimiter      Toggle the multi-line input delimiter
 /help           Full command reference

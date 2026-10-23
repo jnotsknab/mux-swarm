@@ -86,6 +86,7 @@ internal static class TuiCommands
         new("/share control", "Let a guest type, or make them view-only (/share control <name|#id|all> on|off)", Scope.Both),
         new("/share stop",    "Stop sharing: invalidate the link and disconnect everyone", Scope.Both),
         new("/join",          "Watch someone's shared session (/join <link>)", Scope.Both),
+        new("/logs",          "Recent notices (incl. startup) and runtime log lines, in a panel", Scope.Both),
         new("/daemon",        "Runtime control of the in-house daemon (alias /da) - on|off|jobs|cron|watch|cancel", Scope.Both),
         new("/daemon on",     "Start the daemon (boot triggers from config.json)", Scope.Both),
         new("/daemon off",    "Stop the daemon", Scope.Both),

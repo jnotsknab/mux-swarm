@@ -1509,11 +1509,38 @@ public static partial class MuxConsole
         WriteMuted(message);
     }
 
+    /// <summary>True from config load until the TUI is up: routine notices (info / success / muted) are kept in
+    /// the <see cref="NoticeLog"/> for /logs instead of printed. Warnings and errors always print.</summary>
+    internal static bool QuietStartup { get; set; }
+
+    /// <summary>Stop holding back routine notices (the interactive loop is about to take input).</summary>
+    internal static void EndQuietStartup() => QuietStartup = false;
+
+    /// <summary>Recent console notices (level, text, time), newest last; at most 300. Shown by /logs.</summary>
+    internal static IReadOnlyList<(string Level, string Text, DateTime At)> NoticeLog
+    {
+        get { lock (_noticeLog) return _noticeLog.ToList(); }
+    }
+
+    private static readonly Queue<(string Level, string Text, DateTime At)> _noticeLog = new();
+
+    // Record a notice; true = hold it back from the screen (quiet startup, routine level).
+    private static bool LogNotice(string level, string message)
+    {
+        lock (_noticeLog)
+        {
+            _noticeLog.Enqueue((level, message, DateTime.Now));
+            while (_noticeLog.Count > 300) _noticeLog.Dequeue();
+        }
+        return QuietStartup && !ViaDriver && level is "info" or "ok" or "muted";
+    }
+
     public static void WriteSuccess(string message)
     {
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("success", message); return; }
+            if (LogNotice("ok", message)) return;
             string line = $"  [{RegionStyle.Color("notice.ok")}]{RegionStyle.Glyph("notice.okMark")}[/] [{C.Prompt}]{Esc(message)}[/]";
             if (TuiCommit(line)) return;
             AnsiConsole.MarkupLine(line);
@@ -1525,6 +1552,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("warning", message); return; }
+            LogNotice("warn", message);
             string warn = RegionStyle.Color("notice.warn");
             string line = $"  [{warn}]{RegionStyle.Glyph("notice.warnMark")}[/] [{warn}]{Esc(message)}[/]";
             if (TuiCommit(line)) return;
@@ -1537,6 +1565,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("error", message); return; }
+            LogNotice("error", message);
             string err = RegionStyle.Color("notice.error");
             string line = $"  [{err}]{RegionStyle.Glyph("notice.errorMark")}[/] [{err}]{Esc(message)}[/]";
             if (TuiCommit(line)) return;
@@ -1549,6 +1578,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("info", message); return; }
+            if (LogNotice("info", message)) return;
             string line = $"  [{RegionStyle.Color("notice.info")}]{Esc(message)}[/]";
             if (TuiCommit(line)) return;
             AnsiConsole.MarkupLine(line);
@@ -1590,6 +1620,7 @@ public static partial class MuxConsole
         WithConsole(() =>
         {
             if (StdioMode) { EmitJson("debug", message); return; }
+            if (LogNotice("muted", message)) return;
             if (TuiCommit($"  [{C.Muted}]{Esc(message)}[/]")) return;
             AnsiConsole.MarkupLine($"  [{C.Muted}]{Esc(message)}[/]");
         });
