@@ -1407,7 +1407,7 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
                 // read clearly without a heavy bordered panel. The expanded red panel is reserved
                 // for /verbose (ToolOutputCompact == false). Diffs always render as their own card.
                 if (IsDiffTool(tool) && LooksLikeDiff(text)) { _driver!.CommitDiffCollapsible(tool, text); }
-                else if (ToolOutputCompact) { _driver!.ResolveMergedToolResult(text, error: err, expandBody: expandBody); }
+                else if (ToolOutputCompact) { _driver!.ResolveMergedToolResult(text, error: err, expandBody: expandBody, toolName: tool); }
                 else { _driver!.FlushPendingToolCall(); _driver!.Commit(TuiComponents.ToolResultPanel(tool, expandBody ?? text, err, width, swarm ? 500 : 2000)); }
             }
             return;
