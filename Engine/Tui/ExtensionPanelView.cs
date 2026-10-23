@@ -215,7 +215,7 @@ internal sealed class ExtensionPanelView
                 {
                     var it = n.ItemList[i];
                     bool cur = i == sel;
-                    string marker = cur && focused ? $"[{TuiComponents.Accent}]\u203a[/]" : cur ? $"[{TuiComponents.Muted}]\u203a[/]" : " ";
+                    string marker = cur && focused ? TuiComponents.PanelMarker($"[{TuiComponents.Accent}]\u203a[/]") : cur ? $"[{TuiComponents.Muted}]\u203a[/]" : " ";
                     string label = cur ? $"[{TuiComponents.Text} bold]{Esc(it.Label)}[/]" : $"[{TuiComponents.Text}]{Esc(it.Label)}[/]";
                     string detail = it.Detail is { Length: > 0 } d ? $"  [{TuiComponents.Muted}]{Esc(d)}[/]" : "";
                     hits.Add((rows.Count, col, w, fi, i));
@@ -331,7 +331,7 @@ internal sealed class ExtensionPanelView
 
         var rows = new List<string>
         {
-            $"[{TuiComponents.Accent} bold] {Esc(_panel.Title.ToUpperInvariant())}[/] [{TuiComponents.Muted}]{Esc(_panel.Extension)}[/]",
+            TuiComponents.PanelHeader($"[{TuiComponents.Accent} bold] {Esc(_panel.Title.ToUpperInvariant())}[/] [{TuiComponents.Muted}]{Esc(_panel.Extension)}[/]", width),
             TuiComponents.FullRule(width),
         };
         int headerRows = rows.Count, room = height - headerRows - 2;
@@ -342,7 +342,7 @@ internal sealed class ExtensionPanelView
         while (rows.Count < height - 2) rows.Add("");
         rows.Add(TuiComponents.FullRule(width));
         string more = BodyRows > room ? $" \u00b7 {_scroll + 1}-{Math.Min(BodyRows, _scroll + room)}/{BodyRows}" : "";
-        rows.Add($"[{TuiComponents.Muted}] Tab/\u2191\u2193 focus \u00b7 Enter activate \u00b7 PgUp/PgDn scroll \u00b7 Esc close{more}[/]");
+        rows.Add(TuiComponents.PanelHint($"[{TuiComponents.Muted}] Tab/\u2191\u2193 focus \u00b7 Enter activate \u00b7 PgUp/PgDn scroll \u00b7 Esc close{more}[/]", width));
         return rows.Take(height).Select(Clip).ToList();
     }
 

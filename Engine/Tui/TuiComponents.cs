@@ -1112,6 +1112,57 @@ internal static class TuiComponents
         return $"[{RegionStyle.Color("panel.ruleFg")}]{Esc(string.Concat(Enumerable.Repeat(RegionStyle.PlainGlyph("panel.rule"), w)))}[/]";
     }
 
+    // --- Full-screen view chrome (panel.header / panel.selectedStyle / panel.hints) ---------------
+    // Every full-screen view builds its own title row, selected marker and key-hint rows; these wrap them so a
+    // theme can restyle all views at once. Each returns exactly one row with the same leading columns as the
+    // stock form (1-cell marker + space), so the row-based click regions never move. Default = the input unchanged.
+
+    /// <summary>A view's title row in the <c>panel.header</c> style: <c>plain</c> (unchanged), <c>strip</c> (filled
+    /// with <c>panel.headerBg</c>) or <c>rule</c> (the plain title text set in a <c>panel.rule</c> run). <c>panel.headerAlign
+    /// center</c> centers it.</summary>
+    public static string PanelHeader(string row, int width)
+    {
+        string style = RegionStyle.Choice("panel.header");
+        bool center = RegionStyle.Choice("panel.headerAlign") == "center";
+        if (style == "plain" && !center) return row;
+        int w = TuiMarkup.MarkupWidth(row);
+        int lead = center ? Math.Max(0, (width - w) / 2) : 0;
+        switch (style)
+        {
+            case "strip":
+                return $"[on {RegionStyle.Color("panel.headerBg")}]{new string(' ', lead)}{row}{new string(' ', Math.Max(0, width - lead - w))}[/]";
+            case "rule":
+            {
+                // "── TITLE ─────": the stock title row already starts with one space inside its colour tag.
+                string glyph = RegionStyle.PlainGlyph("panel.rule"), fg = RegionStyle.Color("panel.ruleFg");
+                string Run(int n) => n <= 0 ? "" : $"[{fg}]{Esc(string.Concat(Enumerable.Repeat(glyph, n)))}[/]";
+                int left = center ? Math.Max(1, (width - w - 1) / 2) : 2;
+                return Run(left) + row + " " + Run(width - left - w - 1);
+            }
+            default:
+                return new string(' ', lead) + row;
+        }
+    }
+
+    /// <summary>The selected-row marker in the <c>panel.selectedStyle</c> style (1 cell): <c>chevron</c> = the stock
+    /// <paramref name="stock"/>, <c>bar</c> = <c>panel.bar</c> in <c>palette.selectedFg</c>; <c>fill</c> keeps the chevron
+    /// (the row background comes from <see cref="PanelSelectedRow"/>).</summary>
+    public static string PanelMarker(string stock) => RegionStyle.Choice("panel.selectedStyle") == "bar"
+        ? $"[{RegionStyle.Color("palette.selectedFg")}]{RegionStyle.Glyph("panel.bar")}[/]"
+        : stock;
+
+    /// <summary>A whole selected row: with <c>panel.selectedStyle fill</c> it is padded to <paramref name="width"/> on
+    /// <c>panel.selectedBg</c>; otherwise unchanged.</summary>
+    public static string PanelSelectedRow(string row, int width) => RegionStyle.Choice("panel.selectedStyle") != "fill"
+        ? row
+        : $"[on {RegionStyle.Color("panel.selectedBg")}]{row}{new string(' ', Math.Max(0, width - TuiMarkup.MarkupWidth(row)))}[/]";
+
+    /// <summary>A key-hint row in the <c>panel.hints</c> style: <c>plain</c> (unchanged) or <c>strip</c> (filled with
+    /// <c>panel.hintBg</c>).</summary>
+    public static string PanelHint(string row, int width) => RegionStyle.Choice("panel.hints") != "strip"
+        ? row
+        : $"[on {RegionStyle.Color("panel.hintBg")}]{row}{new string(' ', Math.Max(0, width - TuiMarkup.MarkupWidth(row)))}[/]";
+
     /// <summary>The rule above the footer and above the compose box (<c>footer.rule</c>/<c>ruleFg</c>), or
     /// null when <c>footer.ruleShow</c> is off.</summary>
     public static string? FooterRule(int width)

@@ -47,6 +47,11 @@ internal sealed class MouseHitMap
     private readonly List<HitRegion> _regions = new(32);
     private int _width;
     private int _height;
+    private int _originRow, _originCol;
+
+    /// <summary>Shift every region added after the next <see cref="Begin"/> by this many rows/columns: a view drawn
+    /// inside a frame registers view-relative regions, the map stores screen positions. Survives <see cref="Begin"/>.</summary>
+    public void SetOrigin(int rows, int cols) { _originRow = rows; _originCol = cols; }
 
     /// <summary>Number of registered regions (test/diagnostic hook).</summary>
     public int Count => _regions.Count;
@@ -55,8 +60,8 @@ internal sealed class MouseHitMap
     /// Coordinates outside 1..width / 1..height never hit.</summary>
     public void Begin(int width, int height)
     {
-        _width = Math.Max(0, width);
-        _height = Math.Max(0, height);
+        _width = Math.Max(0, width) + 2 * _originCol;
+        _height = Math.Max(0, height) + 2 * _originRow;
         _regions.Clear();
     }
 
@@ -65,7 +70,7 @@ internal sealed class MouseHitMap
     public void Add(in HitRegion r)
     {
         if (r.Height <= 0 || r.Width <= 0) return;
-        _regions.Add(r);
+        _regions.Add(_originRow == 0 && _originCol == 0 ? r : r with { Top = r.Top + _originRow, Left = r.Left + _originCol });
     }
 
     /// <summary>Resolve a 1-based cell to the topmost containing region. <paramref name="localRow"/>

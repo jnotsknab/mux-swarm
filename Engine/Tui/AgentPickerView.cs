@@ -136,7 +136,7 @@ internal sealed class AgentPickerView
                 .Concat(Enumerable.Repeat("", height)).Take(height).Select(Clip).ToList();
         var rows = new List<string>
         {
-            $"[{TuiComponents.Accent} bold] CHOOSE LEAD AGENT[/]",
+            TuiComponents.PanelHeader($"[{TuiComponents.Accent} bold] CHOOSE LEAD AGENT[/]", width),
             $"[{TuiComponents.Muted}] Current lead: {Esc(CurrentName ?? "not selected")}[/]",
             $"[{TuiComponents.Accent}] Search: {Esc(_query)}▏[/]",
             TuiComponents.FullRule(width)
@@ -150,13 +150,14 @@ internal sealed class AgentPickerView
             var agent = _agents[_matches[i]];
             string active = agent.Name.Equals(CurrentName, StringComparison.Ordinal) ? " (current)" : "";
             hits?.Add(new HitRegion(rows.Count + 1, 1, 1, width, MouseTargetKind.PickerItem, i));
-            rows.Add($"[{(i == _index ? TuiComponents.Accent : TuiComponents.Muted)}]{(i == _index ? "›" : " ")} {Esc(agent.Name)}{active}[/]");
+            string row = $"[{(i == _index ? TuiComponents.Accent : TuiComponents.Muted)}]{(i == _index ? TuiComponents.PanelMarker("›") : " ")} {Esc(agent.Name)}{active}[/]";
+            rows.Add(i == _index ? TuiComponents.PanelSelectedRow(row, width) : row);
         }
         while (rows.Count < height - 4) rows.Add("");
         rows.Add($"[{TuiComponents.Text}] {Esc(Selected?.Description ?? "Select an agent to see its description.")}[/]");
         rows.Add($"[{TuiComponents.Muted}] {_matches.Count}/{_agents.Length} agents · Next /agent run; no config write[/]");
-        rows.Add($"[{TuiComponents.Accent}] Enter choose · ↑↓/PgUp/PgDn/Home/End navigate[/]");
-        rows.Add($"[{TuiComponents.Muted}] Type to search · Ctrl+U clear · Esc/Ctrl+Q cancel[/]");
+        rows.Add(TuiComponents.PanelHint($"[{TuiComponents.Accent}] Enter choose · ↑↓/PgUp/PgDn/Home/End navigate[/]", width));
+        rows.Add(TuiComponents.PanelHint($"[{TuiComponents.Muted}] Type to search · Ctrl+U clear · Esc/Ctrl+Q cancel[/]", width));
         return rows.Select(Clip).ToList();
     }
 }
