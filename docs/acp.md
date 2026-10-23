@@ -68,9 +68,13 @@ On Linux/macOS the `command` is the `MuxSwarm` binary and paths use `/`.
   would be a large architectural inversion with no functional gain; results are reported as
   `tool_call` / `tool_call_update` updates (with diff content for edits). These callbacks are
   optional + capability-gated in ACP, so this is spec-compliant.
-- **`session/request_permission` PROMPTING.** Tool gating is handled by Mux's own config /
-  approval model; the adapter has the factory + transport to raise an ACP permission request
-  but does not gate Mux tools behind one by default.
+- **`session/request_permission` for tool GATING.** Tool gating is handled by Mux's own config /
+  approval model; Mux tools are not gated behind a permission request. The one exception is the
+  `ask_user` tool: under ACP, `confirm` / `select` / `multi_select` questions are asked as a
+  `session/request_permission` on the same tool call (Yes/No, or one option per choice; a client
+  can pick one), mapped back to the usual "User selected: ..." result. Free-text questions cannot
+  be asked mid-turn, so the model is told to ask in its reply. `session/cancel` releases a pending
+  question.
 - **`session/delete`.** Not advertised (session deletion is managed via Mux's own retention).
 
 ## Architecture (how it works)
