@@ -38,6 +38,9 @@ namespace MuxSwarm
                 if (TryHandleEarlyFlag(args, Console.Out) is { } earlyExit)
                     return earlyExit;
 
+                // Before anything spawns MCP servers or other child processes.
+                StartupThreads.Apply();
+
                 static string? ArgValue(string[] args, string flag)
                     => Array.IndexOf(args, flag) is >= 0 and var i && i + 1 < args.Length ? args[i + 1] : null;
 
