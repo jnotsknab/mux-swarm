@@ -380,6 +380,36 @@ internal static class CliProxyManager
     /// </summary>
     public static async Task<string> EnsureRunningAsync(CancellationToken ct = default)
     {
+        // A startup warm-up (StartWarmup) already did the slow first adopt/spawn: use its result once.
+        if (Interlocked.Exchange(ref _warmup, null) is { } warm)
+        {
+            try { return await warm.WaitAsync(ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch { /* warm-up failed: retry normally so the caller sees the real error */ }
+        }
+        return await EnsureRunningCoreAsync(ct).ConfigureAwait(false);
+    }
+
+    private static Task<string>? _warmup;
+
+    /// <summary>
+    /// Starts <see cref="EnsureRunningAsync"/> in the background (idempotent), so the first session does not
+    /// wait on the binary check, sidecar adopt/spawn and first health probe. Call once the active provider is
+    /// known to be the sidecar. The next <see cref="EnsureRunningAsync"/> consumes the result.
+    /// </summary>
+    public static void StartWarmup()
+    {
+        if (Volatile.Read(ref _warmup) is not null || IsRunning) return;
+        var task = Task.Run(() => EnsureRunningCoreAsync(CancellationToken.None));
+        _ = task.ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);   // never unobserved
+        Interlocked.CompareExchange(ref _warmup, task, null);
+    }
+
+    /// <summary>Test seam: install a pending warm-up result.</summary>
+    internal static void SetWarmupForTests(Task<string>? warmup) => _warmup = warmup;
+
+    private static async Task<string> EnsureRunningCoreAsync(CancellationToken ct)
+    {
         await EnsureBinaryAsync(ct).ConfigureAwait(false);
         EnsureKeysLoaded();
 

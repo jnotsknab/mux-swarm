@@ -48,6 +48,30 @@ public class CliProxyManagerTests
     }
 
     [Fact]
+    public async Task EnsureRunning_UsesTheWarmupResult_Once()
+    {
+        try
+        {
+            CliProxyManager.SetWarmupForTests(Task.FromResult("http://127.0.0.1:1/v1"));
+            Assert.Equal("http://127.0.0.1:1/v1", await CliProxyManager.EnsureRunningAsync());
+        }
+        finally { CliProxyManager.SetWarmupForTests(null); }
+    }
+
+    [Fact]
+    public async Task EnsureRunning_CancelledCaller_IsNotHeldByAPendingWarmup()
+    {
+        var pending = new TaskCompletionSource<string>();
+        try
+        {
+            CliProxyManager.SetWarmupForTests(pending.Task);
+            using var cts = new CancellationTokenSource(100);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CliProxyManager.EnsureRunningAsync(cts.Token));
+        }
+        finally { CliProxyManager.SetWarmupForTests(null); pending.TrySetCanceled(); }
+    }
+
+    [Fact]
     public void PreferredPort_IsInDynamicRange()
     {
         Assert.InRange(CliProxyManager.PreferredPort, 49152, 65535);
