@@ -2585,7 +2585,12 @@ internal class App
         // env-var check below passes - otherwise every launch after /login warns + prompts for a key
         // that is never user-supplied. The sidecar itself is still started lazily on first request.
         if (string.Equals(provider.ApiKeyEnvVar, CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
+        {
             CliProxyManager.ExportPersistedKey();
+            // Adopt (or start) the sidecar now, in the background: the first session would otherwise wait
+            // 0.5-1 s for it on its own thread (CreateChatClient). Its result is used by EnsureRunningAsync.
+            CliProxyManager.StartWarmup();
+        }
 
         if (!string.IsNullOrWhiteSpace(provider.ApiKeyEnvVar))
         {
