@@ -157,10 +157,16 @@ internal class App
         return false;
     }
 
+    /// <summary>True once the background MCP connect phase has finished (or none was started).</summary>
+    internal static bool McpReady => McpInitTask is not { IsCompleted: false };
+
+    /// <summary>Strict MCP mode: every enabled server must connect, so sessions wait for MCP before they open.</summary>
+    internal static bool McpStrictMode => _mcpStrictMode;
+
     // Awaits the background MCP init (idempotent). On total connection failure,
     // reports the error and exits — preserving the original strict/non-strict
     // semantics, just deferred from startup to first tool use.
-    private static async Task EnsureMcpReadyAsync()
+    internal static async Task EnsureMcpReadyAsync()
     {
         var task = McpInitTask;
         if (task == null)
@@ -822,7 +828,6 @@ internal class App
                     break;
 
                 case "/agent":
-                    await EnsureMcpReadyAsync();
                     Config = LoadConfig(ConfigPath);
                     var singleAgentModel = LoadSingleAgentModel();
                     var agentCts = GetOrResetCts();
@@ -848,7 +853,8 @@ internal class App
                         interactiveHandle: agentHandle,
                         // A /setmodel switch rebuilds the lead with this; keep the steer (Ctrl+N) and
                         // mid-turn reflection wrappers the launch client has.
-                        leadClientFactory: modelId => CreateAgentLeadClient(modelId)
+                        leadClientFactory: modelId => CreateAgentLeadClient(modelId),
+                        deferMcp: true
                     );
                     await PumpSessionAsync(agentHandle);   // returns when the session parks or finishes
                     } finally { ServeMode.ActiveMode = "interactive"; }
@@ -891,7 +897,6 @@ internal class App
                     );
                     break;
                 case "/stateless":
-                    await EnsureMcpReadyAsync();
                     Config = LoadConfig(ConfigPath);
                     var statelessAgent = LoadSingleAgentModel();
                     var statelessAgentCts = GetOrResetCts();
@@ -915,7 +920,8 @@ internal class App
                         persistSession: false,
                         allowSubAgents: AllowSubagents,
                         allowParallelSubAgents: AllowParallelSubAgents,
-                        interactiveHandle: statelessHandle
+                        interactiveHandle: statelessHandle,
+                        deferMcp: true
                     );
                     await PumpSessionAsync(statelessHandle);
                     } finally { ServeMode.ActiveMode = "interactive"; }
@@ -1011,9 +1017,6 @@ internal class App
                         string.IsNullOrWhiteSpace(resumeArg) ? null : resumeArg);
                     if (resumeData.HasValue)
                     {
-                        // The agent's tool list is built from McpTools once, at session start: resuming before the
-                        // servers finish connecting left the whole session without their tools.
-                        await EnsureMcpReadyAsync();
                         Config = LoadConfig(ConfigPath);
                         var resumeModel = LoadSingleAgentModel();
                         var resumeCts = GetOrResetCts();
@@ -1035,7 +1038,8 @@ internal class App
                             resumedSessionDir: resumeData.Value.sessionDir,
                             allowSubAgents: AllowSubagents,
                             allowParallelSubAgents: AllowParallelSubAgents,
-                            leadClientFactory: modelId => CreateAgentLeadClient(modelId)
+                            leadClientFactory: modelId => CreateAgentLeadClient(modelId),
+                            deferMcp: true
                         );
                         } finally { ServeMode.ActiveMode = "interactive"; }
                     }
@@ -1690,9 +1694,6 @@ internal class App
             setModel: m => { if (!string.IsNullOrWhiteSpace(m)) _cliModelOverride = m; },
             runSession: async (reader, resume) =>
             {
-                // Tools are needed once the model actually runs a turn; await MCP readiness
-                // here (not at transport start) so the ACP handshake stays instant.
-                await EnsureMcpReadyAsync();
                 var model = LoadSingleAgentModel();
                 var acpCts = GetOrResetCts();
                 ServeMode.ActiveMode = "agent";
@@ -1716,7 +1717,8 @@ internal class App
                         resumedSessionDir: resume?.Dir,
                         allowSubAgents: AllowSubagents,
                         allowParallelSubAgents: AllowParallelSubAgents,
-                        interactiveHandle: handle);
+                        interactiveHandle: handle,
+                        deferMcp: true);
                     await handle.ChatTask;
                 }
                 finally

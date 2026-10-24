@@ -864,12 +864,13 @@ public static class SingleAgentOrchestrator
         TeamScope? teamScope = null,
         InteractiveSession? interactiveHandle = null,
         Common.AgentDefinition? agentDef = null,
-        Func<string, IChatClient>? leadClientFactory = null)
+        Func<string, IChatClient>? leadClientFactory = null,
+        bool deferMcp = false)
     {
         string outcome = "complete";
         try
         {
-            await ChatAgentCoreAsync(client, cancellationToken, maxIterations: maxIterations, mcpTools: mcpTools, showToolResultCalls: showToolResultCalls, shouldPlan: shouldPlan, systemPromptOverride: systemPromptOverride, chatClientFactory: chatClientFactory, autoCompactTokenThreshold: autoCompactTokenThreshold, persistSession: persistSession, incomingGoal: incomingGoal, continuous: continuous, goalId: goalId, minDelaySeconds: minDelaySeconds, persistIntervalSeconds: persistIntervalSeconds, sessionRetention: sessionRetention, resumedSession: resumedSession, resumedSessionDir: resumedSessionDir, allowSubAgents: allowSubAgents, allowParallelSubAgents: allowParallelSubAgents, teamScope: teamScope, interactiveHandle: interactiveHandle, agentDef: agentDef, leadClientFactory: leadClientFactory);
+            await ChatAgentCoreAsync(client, cancellationToken, maxIterations: maxIterations, mcpTools: mcpTools, showToolResultCalls: showToolResultCalls, shouldPlan: shouldPlan, systemPromptOverride: systemPromptOverride, chatClientFactory: chatClientFactory, autoCompactTokenThreshold: autoCompactTokenThreshold, persistSession: persistSession, incomingGoal: incomingGoal, continuous: continuous, goalId: goalId, minDelaySeconds: minDelaySeconds, persistIntervalSeconds: persistIntervalSeconds, sessionRetention: sessionRetention, resumedSession: resumedSession, resumedSessionDir: resumedSessionDir, allowSubAgents: allowSubAgents, allowParallelSubAgents: allowParallelSubAgents, teamScope: teamScope, interactiveHandle: interactiveHandle, agentDef: agentDef, leadClientFactory: leadClientFactory, deferMcp: deferMcp);
             if (cancellationToken.IsCancellationRequested) outcome = "interrupted";
         }
         catch (OperationCanceledException) { outcome = "interrupted"; throw; }
@@ -905,7 +906,8 @@ public static class SingleAgentOrchestrator
         TeamScope? teamScope = null,
         InteractiveSession? interactiveHandle = null,
         Common.AgentDefinition? agentDef = null,
-        Func<string, IChatClient>? leadClientFactory = null)
+        Func<string, IChatClient>? leadClientFactory = null,
+        bool deferMcp = false)
     {
         // Builds the lead's client for a model switch (/setmodel in the session); same kind as `client`.
         leadClientFactory ??= chatClientFactory ?? (m => App.CreateChatClient(m));
@@ -979,29 +981,60 @@ public static class SingleAgentOrchestrator
             Timestamp = DateTimeOffset.UtcNow
         });
 
-        IList<AITool> allTools = (mcpTools ?? Array.Empty<McpClientTool>()).Cast<AITool>().ToList();
         // Merge the native in-house tools (Filesystem + shell/REPL) into the PRE-FILTER pool so
         // the per-agent ToolFilter gates them exactly like MCP tools: an agent gets them only if
         // it lists "Filesystem"/"Shell" in its swarm.json mcpServers (or a matching toolPattern).
-        foreach (var nativeTool in NativeToolRegistry.BuildPool(App.Config))
-            allTools.Add(nativeTool);
-        IList<AITool> filteredTools = singleAgentDef?.ToolFilter(allTools) ?? allTools;
+        var nativePool = NativeToolRegistry.BuildPool(App.Config).ToList();
+        IList<AITool> FilterTools(IEnumerable<McpClientTool>? mcp)
+        {
+            IList<AITool> pool = (mcp ?? Array.Empty<McpClientTool>()).Cast<AITool>().Concat(nativePool).ToList();
+            return singleAgentDef?.ToolFilter(pool) ?? pool;
+        }
+        void ReportToolCount(IList<AITool> tools)
+        {
+            if (tools.Count == 0)
+                MuxConsole.WriteWarning($"{singleAgentDef?.Name ?? "Agent"} Matched 0 tools. Check mcpServers in swarm.json singleAgent block.");
+            else if (!MuxConsole.IsTui)
+                // In TUI the count is folded into the session-header badge (see RenderTuiSessionHeader);
+                // the standalone success line is suppressed there to avoid duplicate chrome.
+                MuxConsole.WriteSuccess($"{singleAgentDef?.Name ?? "Agent"} has {tools.Count} tools available");
+        }
 
-        if (filteredTools.Count == 0)
-            MuxConsole.WriteWarning($"{singleAgentDef?.Name ?? "Agent"} Matched 0 tools. Check mcpServers in swarm.json singleAgent block.");
-        else if (!MuxConsole.IsTui)
-            // In TUI the count is folded into the session-header badge (see RenderTuiSessionHeader);
-            // the standalone success line is suppressed there to avoid duplicate chrome.
-            MuxConsole.WriteSuccess($"{singleAgentDef?.Name ?? "Agent"} has {filteredTools.Count} tools available");
+        // deferMcp: the session opens while MCP servers are still connecting. The agent and its tool list are
+        // only built after the first input, so that input waits for MCP (ResolveMcpAsync) and turn one still
+        // gets every tool; until then only the native tools are known.
+        // Strict mode, or MCP already connected: settle it now (instant when ready; exits on total failure as before).
+        if (deferMcp && (App.McpReady || App.McpStrictMode))
+        {
+            await App.EnsureMcpReadyAsync();
+            mcpTools = App.McpTools;
+        }
+        bool mcpPending = deferMcp && !App.McpReady;
+        IList<AITool> filteredTools = FilterTools(mcpPending ? null : mcpTools);
+        if (!mcpPending) ReportToolCount(filteredTools);
 
         if (!MuxConsole.IsTui) MuxConsole.WriteLine();
         // Switch the (already-running) live-region driver into this session: in-session
         // palette scope + a fresh token meter. No-op outside TUI / when the footer is off.
         MuxConsole.EnableDockedFooter(topLevel: false);
-        var initialToolsCatalog = ToolCatalog.FromTools(filteredTools,
+        ToolCatalog.Snapshot ToolsBeforeFirstGoal() => ToolCatalog.FromTools(filteredTools,
             $"{singleAgentDef?.Name ?? "Agent"} tools before first goal",
-            "Filtered native/MCP tools. Session-local tools are added when the agent is constructed.");
+            mcpPending
+                ? "MCP servers are still connecting; native tools are shown now."
+                : "Filtered native/MCP tools. Session-local tools are added when the agent is constructed.");
+        var initialToolsCatalog = ToolsBeforeFirstGoal();
         MuxConsole.SetToolBrowserCatalog(initialToolsCatalog);
+        async Task ResolveMcpAsync()
+        {
+            if (!mcpPending) return;
+            if (App.McpReady) await App.EnsureMcpReadyAsync();
+            else await MuxConsole.WithSpinnerAsync("Connecting MCP servers", () => App.EnsureMcpReadyAsync().WaitAsync(cancellationToken));
+            mcpPending = false;
+            filteredTools = FilterTools(App.McpTools);
+            ReportToolCount(filteredTools);
+            initialToolsCatalog = ToolsBeforeFirstGoal();
+            MuxConsole.SetToolBrowserCatalog(initialToolsCatalog);
+        }
         // Project the FULL session tool count for the header badge. The live toolset is assembled
         // further down (var singleAgentTools = [...]) and adds far more than the MCP tools in
         // filteredTools: 4 always-on local tools, the native REPL/shell tools, and the flag-gated
@@ -1017,12 +1050,13 @@ public static class SingleAgentOrchestrator
             + (allowParallelSubAgents ? 1 : 0)                  // delegate_parallel
             + (teamScope?.Tools.Count ?? 0)                     // team lead tools
             + ((App.GigaMode && teamScope is null) ? GigaMode.ToolCount : 0); // giga tools
-        // G2: TUI session header card (no-op outside TUI render mode).
+        // G2: TUI session header card (no-op outside TUI render mode). The badge is left off while MCP is
+        // still connecting: the count is not known yet and the committed header is not redrawn later.
         MuxConsole.RenderTuiSessionHeader(
             singleAgentDef?.Name ?? "Agent",
             resolvedModelId,
             App.ActiveProvider?.Name ?? "",
-            projectedToolCount);
+            mcpPending ? 0 : projectedToolCount);
         // The classic renderer separates the header from the transcript with a rule; the TUI
         // header card already provides that separation, so skip the extra rule there.
         if (!MuxConsole.IsTui) MuxConsole.WriteRule();
@@ -1080,6 +1114,9 @@ public static class SingleAgentOrchestrator
                     ModelSwitch.Report(firstChanges, "this session");
                     continue;
                 }
+
+                // Any real first input (a goal or a command that may build sub-agents from McpTools) waits for MCP.
+                await ResolveMcpAsync();
 
                 var firstDisp = await MetaCommandDispatch.TryHandleAsync(
                     firstInput, chatClientFactory, Models, cancellationToken, initialToolsCatalog);
@@ -1149,6 +1186,8 @@ public static class SingleAgentOrchestrator
             MuxConsole.WriteSuccess("Exited from Chat interface successfully!");
             return;
         }
+
+        await ResolveMcpAsync();   // goal handed in directly (no first-input read): still build with every tool
 
         HookWorker.Enqueue(new HookEvent
         {
