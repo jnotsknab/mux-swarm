@@ -879,6 +879,7 @@ internal class App
                         MuxConsole.WriteInfo("Context sharing disarmed. Delegation tools revert to their default schemas.");
                     break;
                 case "/onboard":
+                    await EnsureMcpReadyAsync();
                     Config = LoadConfig(ConfigPath);
                     var onboardModel = LoadSingleAgentModel();
                     var onboardCts = GetOrResetCts();
@@ -1010,6 +1011,9 @@ internal class App
                         string.IsNullOrWhiteSpace(resumeArg) ? null : resumeArg);
                     if (resumeData.HasValue)
                     {
+                        // The agent's tool list is built from McpTools once, at session start: resuming before the
+                        // servers finish connecting left the whole session without their tools.
+                        await EnsureMcpReadyAsync();
                         Config = LoadConfig(ConfigPath);
                         var resumeModel = LoadSingleAgentModel();
                         var resumeCts = GetOrResetCts();
