@@ -2352,13 +2352,14 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         // Task.WhenAll over ~14 stdio servers spawns every subprocess at once
         // (uvx/npx/python package resolution + imports), and that spawn storm
         // saturates CPU/disk/thread pool right as the TUI paints and any startup
-        // prompt reads keys - the whole app feels sluggish. A gate of 4 keeps the
-        // pipeline full (spawns are mostly I/O-bound waits) while flattening the
-        // instantaneous load spike. Shared collections are still populated
+        // prompt reads keys - the whole app feels sluggish. A gate of 8 (with the
+        // StartupThreads pool floor) keeps the pipeline full - spawns are mostly
+        // I/O-bound waits - without hurting key echo; measured on 11 servers: gate 4
+        // = 4.3 s, 8 = 3.1 s, 11 = 2.9 s but p90 key echo 32 -> 70 ms. Shared collections are still populated
         // sequentially after the gather to avoid races on McpClients / McpTools.
         // Success is logged only (no console output); failures are reported to
         // the console inside ConnectMcpServerAsync.
-        using var connectGate = new SemaphoreSlim(4);
+        using var connectGate = new SemaphoreSlim(McpConnectConcurrency);
         var results = await Task.WhenAll(
             enabledServers.Select(async kvp =>
             {
@@ -2398,6 +2399,9 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
 
         return successCount > 0;
     }
+
+    /// <summary>MCP servers connected at once during startup (see InitMcpServersAsync).</summary>
+    internal const int McpConnectConcurrency = 8;
 
     private sealed record McpInitResult(string Name, McpClient Client, IReadOnlyList<McpClientTool> Tools, bool IsHttp);
 
