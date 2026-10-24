@@ -60,13 +60,18 @@ public static class HookWorker
     /// </summary>
     public static void Enqueue(HookEvent e) => Channel.Writer.TryWrite(e);
 
+    /// <summary>True when <see cref="Start"/> shows the hooks warning (and, interactively, the prompt):
+    /// hooks are configured and <c>console.suppressActionWarnings</c> is off.</summary>
+    internal static bool WarnsAtStartup(int hookCount)
+        => hookCount > 0 && !(App.Config?.Console.SuppressActionWarnings ?? false);
+
     public static void Start(List<HookConfig> hooks)
     {
         if (_cts is not null) return;
 
         _hooks = hooks;
 
-        if (hooks.Count > 0)
+        if (WarnsAtStartup(hooks.Count))
         {
             MuxConsole.WriteWarning($"[Hooks] {hooks.Count} hook(s) configured in swarm.json.");
             MuxConsole.WriteWarning("Hooks execute arbitrary external commands with your user permissions.");
