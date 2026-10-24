@@ -449,6 +449,14 @@ public class ConsoleConfig
     /// </summary>
     [JsonPropertyName("mouseTracking")]
     public string MouseTracking { get; set; } = "buttons";
+
+    /// <summary>
+    /// When true, startup action warnings are skipped: Mux boots without the "[Hooks] ... Proceed with hooks
+    /// enabled?" warning and prompt, and configured hooks stay enabled (the same as answering yes).
+    /// Default false. In-session prompts (security approvals, ask_user, delete/overwrite confirms) are unaffected.
+    /// </summary>
+    [JsonPropertyName("suppressActionWarnings")]
+    public bool SuppressActionWarnings { get; set; }
 }
 
 /// <summary>

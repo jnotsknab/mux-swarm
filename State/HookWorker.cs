@@ -190,6 +190,11 @@ public static class HookWorker
         _ => result.ToString()
     };
 
+    /// <summary>True when <see cref="Start"/> shows the hooks warning (and, interactively, the prompt):
+    /// hooks are configured and <c>console.suppressActionWarnings</c> is off.</summary>
+    internal static bool WarnsAtStartup(int hookCount)
+        => hookCount > 0 && !(App.Config?.Console.SuppressActionWarnings ?? false);
+
     private static bool _confirmPending;
 
     /// <summary>
@@ -202,7 +207,7 @@ public static class HookWorker
 
         _hooks = hooks;
 
-        if (hooks.Count > 0 && !MuxConsole.StdioMode)
+        if (WarnsAtStartup(hooks.Count) && !MuxConsole.StdioMode)
         {
             _confirmPending = true;
             return;

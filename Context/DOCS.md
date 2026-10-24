@@ -2200,6 +2200,16 @@ Execute external commands on lifecycle events. Configure in swarm.json:
 
 Dispatch modes: `async` (fire and continue), `blocking` (wait with timeout). Add `"persistent": true` for long-lived consumers receiving NDJSON on stdin.
 
+On an interactive start with hooks configured, Mux warns and asks "Proceed with hooks enabled?" (no = hooks muted for
+the session; `/hooks on` re-enables). To skip the warning and prompt and keep hooks enabled, set in config.json:
+
+```json
+"console": { "suppressActionWarnings": true }
+```
+
+Default `false`. It only affects startup warnings; in-session prompts (security approvals, ask_user, delete/overwrite
+confirms) still show.
+
 `/createhook` (or `/hooks create`) asks for the id, script, events, filters and mode, saves the entry, and, for a new
 script, starts a normal `/agent` session (your model and settings) whose first message is a brief with those choices.
 
@@ -2275,7 +2285,7 @@ Daemon-specific hook events emitted automatically:
 - Use environment variables for all credentials, never put secrets in config files
 - Scope MCP servers narrowly per agent role via `mcpServers` in swarm.json
 - Route execution-heavy tasks through Docker when possible (`/dockerexec`)
-- Review hook commands before confirming on startup (hooks run with user permissions)
+- Review hook commands before confirming on startup (hooks run with user permissions); `console.suppressActionWarnings` skips that check, so only set it once you trust your hooks
 - Scope daemon watch paths narrowly
 - Use `--register` from an elevated terminal only after validating daemon and hook config
 - For maximum isolation, run mux-swarm inside a Docker container with only necessary volumes mounted
