@@ -1,45 +1,49 @@
-﻿namespace MuxSwarm.Engine.Extensions;
+﻿using System.Text.Json;
+
+namespace MuxSwarm.Engine.Extensions;
 
 /// <summary>
-/// <c>/layout</c>: pick one TUI layout (an installed extension whose <c>tui</c> block sets <c>compose.shape</c>, e.g.
-/// bubble, smooth, crt) or <c>standard</c> (none). Picking one enables it and disables the other layouts, so two
-/// layouts never merge; colours stay with <c>/theme</c>. Other extensions are never touched.
+/// <c>/layout</c>: pick the compose box shape from the fixed built-in set (<see cref="Tui.ComposeShape.Names"/>;
+/// <c>standard</c> = the stock <c>classic</c> look). The choice is saved as <c>console.tui.regions.compose.shape</c>,
+/// which wins over every extension per property; extensions are never enabled or disabled, so their colours,
+/// footer position and other region styles still mix in. Colours stay with <c>/theme</c>.
 /// </summary>
 internal static class LayoutCommand
 {
-    /// <summary>The choice that turns every layout off (the built-in look).</summary>
+    /// <summary>The choice that removes the user override (the stock look, unless an extension sets a shape).</summary>
     internal const string Standard = "standard";
 
-    /// <summary>Installed layouts (enabled or disabled), in name order.</summary>
-    internal static List<string> Layouts(ExtensionRegistry.Result loaded) =>
-        loaded.Extensions.Concat(loaded.Disabled)
-            .Where(e => SetsShape(e.Dir))
-            .Select(e => e.Name).Distinct().Order(StringComparer.Ordinal).ToList();
+    /// <summary>Every choice: <see cref="Standard"/> then the non-default built-in shapes, in their declared order.</summary>
+    internal static List<string> Choices() =>
+        [Standard, .. Tui.ComposeShape.Names.Where(n => n != "classic")];
 
-    /// <summary>The enabled layout, or <see cref="Standard"/> (several enabled = the last one, which wins the merge).</summary>
-    internal static string Active(ExtensionRegistry.Result loaded, IReadOnlyCollection<string> layouts) =>
-        loaded.Extensions.Select(e => e.Name).Where(layouts.Contains).Order(StringComparer.Ordinal).LastOrDefault() ?? Standard;
-
-    /// <summary>Enable <paramref name="choice"/> (or none for <see cref="Standard"/>) and disable the other layouts.
-    /// False when nothing changed.</summary>
-    internal static bool Apply(ExtensionsConfig cfg, IEnumerable<string> layouts, string choice)
+    /// <summary>The shape in effect: the user's override, else what extensions set, else <see cref="Standard"/>.</summary>
+    internal static string Active()
     {
-        bool changed = false;
-        foreach (var name in layouts)
-            changed |= ExtensionCatalog.SetEnabled(cfg, name, name == choice);
-        return changed;
+        string shape = Tui.RegionStyle.Choice("compose.shape");
+        return shape == "classic" ? Standard : shape;
     }
 
-    // True when the folder's manifest has tui.regions.compose.shape (read directly: disabled extensions are not parsed).
-    private static bool SetsShape(string dir)
+    /// <summary>Set (or for <see cref="Standard"/> remove) the user's <c>compose.shape</c> in <paramref name="console"/>.
+    /// False when nothing changed. Other user region styles are kept.</summary>
+    internal static bool Apply(ConsoleConfig console, string choice)
     {
-        try
+        var regions = console.Tui?.Regions;
+        string? current = regions is not null && regions.TryGetValue("compose", out var c) && c.TryGetValue("shape", out var v)
+            && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        if (choice == Standard)
         {
-            var path = Path.Combine(dir, ExtensionRegistry.ManifestFileName);
-            var manifest = System.Text.Json.JsonSerializer.Deserialize<ExtensionManifest>(File.ReadAllText(path), Setup.Setup.CfgSerialOpts);
-            return manifest?.Tui?.Regions is { } regions
-                && regions.TryGetValue("compose", out var compose) && compose.ContainsKey("shape");
+            if (current is null) return false;
+            regions!["compose"].Remove("shape");
+            if (regions["compose"].Count == 0) regions.Remove("compose");
+            return true;
         }
-        catch (Exception) { return false; }
+        if (current == choice) return false;
+        console.Tui ??= new TuiManifest();
+        console.Tui.Regions ??= new(StringComparer.OrdinalIgnoreCase);
+        if (!console.Tui.Regions.TryGetValue("compose", out var compose))
+            console.Tui.Regions["compose"] = compose = new(StringComparer.OrdinalIgnoreCase);
+        compose["shape"] = JsonSerializer.SerializeToElement(choice);
+        return true;
     }
 }
