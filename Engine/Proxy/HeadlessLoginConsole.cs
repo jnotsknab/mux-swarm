@@ -58,7 +58,7 @@ internal sealed class HeadlessLoginConsole : IDisposable
         MuxConsole.TuiSuspendForPrompt();
         bool links = AnsiConsole.Profile.Capabilities.Links;
         var console = new HeadlessLoginConsole(raw: true, links, !CliProxyManager.LooksHeadless(),
-            s => { lock (MuxConsole.ConsoleLock) { Console.Out.Write(s); Console.Out.Flush(); } },
+            loginStr => { lock (MuxConsole.ConsoleLock) { Console.Out.Write(loginStr); Console.Out.Flush(); } },
             resumeTui: true);
         if (!Console.IsInputRedirected) console._input = EscapeKeyListener.SuspendInput();
         console._write(Ansi.AutoWrapOn);   // the URL must soft-wrap, never be clipped at the edge
