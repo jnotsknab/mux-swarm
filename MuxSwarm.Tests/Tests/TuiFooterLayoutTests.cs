@@ -93,7 +93,7 @@ public sealed class TuiFooterLayoutTests : IDisposable
     }
 
     [Theory]
-    [InlineData("box", "\u256d\u2500 ultra")]
+    [InlineData("box", "\u250c\u2500 ultra")]
     [InlineData("bracket", "\u2500\u2500 ultra")]
     [InlineData("rule", "\u2500\u2500 ultra")]
     public void BorderPosition_PutsTheFooterInTheTopEdge_AndBadgeClicksHitTheChip(string shape, string start)
