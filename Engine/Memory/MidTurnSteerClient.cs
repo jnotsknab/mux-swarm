@@ -15,19 +15,21 @@ namespace MuxSwarm.Engine.Memory;
 ///
 /// The steer is APPENDED as a user message (not a leading system note) so it reads as the user just
 /// speaking - the most natural, authoritative placement for "stop doing X" / "also do Y". The agent
-/// thread does not persist what a sub-client splices in, so the orchestrator records the steer into
-/// its own conversation history separately for cross-turn durability. Inert (byte-identical
+/// thread does not persist what a sub-client splices in, so each injected note is reported through
+/// <c>onInjected</c> (request before the note, the note) and the orchestrator restores it into the
+/// session after the turn (<see cref="SteerLog"/>). Inert (byte-identical
 /// pass-through) whenever the steer queue is empty, which is the overwhelmingly common case.
 /// </summary>
 public sealed class MidTurnSteerClient : DelegatingChatClient
 {
     private readonly Func<string?> _drain;
-    private readonly Action<string>? _onInjected;
+    private readonly Action<IReadOnlyList<ChatMessage>, ChatMessage>? _onInjected;
 
     /// <summary>Wrap <paramref name="inner"/> with mid-turn steer injection. <paramref name="drain"/>
     /// returns the combined pending steer text (or null when none is queued); <paramref name="onInjected"/>
-    /// is invoked once per injected note so the orchestrator can record it into its durable history.</summary>
-    public MidTurnSteerClient(IChatClient inner, Func<string?> drain, Action<string>? onInjected = null) : base(inner)
+    /// is invoked once per injected note with the request as it was before the note and the note itself,
+    /// so the orchestrator can put the note back into the saved session where it was sent.</summary>
+    public MidTurnSteerClient(IChatClient inner, Func<string?> drain, Action<IReadOnlyList<ChatMessage>, ChatMessage>? onInjected = null) : base(inner)
     {
         _drain = drain;
         _onInjected = onInjected;
@@ -43,8 +45,9 @@ public sealed class MidTurnSteerClient : DelegatingChatClient
             {
                 // Append as the latest user message: after any assistant/tool round-trip content the
                 // FIC has accumulated, the model's next call sees the fresh user instruction last.
-                list.Add(new ChatMessage(ChatRole.User, steer));
-                try { _onInjected?.Invoke(steer); } catch { /* durability record is best-effort */ }
+                var note = new ChatMessage(ChatRole.User, steer);
+                try { _onInjected?.Invoke(list.ToList(), note); } catch { /* durability record is best-effort */ }
+                list.Add(note);
             }
         }
         catch { /* best-effort; fall through to the untouched messages */ }
