@@ -2715,7 +2715,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
             // mechanism as the deep-memory MidTurnReflectionClient, but sourced from the user and
             // re-checked each round-trip. Inert pass-through when no steer is queued (the common case).
             .Use(inner => wrapMidTurnReflection
-                ? new MidTurnSteerClient(inner, SingleAgentOrchestrator.DrainSteer)
+                ? new MidTurnSteerClient(inner, SingleAgentOrchestrator.DrainSteer, SingleAgentOrchestrator.RecordSteer)
                 : inner)
             // INSIDE function-invocation: if the endpoint rejects the top reasoning tier
             // (ExtraHigh -> wire "xhigh"), transparently retry that single call one tier lower
