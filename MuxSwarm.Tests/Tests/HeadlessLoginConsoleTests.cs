@@ -58,6 +58,17 @@ public class HeadlessLoginConsoleTests
         Assert.Equal("https://auth.openai.com/codex/device", c.Url);
     }
 
+    [Theory]
+    [InlineData("Open https://accounts.x.ai/oauth2/device.", "https://accounts.x.ai/oauth2/device")]
+    [InlineData("(see https://example.com/a?b=1),", "https://example.com/a?b=1")]
+    [InlineData("https://example.com/x.y/z", "https://example.com/x.y/z")]
+    public void TrailingPunctuation_IsNotPartOfTheUrl(string line, string url)
+    {
+        var (c, _) = Raw();
+        c.Line(line, err: false);
+        Assert.Equal(url, c.Url);
+    }
+
     [Fact]
     public void FirstUrl_IsTheAuthLink_LaterUrlsAreText()
     {
