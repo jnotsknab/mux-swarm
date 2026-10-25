@@ -2910,6 +2910,11 @@ public static class SingleAgentOrchestrator
                         MuxConsole.WriteMuted($"\u21bb Resumed session {interactiveHandle.Id} ({interactiveHandle.Label}).");
                     }
                 }
+                else if (metaCmd.Equals("/layout", StringComparison.OrdinalIgnoreCase)
+                      || metaCmd.StartsWith("/layout ", StringComparison.OrdinalIgnoreCase))
+                {
+                    CliCmdUtils.HandleLayout(metaCmd);   // TUI layout switch (process-level, like /extensions)
+                }
                 else if (metaCmd.Equals("/extensions", StringComparison.OrdinalIgnoreCase)
                       || metaCmd.StartsWith("/extensions ", StringComparison.OrdinalIgnoreCase))
                 {
