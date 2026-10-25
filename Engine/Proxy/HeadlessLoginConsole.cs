@@ -28,21 +28,28 @@ internal sealed class HeadlessLoginConsole : IDisposable
     private readonly Action<string> _write;
     private readonly bool _resumeTui;
     private readonly object _gate = new();
+    private readonly Action<string> _commit;
+    private readonly Queue<string> _tail = new();   // last plain lines, re-shown after a failed login
     private IDisposable? _input;
     private string? _url;
     private bool _hinted;
+    private bool _keepOutput;
     private int _disposed;
 
-    internal HeadlessLoginConsole(bool raw, bool links, bool localClipboard, Action<string> write, bool resumeTui = false)
+    private const int TailLines = 8;
+
+    internal HeadlessLoginConsole(bool raw, bool links, bool localClipboard, Action<string> write, bool resumeTui = false,
+        Action<string>? commit = null)
     {
         _raw = raw;
         _links = links;
         _localClipboard = localClipboard;
         _write = write;
         _resumeTui = resumeTui;
+        _commit = commit ?? MuxConsole.WriteMuted;
     }
 
-    /// <summary>The most recent auth URL the sidecar printed, or null before it has printed one.</summary>
+    /// <summary>The auth URL: the first URL the sidecar printed, or null before it has printed one.</summary>
     internal string? Url { get { lock (_gate) return _url; } }
 
     /// <summary>
@@ -79,14 +86,21 @@ internal sealed class HeadlessLoginConsole : IDisposable
         var match = UrlPattern.Match(text);
         lock (_gate)
         {
-            if (Volatile.Read(ref _disposed) != 0) { MuxConsole.WriteMuted(text); return; }   // a late line after the TUI is back
-            if (!match.Success) { _write(err ? Ansi.Dim + text + Ansi.Reset + "\r\n" : text + "\r\n"); return; }
+            if (Volatile.Read(ref _disposed) != 0) { _commit(text); return; }   // a late line after the TUI is back
+            if (!match.Success || _url is not null)
+            {
+                // Only the first URL is the auth link (verified for every provider); later ones print as text.
+                _write(err ? Ansi.Dim + text + Ansi.Reset + "\r\n" : text + "\r\n");
+                _tail.Enqueue(text);
+                if (_tail.Count > TailLines) _tail.Dequeue();
+                return;
+            }
 
             _url = match.Value;
-            if (text.Trim() == match.Value)
-                _write("\r\n" + Link(match.Value) + "\r\n\r\n");   // alone on its line, column 0, no indent
-            else
-                _write(text + "\r\n");
+            string before = text[..match.Index].TrimEnd(), after = text[(match.Index + match.Length)..].Trim();
+            if (before.Length > 0) _write(before + "\r\n");
+            _write("\r\n" + Link(match.Value) + "\r\n\r\n");   // alone on its line, column 0, no indent
+            if (after.Length > 0) _write(after + "\r\n");
             if (_hinted) return;
             _hinted = true;
             _write(Ansi.Dim + (_input is null
@@ -122,37 +136,32 @@ internal sealed class HeadlessLoginConsole : IDisposable
     }
 
     /// <summary>
-    /// Wait for the login process to exit, serving the <c>c</c>/<c>Esc</c> keys meanwhile. Returns false when
-    /// the user cancelled. On <paramref name="ct"/> cancellation the child is stopped (it would otherwise keep
-    /// its callback port) and <see cref="OperationCanceledException"/> is thrown as before.
+    /// Wait for the login process to exit, serving the <c>c</c>/<c>Esc</c> keys meanwhile. Returns true when
+    /// it exited and false when the user cancelled; <paramref name="ct"/> cancellation throws
+    /// <see cref="OperationCanceledException"/>. The child is left running in both cases: its owner stops it.
     /// </summary>
     public async Task<bool> WaitAsync(Process proc, CancellationToken ct)
     {
         var exited = proc.WaitForExitAsync(CancellationToken.None);
-        try
+        while (!exited.IsCompleted)
         {
-            while (!exited.IsCompleted)
+            ct.ThrowIfCancellationRequested();
+            while (_input is not null && TryReadKey(out var key))
             {
-                ct.ThrowIfCancellationRequested();
-                while (_input is not null && TryReadKey(out var key))
-                {
-                    // A lone Esc cancels; an Esc that starts an escape sequence (arrow key, mouse report) does not.
-                    if (key.Key == ConsoleKey.Escape && FollowedByMore()) continue;
-                    if (!HandleKey(key)) continue;
-                    Kill(proc);
-                    await exited.ConfigureAwait(false);
-                    return false;
-                }
-                await Task.WhenAny(exited, Task.Delay(50, ct)).ConfigureAwait(false);
+                // A lone Esc cancels; an Esc that starts an escape sequence (arrow key, mouse report) does not.
+                if (key.Key == ConsoleKey.Escape && FollowedByMore()) continue;
+                if (HandleKey(key)) return false;
             }
-        }
-        catch (OperationCanceledException)
-        {
-            Kill(proc);
-            throw;
+            await Task.WhenAny(exited, Task.Delay(50, ct)).ConfigureAwait(false);
         }
         return true;
     }
+
+    /// <summary>
+    /// The login failed on its own: re-show the sidecar's last lines in the transcript once the TUI is back,
+    /// since the main-screen copy disappears when the frame returns and they usually carry the reason.
+    /// </summary>
+    public void KeepOutputOnClose() { lock (_gate) _keepOutput = true; }
 
     private static bool FollowedByMore()
     {
@@ -174,19 +183,14 @@ internal sealed class HeadlessLoginConsole : IDisposable
         catch (InvalidOperationException) { return false; }
     }
 
-    // Kill documents InvalidOperationException (no process associated / already gone), Win32Exception (could not
-    // be terminated) and AggregateException (part of the tree survived). The login is over either way.
-    private static void Kill(Process proc)
-    {
-        try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); }
-        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception or AggregateException) { }
-    }
-
-    /// <summary>Give the console back: release stdin and resume the live TUI.</summary>
+    /// <summary>Give the console back: release stdin, resume the live TUI and, after a failed login, re-show its output.</summary>
     public void Dispose()
     {
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _input?.Dispose();
         if (_resumeTui) MuxConsole.TuiResume();
+        lock (_gate)
+            if (_keepOutput)
+                foreach (string line in _tail) _commit(line);
     }
 }

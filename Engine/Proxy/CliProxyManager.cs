@@ -644,11 +644,27 @@ internal static class CliProxyManager
             outPump.Start();
             errPump.Start();
 
-            bool finished = await console.WaitAsync(proc, ct).ConfigureAwait(false);
+            bool finished;
+            try
+            {
+                finished = await console.WaitAsync(proc, ct).ConfigureAwait(false);
+            }
+            finally
+            {
+                // Esc, the timeout or an error: stop the child so it frees its callback port. Kill on a process
+                // that has already exited does nothing, so racing its exit here is harmless.
+                if (!proc.HasExited)
+                {
+                    proc.Kill(entireProcessTree: true);
+                    proc.WaitForExit();
+                }
+            }
             // Let the pumps drain any final buffered lines before returning.
             outPump.Join(TimeSpan.FromSeconds(2));
             errPump.Join(TimeSpan.FromSeconds(2));
-            return finished && proc.ExitCode == 0;
+            bool ok = finished && proc.ExitCode == 0;
+            if (finished && !ok) console.KeepOutputOnClose();   // the sidecar failed: keep its reason visible
+            return ok;
         }
     }
 

@@ -21,10 +21,11 @@ public class HeadlessLoginConsoleTests
         + "&scope=user%3Aprofile+user%3Ainference+user%3Asessions%3Aclaude_code+user%3Amcp_servers"
         + "+user%3Afile_upload&state=aa5e260aa6a4b9cabe8a0c8fd6c13b4d";
 
-    private static (HeadlessLoginConsole Console, StringBuilder Out) Raw(bool links = false)
+    private static (HeadlessLoginConsole Console, StringBuilder Out) Raw(bool links = false, List<string>? committed = null)
     {
         var sb = new StringBuilder();
-        return (new HeadlessLoginConsole(raw: true, links, localClipboard: false, write: s => sb.Append(s)), sb);
+        return (new HeadlessLoginConsole(raw: true, links, localClipboard: false, write: s => sb.Append(s),
+            commit: s => committed?.Add(s)), sb);
     }
 
     private static ConsoleKeyInfo Key(char c, ConsoleKey k, bool ctrl = false) => new(c, k, false, false, ctrl);
@@ -41,6 +42,51 @@ public class HeadlessLoginConsoleTests
         Assert.Contains(Url, lines);                                   // whole URL, exactly, as one line
         Assert.DoesNotContain(lines, l => l != Url && l.Contains("oauth/authorize"));
         Assert.Equal(Url, c.Url);
+    }
+
+    [Fact]
+    public void Url_InsideText_IsMovedOntoItsOwnLine()
+    {
+        // codex-device prints "Codex device URL: https://..." on one line.
+        var (c, sb) = Raw();
+        c.Line("Codex device URL: https://auth.openai.com/codex/device (expires soon)", err: false);
+
+        var lines = sb.ToString().Split("\r\n");
+        Assert.Contains("Codex device URL:", lines);
+        Assert.Contains("https://auth.openai.com/codex/device", lines);
+        Assert.Contains("(expires soon)", lines);
+        Assert.Equal("https://auth.openai.com/codex/device", c.Url);
+    }
+
+    [Fact]
+    public void FirstUrl_IsTheAuthLink_LaterUrlsAreText()
+    {
+        var (c, sb) = Raw();
+        c.Line(Url, err: false);
+        sb.Clear();
+        c.Line("callback server listening on http://localhost:54545/callback", err: true);
+
+        Assert.Equal(Url, c.Url);   // c still copies the auth link
+        Assert.Contains("callback server listening on http://localhost:54545/callback", sb.ToString());
+        Assert.DoesNotContain("\r\nhttp://localhost", sb.ToString());   // not given its own line
+    }
+
+    [Fact]
+    public void FailedLogin_ReShowsTheLastLinesInTheTranscript_OnlyWhenAsked()
+    {
+        var committed = new List<string>();
+        var (c, _) = Raw(committed: committed);
+        c.Line(Url, err: false);
+        for (int i = 1; i <= 10; i++) c.Line($"line {i}", err: i % 2 == 0);
+        c.KeepOutputOnClose();
+        c.Dispose();
+        Assert.Equal(Enumerable.Range(3, 8).Select(i => $"line {i}"), committed);   // the last 8, URL excluded
+
+        var quiet = new List<string>();
+        var (ok, _) = Raw(committed: quiet);
+        ok.Line("error: something", err: true);
+        ok.Dispose();
+        Assert.Empty(quiet);
     }
 
     [Fact]
@@ -163,13 +209,21 @@ public class HeadlessLoginConsoleTests
     }
 
     [Fact]
-    public async Task WaitAsync_OnCancellation_StopsTheChildAndThrows()
+    public async Task WaitAsync_OnCancellation_Throws_AndLeavesTheChildToItsOwner()
     {
         var (c, _) = Raw();
         using var proc = LongRunning();
-        using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
-        await Assert.ThrowsAnyAsync<OperationCanceledException>(() => c.WaitAsync(proc, cts.Token));
-        Assert.True(proc.WaitForExit(5000));
+        try
+        {
+            using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(300));
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => c.WaitAsync(proc, cts.Token));
+            Assert.False(proc.HasExited);   // CliProxyManager.LoginAsync stops it in its finally
+        }
+        finally
+        {
+            proc.Kill(entireProcessTree: true);
+            proc.WaitForExit();
+        }
     }
 
     [Fact]
