@@ -39,6 +39,13 @@ internal sealed class HeadlessLoginConsole : IDisposable
 
     private const int TailLines = 8;
 
+    // How often the wait loop checks for a key press while the login child runs (and exits on its own).
+    private static readonly TimeSpan KeyPollInterval = TimeSpan.FromMilliseconds(50);
+
+    // After an Esc, how long to wait for the rest of an escape sequence (arrow key, mouse report). The terminal
+    // sends a sequence in one write, so its bytes arrive well within this; a lone Esc has nothing after it.
+    private static readonly TimeSpan EscapeSequenceWindow = TimeSpan.FromMilliseconds(30);
+
     internal HeadlessLoginConsole(bool raw, bool links, bool localClipboard, Action<string> write, bool resumeTui = false,
         Action<string>? commit = null)
     {
@@ -153,7 +160,7 @@ internal sealed class HeadlessLoginConsole : IDisposable
                 if (key.Key == ConsoleKey.Escape && FollowedByMore()) continue;
                 if (HandleKey(key)) return false;
             }
-            await Task.WhenAny(exited, Task.Delay(50, ct)).ConfigureAwait(false);
+            await Task.WhenAny(exited, Task.Delay(KeyPollInterval, ct)).ConfigureAwait(false);
         }
         return true;
     }
@@ -166,7 +173,7 @@ internal sealed class HeadlessLoginConsole : IDisposable
 
     private static bool FollowedByMore()
     {
-        Thread.Sleep(30);
+        Thread.Sleep(EscapeSequenceWindow);
         bool more = false;
         while (TryReadKey(out _)) more = true;   // drain the rest of the sequence
         return more;
@@ -191,7 +198,9 @@ internal sealed class HeadlessLoginConsole : IDisposable
         _input?.Dispose();
         if (_resumeTui) MuxConsole.TuiResume();
         lock (_gate)
-            if (_keepOutput)
-                foreach (string line in _tail) _commit(line);
+        {
+            if (!_keepOutput) return;
+            foreach (string line in _tail) _commit(line);
+        }
     }
 }
