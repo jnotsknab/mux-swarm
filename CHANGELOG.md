@@ -11,6 +11,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > with the reported version noted where the two disagree. Before v0.15.2 the `<Version>` field in
 > `MuxSwarm.csproj` was not maintained; since v0.15.2 it matches `App.Version` (enforced by a test).
 
+## [Unreleased]
+
+## [v0.15.3-alpha]
+
+### Fixed
+- Headless `/login` (remote / SSH): the auth URL was wrapped into indented rows next to the scrollbar, so copying
+  it from the terminal garbled it. It now prints on its own line (a clickable link where the terminal supports
+  it), `c` copies it without selecting (OSC 52), and `Esc` cancels the login. A login that fails on its own
+  keeps the sidecar's last lines visible, and Esc or the 5-minute timeout stops the login process so its
+  callback port is freed. (#111)
+
 ## [v0.15.2-alpha]
 
 ### Security
@@ -32,6 +43,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ask_user` answer) tripped the watchdog, and the failed turn was saved as the pre-turn history. The watchdog
   now resets on tool calls/results and pauses during `ask_user`; a timed-out or failed turn is recorded as your
   message + `[turn ended: <reason>]` with the tools that ran. (#105)
+- **ChromaDB MCP failed to start.** `chroma-mcp` 0.2.6 pins `mcp==1.6.0`, which breaks on pydantic 2.14
+  (`ImportError: eval_type_backport`), so semantic memory was silently missing. The bundled server now runs as
+  `uvx --with "pydantic<2.14" chroma-mcp ...`. Existing installs pick it up on the next start (the args are
+  rebuilt from `filesystem.chromaDbPath`; without a path, the old default args are upgraded and custom args
+  are left alone).
 
 ### Added
 - `/api/health` reports daemon trigger readiness (`daemon: off | starting | ready`). (#103)

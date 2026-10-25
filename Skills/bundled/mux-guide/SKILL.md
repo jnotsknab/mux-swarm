@@ -1,9 +1,9 @@
 ---
 name: mux-guide
-description: Authoritative user guide + reference map for Mux-Swarm itself (v0.15.2). Use when the user asks how Mux works, how to configure it, what a command/flag/config-key does, how modes/teams/sandbox/auth/ACP/delegation/daemon/webhooks/session sharing work, or how to troubleshoot Mux. Points to exact sections in the bundled DOCS.md instead of dumping it.
+description: Authoritative user guide + reference map for Mux-Swarm itself (v0.15.3). Use when the user asks how Mux works, how to configure it, what a command/flag/config-key does, how modes/teams/sandbox/auth/ACP/delegation/daemon/webhooks/session sharing work, or how to troubleshoot Mux. Points to exact sections in the bundled DOCS.md instead of dumping it.
 ---
 
-# Mux-Swarm Guide (v0.15.2)
+# Mux-Swarm Guide (v0.15.3)
 
 This skill is the map to Mux-Swarm's own documentation. The full reference is the bundled
 **`DOCS.md`** at `{{paths.context}}/DOCS.md`. DOCS.md is large - DO NOT read it whole. Instead,
@@ -20,7 +20,7 @@ DOCS.md wins (it ships with the build).
 
 ## Current version
 
-- **Mux-Swarm v0.15.2.** If `/status` or the splash reports a different version, trust the runtime
+- **Mux-Swarm v0.15.3.** If `/status` or the splash reports a different version, trust the runtime
   and tell the user this guide may be slightly behind.
 
 ## DOCS.md section map (grep these exact headings)
@@ -62,6 +62,8 @@ DOCS.md wins (it ships with the build).
 
 ## What changed since v0.12.1 (headline)
 
+- **v0.15.3: headless `/login` URL.** Over SSH/remote the auth URL prints on its own line (a link where the
+  terminal supports it); `c` copies it (OSC 52), `Esc` cancels.
 - **v0.15.2: sandbox + session fixes.** The Python REPL now runs inside bwrap/firejail/sandbox-exec (custom
   backends opt in with `sandbox.replStdio: true`; never a host fallback). Wrapper backends get exact argv.
   `--version`/`--help` exit before setup. `/api/health` reports `daemon` readiness. `/doctor` checks the

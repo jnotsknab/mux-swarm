@@ -355,12 +355,7 @@ public static class Setup
 
         if (_appConfig.McpServers.TryGetValue("ChromaDB", out var chromaServer) && chromaServer.Enabled)
         {
-            chromaServer.Args = new[]
-            {
-                "chroma-mcp",
-                "--client-type", "persistent",
-                "--data-dir", chromaDir
-            };
+            chromaServer.Args = McpServerDefaults.ChromaArgs(chromaDir);
         }
 
         MuxConsole.WriteSuccess($"ChromaDB data dir set to: {chromaDir}");

@@ -21,6 +21,20 @@ public static class McpServerDefaults
     private const string LegacyProtocolPin = "2024-11-05";
 
     /// <summary>
+    /// uvx arguments for the bundled ChromaDB MCP server with persistent storage in <paramref name="dataDir"/>.
+    /// chroma-mcp 0.2.6 (latest) pins mcp==1.6.0, which imports a pydantic internal removed in pydantic 2.14,
+    /// so a fresh resolve exits 1 with an ImportError. The <c>--with pydantic&lt;2.14</c> constraint keeps
+    /// uvx on a compatible pydantic. Remove it once chroma-mcp ships with a newer mcp.
+    /// </summary>
+    internal static string[] ChromaArgs(string dataDir) => new[]
+    {
+        "--with", "pydantic<2.14",
+        "chroma-mcp",
+        "--client-type", "persistent",
+        "--data-dir", dataDir
+    };
+
+    /// <summary>
     /// Adds any missing default MCP servers to the given dictionary.
     /// Only fills gaps — never overwrites user-customized entries.
     /// </summary>
@@ -82,12 +96,7 @@ public static class McpServerDefaults
         {
             Type = "stdio",
             Command = "uvx",
-            Args = new[]
-            {
-                "chroma-mcp",
-                "--client-type", "persistent",
-                "--data-dir", "chroma-db"
-            },
+            Args = ChromaArgs("chroma-db"),
             Env = new Dictionary<string, string?>(),
             ProtocolVersion = LegacyProtocolPin,
             Enabled = true
