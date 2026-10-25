@@ -1025,7 +1025,7 @@ internal static class TuiComponents
                 // trailing boundary belongs here only when it is also the segment end (append spot);
                 // otherwise it rolls to the start of the next wrapped row.
                 if (s == cursorLine && cursorCol >= pos &&
-                    (cursorCol < pos + take || (cursorCol == pos + take && pos + take == seg.Length)))
+                    (cursorCol < pos + take || (cursorCol == pos + take && pos + take == seg.Length && take < cap)))
                 {
                     cursorVRow = rows.Count;
                     cursorVCol = cursorCol - pos;
@@ -1051,7 +1051,9 @@ internal static class TuiComponents
 
                 pos += take;
                 firstOfSeg = false;
-                if (pos >= seg.Length) break;
+                // A caret owed at the end of a row that is already full rolls onto its own continuation row
+                // (as a terminal would): drawing its cell after `cap` columns made the row one cell too wide.
+                if (pos >= seg.Length && !(cursorVRow < 0 && s == cursorLine && cursorCol == seg.Length)) break;
             }
         }
         return Shade(rows);
