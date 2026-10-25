@@ -56,8 +56,7 @@ internal sealed class HeadlessLoginConsole : IDisposable
             return new HeadlessLoginConsole(raw: false, links: false, localClipboard: false, write: _ => { });
 
         MuxConsole.TuiSuspendForPrompt();
-        bool links = false;
-        try { links = AnsiConsole.Profile.Capabilities.Links; } catch { /* plain text then */ }
+        bool links = AnsiConsole.Profile.Capabilities.Links;
         var console = new HeadlessLoginConsole(raw: true, links, !CliProxyManager.LooksHeadless(),
             s => { lock (MuxConsole.ConsoleLock) { Console.Out.Write(s); Console.Out.Flush(); } },
             resumeTui: true);
@@ -175,9 +174,12 @@ internal sealed class HeadlessLoginConsole : IDisposable
         catch (InvalidOperationException) { return false; }
     }
 
+    // Kill documents InvalidOperationException (no process associated / already gone), Win32Exception (could not
+    // be terminated) and AggregateException (part of the tree survived). The login is over either way.
     private static void Kill(Process proc)
     {
-        try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); } catch { /* already gone */ }
+        try { if (!proc.HasExited) proc.Kill(entireProcessTree: true); }
+        catch (Exception e) when (e is InvalidOperationException or System.ComponentModel.Win32Exception or AggregateException) { }
     }
 
     /// <summary>Give the console back: release stdin and resume the live TUI.</summary>
