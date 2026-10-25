@@ -2059,6 +2059,9 @@ a small MIT loopback proxy that holds the OAuth tokens and exposes a normal
 OpenAI-compatible endpoint Mux talks to unchanged.
 
 - `/login [provider]` - run the provider's OAuth flow (browser opens automatically).
+  `/login <provider> headless` (also offered as a choice, default over SSH / without a display) prints the
+  auth URL on its own line instead, to open in a browser on any machine: press `c` to copy it (OSC 52, plus
+  the local clipboard when not over SSH), `Esc` to cancel.
   Providers: `claude`, `codex`, `codex-device` (headless device-code), `kimi`, `xai`,
   `antigravity`. The first successful login auto-registers a single `cliproxy` provider
   (endpoint `http://127.0.0.1:<port>/v1`, bearer via the `MUX_CLIPROXY_KEY` env var);
