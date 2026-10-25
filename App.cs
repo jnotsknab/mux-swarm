@@ -239,6 +239,9 @@ internal class App
         // post-theme.) Re-asserted later alongside the other render config (idempotent).
         LoadExtensions(announce: false);
 
+        // Frame engine: hold the primary-screen splash; the frame paints it in place (else it shows twice, moved).
+        MuxConsole.DeferSplashToFrame = !MuxConsole.StdioMode && Config.SetupCompleted && Config.Console.DockedFooter
+            && string.Equals(Config.Console.RenderEngine, "frame", StringComparison.OrdinalIgnoreCase);
         MuxConsole.WriteSplashScreen(version: Version, debugTag: DebugTag);
 
         if (!Config.SetupCompleted)
@@ -353,6 +356,7 @@ internal class App
         // --update : do-and-exit self-update from the latest GitHub release.
         if (parsed.UpdateMode)
         {
+            MuxConsole.EndQuietStartup();   // prints the held splash first
             var (staged, msg) = await MuxSwarm.State.SelfUpdater.RunAsync(line => MuxConsole.WriteInfo(line));
             MuxConsole.WriteInfo(msg);
             if (staged)

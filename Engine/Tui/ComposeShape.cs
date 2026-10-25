@@ -9,7 +9,7 @@ namespace MuxSwarm.Engine.Tui;
 internal static class ComposeShape
 {
     /// <summary>Built-in shapes. <c>classic</c> is the stock look (rule above, <c>›</c> prompt).</summary>
-    internal static readonly string[] Names = ["classic", "rule", "bracket", "box", "bubble", "rail", "bare"];
+    internal static readonly string[] Names = ["classic", "rule", "bracket", "box", "bubble", "smooth", "rail", "bare"];
 
     /// <summary>Border glyph sets (box shape, splash frame): top-left, top-right, bottom-left, bottom-right, horizontal, vertical.</summary>
     internal static readonly Dictionary<string, string[]> Borders = new()
@@ -28,11 +28,14 @@ internal static class ComposeShape
     /// shape adds before each input row's own lead.</summary>
     internal sealed record Frame(List<string> Lines, List<int> InputLines, int LeftCols, int TitleLine = -1, int TitleCol = 0);
 
-    /// <summary>True when <paramref name="shape"/> has a top edge a footer can sit in.</summary>
-    internal static bool HasTitleEdge(string shape) => shape is "box" or "rule" or "bracket";
+    /// <summary>True when <paramref name="shape"/> has an edge a footer can sit in (<c>bubble</c>: a row inside the outline).</summary>
+    internal static bool HasTitleEdge(string shape) => shape is "box" or "rule" or "bracket" or "bubble";
 
-    /// <summary>Columns available for a title in the top edge of <paramref name="shape"/> at <paramref name="width"/>.</summary>
-    internal static int TitleWidth(string shape, int width) => Math.Max(8, width - (shape == "box" ? 7 : 5));
+    /// <summary>Columns available for a title in the top edge of <paramref name="shape"/> at <paramref name="width"/>
+    /// (<c>bubble</c>: the inner width of its footer row).</summary>
+    internal static int TitleWidth(string shape, int width) => shape == "bubble"
+        ? Math.Max(8, width - 2 * SideCols(shape).Left)
+        : Math.Max(8, width - (shape == "box" ? 7 : 5));
 
     /// <summary>The active shape, or <c>classic</c>.</summary>
     internal static string Active => RegionStyle.Choice("compose.shape");
@@ -48,13 +51,14 @@ internal static class ComposeShape
         {
             "box" => (1 + pad, 1 + pad),
             "bubble" => (1 + pad, 1 + pad),
+            "smooth" => (1 + pad, 1 + pad),
             "rail" => (1 + pad, 0),
             _ => (0, 0),
         };
     }
 
     /// <summary>Columns of the stock two-space input lead the shape replaces with its own chrome.</summary>
-    internal static int DroppedLead(string shape) => shape is "box" or "bubble" or "rail" ? 2 : 0;
+    internal static int DroppedLead(string shape) => shape is "box" or "bubble" or "smooth" or "rail" ? 2 : 0;
 
     /// <summary>Width to build the input rows at so the shaped rows fill exactly <paramref name="width"/>.</summary>
     internal static int InnerWidth(string shape, int width)
@@ -71,7 +75,8 @@ internal static class ComposeShape
 
     /// <summary>
     /// As <see cref="Wrap(string, List{string}, int)"/>, embedding <paramref name="title"/> (the footer row, built for
-    /// <see cref="TitleWidth"/> columns) in the top border of <c>box</c> or on the top rule of <c>rule</c>/<c>bracket</c>.
+    /// <see cref="TitleWidth"/> columns) in the top border of <c>box</c>, on the top rule of <c>rule</c>/<c>bracket</c>,
+    /// or as the last row inside the <c>bubble</c> outline.
     /// <see cref="Frame.TitleLine"/>/<see cref="Frame.TitleCol"/> report where it landed (title columns start there).
     /// </summary>
     internal static Frame Wrap(string shape, List<string> rows, int width, string? title, int titleCols)
@@ -129,6 +134,24 @@ internal static class ComposeShape
                 break;
             }
             case "bubble":
+            {
+                // A rounded outline all the way round the input; the footer (if given) is its last inner row, so the
+                // prompt and the status line read as one bubble.
+                var g = Borders["rounded"];
+                string pad = new(' ', left - 1);
+                string side = $"[{border}]{Spectre.Console.Markup.Escape(g[5])}[/]";
+                lines.Add($"[{border}]{g[0]}{Spectre.Console.Markup.Escape(string.Concat(Enumerable.Repeat(g[4], Math.Max(0, width - 2))))}{g[1]}[/]");
+                Body(r => side + pad + r + pad + side);
+                if (title is not null && titleCols > 0 && titleCols <= inner)
+                {
+                    titleLine = lines.Count;
+                    titleCol = left;
+                    lines.Add(side + pad + title + new string(' ', inner - titleCols) + pad + side);
+                }
+                lines.Add($"[{border}]{g[2]}{Spectre.Console.Markup.Escape(string.Concat(Enumerable.Repeat(g[4], Math.Max(0, width - 2))))}{g[3]}[/]");
+                break;
+            }
+            case "smooth":
             {
                 // A filled field with rounded end caps (half-circle glyphs drawn in the fill colour on the terminal bg).
                 string fill = RegionStyle.Color("compose.fill");
