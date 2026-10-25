@@ -65,6 +65,22 @@ public static class SingleAgentOrchestrator
     /// <summary>Drain all queued mid-turn steers into one combined user note (FIFO, blank-joined),
     /// or null if none are pending. Called by <see cref="MidTurnSteerClient"/> on each round-trip to
     /// splice the note into the live message list. Thread-safe.</summary>
+    /// <summary>Steers injected this turn (filled by <see cref="MidTurnSteerClient"/> via <see cref="RecordSteer"/>),
+    /// restored into the session before it is saved so a resumed session still has them.</summary>
+    internal static readonly SteerLog TurnSteers = new();
+
+    /// <summary><see cref="MidTurnSteerClient"/>'s <c>onInjected</c>: remember the note and where it was sent.</summary>
+    internal static void RecordSteer(IReadOnlyList<ChatMessage> request, ChatMessage note) => TurnSteers.Record(request, note);
+
+    // Put this turn's steers back into the session's history (the framework never commits them).
+    internal static void RestoreTurnSteers(AgentSession session)
+    {
+        if (TurnSteers.IsEmpty) return;
+        var notes = TurnSteers.Take();
+        if (!session.TryGetInMemoryChatHistory(out var history) || history is null) history = new List<ChatMessage>();
+        if (SteerLog.RestoreInto(history, notes) > 0) session.SetInMemoryChatHistory(history);
+    }
+
     internal static string? DrainSteer()
     {
         if (_pendingSteer.IsEmpty) return null;
@@ -2159,6 +2175,7 @@ public static class SingleAgentOrchestrator
             // Drop any steer left over from a previous (e.g. cancelled) turn so it cannot leak
             // into this fresh goal; mid-turn steers are only meaningful within their own turn.
             while (_pendingSteer.TryDequeue(out _)) { }
+            TurnSteers.Take();
 
             conversationHistory.Add(new ChatMessage(ChatRole.User, currentGoal));
 
@@ -2740,6 +2757,9 @@ public static class SingleAgentOrchestrator
             {
                 StdinCancelMonitor.Instance?.ClearActiveTurnCts();
                 escapeListener.Dispose();
+                // Steers spliced in mid-turn are not committed by the framework: restore them (after the
+                // interrupt/failure records above, so they land next to the message they followed).
+                try { RestoreTurnSteers(session); } catch { /* best-effort; never breaks the turn */ }
             }
 
             // /insight max: apply the agent's queued context_drop requests now that the turn has committed and

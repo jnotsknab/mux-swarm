@@ -2816,7 +2816,7 @@ internal class App
                 ? new Engine.Insight.InsightClient(inner, () => Engine.Insight.InsightLevels.Current)
                 : inner)
             .Use(inner => wrapMidTurnReflection || insight
-                ? new MidTurnSteerClient(inner, SingleAgentOrchestrator.DrainSteer)
+                ? new MidTurnSteerClient(inner, SingleAgentOrchestrator.DrainSteer, SingleAgentOrchestrator.RecordSteer)
                 : inner)
             // INSIDE function-invocation: if the endpoint rejects the top reasoning tier
             // (ExtraHigh -> wire "xhigh"), transparently retry that single call one tier lower
