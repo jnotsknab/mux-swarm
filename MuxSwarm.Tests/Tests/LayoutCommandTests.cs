@@ -1,10 +1,13 @@
+using System.Text.Json;
+using MuxSwarm.Engine;
 using MuxSwarm.Engine.Extensions;
+using MuxSwarm.Engine.Tui;
 using Xunit;
 
 namespace MuxSwarm.Tests.Tests;
 
-/// <summary>/layout: layouts are installed extensions whose tui block sets compose.shape; switching enables one and disables
-/// the other layouts (never other extensions), so two layouts never merge.</summary>
+/// <summary>/layout: the choices are the fixed built-in compose shapes (never extensions); picking one writes only
+/// console.tui.regions.compose.shape, which wins over extensions; standard removes it.</summary>
 [Collection("ConsoleState")]
 public sealed class LayoutCommandTests : IDisposable
 {
@@ -16,47 +19,54 @@ public sealed class LayoutCommandTests : IDisposable
         try { Directory.Delete(_root, recursive: true); } catch (IOException) { }
     }
 
-    private void Add(string name, string tui)
+    [Fact]
+    public void Choices_AreTheBuiltInShapes_WithStandardFirst()
     {
-        var dir = Path.Combine(_root, name);
+        Assert.Equal(["standard", "rule", "bracket", "box", "bubble", "smooth", "rail", "bare"], LayoutCommand.Choices());
+    }
+
+    [Fact]
+    public void Apply_WritesOnlyTheShape_KeepsOtherUserStyles_AndStandardRemovesIt()
+    {
+        var console = new ConsoleConfig
+        {
+            Tui = JsonSerializer.Deserialize<TuiManifest>("{ \"regions\": { \"footer\": { \"position\": \"above\" }, \"compose\": { \"padX\": 2 } } }"),
+        };
+        Assert.True(LayoutCommand.Apply(console, "bubble"));
+        Assert.Equal("bubble", console.Tui!.Regions!["compose"]["shape"].GetString());
+        Assert.Equal(2, console.Tui.Regions["compose"]["padX"].GetInt32());
+        Assert.Equal("above", console.Tui.Regions["footer"]["position"].GetString());
+        Assert.False(LayoutCommand.Apply(console, "bubble"));
+
+        Assert.True(LayoutCommand.Apply(console, LayoutCommand.Standard));
+        Assert.False(console.Tui.Regions["compose"].ContainsKey("shape"));
+        Assert.True(console.Tui.Regions["compose"].ContainsKey("padX"));
+        Assert.False(LayoutCommand.Apply(console, LayoutCommand.Standard));
+
+        var empty = new ConsoleConfig();
+        Assert.True(LayoutCommand.Apply(empty, "rule"));
+        Assert.True(LayoutCommand.Apply(empty, LayoutCommand.Standard));
+        Assert.False(empty.Tui!.Regions!.ContainsKey("compose"));
+    }
+
+    [Fact]
+    public void UserShape_WinsOverAnExtensionShape_AndActiveReportsIt()
+    {
+        var dir = Path.Combine(_root, "hearth");
         Directory.CreateDirectory(dir);
-        File.WriteAllText(Path.Combine(dir, ExtensionRegistry.ManifestFileName), "{ \"name\": \"" + name + "\"" + tui + " }");
-    }
+        File.WriteAllText(Path.Combine(dir, ExtensionRegistry.ManifestFileName),
+            "{ \"tui\": { \"regions\": { \"compose\": { \"shape\": \"box\" }, \"footer\": { \"position\": \"border\" } } } }");
+        var cfg = new ExtensionsConfig { Enabled = true, Dirs = [_root] };
+        ExtensionRegistry.Load(cfg);
+        Assert.Equal("box", LayoutCommand.Active());
 
-    private ExtensionRegistry.Result Load(ExtensionsConfig cfg) => ExtensionRegistry.Load(cfg);
+        var console = new ConsoleConfig();
+        LayoutCommand.Apply(console, "smooth");
+        ExtensionRegistry.Load(cfg, console.Tui);
+        Assert.Equal("smooth", LayoutCommand.Active());
+        Assert.Equal("border", RegionStyle.Choice("footer.position"));   // the extension's other styles still apply
 
-    [Fact]
-    public void Layouts_AreExtensionsThatSetAComposeShape_EnabledOrNot()
-    {
-        Add("bubble", ", \"tui\": { \"regions\": { \"compose\": { \"shape\": \"bubble\" } } }");
-        Add("smooth", ", \"tui\": { \"regions\": { \"compose\": { \"shape\": \"smooth\" } } }");
-        Add("chips", ", \"tui\": { \"regions\": { \"notice\": { \"okMark\": \"+\" } } }");   // styles, but not a layout
-        Add("plain", "");
-        var cfg = new ExtensionsConfig { Enabled = true, Dirs = [_root], Disabled = ["smooth"] };
-        var loaded = Load(cfg);
-        var layouts = LayoutCommand.Layouts(loaded);
-        Assert.Equal(["bubble", "smooth"], layouts);
-        Assert.Equal("bubble", LayoutCommand.Active(loaded, layouts));
-    }
-
-    [Fact]
-    public void Apply_EnablesTheChoice_DisablesOtherLayouts_AndLeavesOtherExtensionsAlone()
-    {
-        Add("bubble", ", \"tui\": { \"regions\": { \"compose\": { \"shape\": \"bubble\" } } }");
-        Add("smooth", ", \"tui\": { \"regions\": { \"compose\": { \"shape\": \"smooth\" } } }");
-        Add("chips", ", \"tui\": { \"regions\": { \"notice\": { \"okMark\": \"+\" } } }");
-        var cfg = new ExtensionsConfig { Enabled = true, Dirs = [_root], Disabled = ["chips"] };
-        var layouts = LayoutCommand.Layouts(Load(cfg));
-
-        Assert.True(LayoutCommand.Apply(cfg, layouts, "smooth"));
-        Assert.Equal(["chips", "bubble"], cfg.Disabled);
-        var loaded = Load(cfg);
-        Assert.Equal("smooth", LayoutCommand.Active(loaded, layouts));
-        Assert.Equal("smooth", Assert.Single(loaded.Extensions).Name);
-
-        Assert.False(LayoutCommand.Apply(cfg, layouts, "smooth"));   // already there
-        Assert.True(LayoutCommand.Apply(cfg, layouts, LayoutCommand.Standard));
-        Assert.Equal(LayoutCommand.Standard, LayoutCommand.Active(Load(cfg), layouts));
-        Assert.Equal(["chips", "bubble", "smooth"], cfg.Disabled);
+        ExtensionRegistry.Load(null);
+        Assert.Equal(LayoutCommand.Standard, LayoutCommand.Active());
     }
 }
