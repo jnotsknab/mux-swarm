@@ -35,6 +35,7 @@ internal static class RegionStyle
         ["header.mark"] = G("\u2503", 2), ["header.accent"] = C("accent"), ["header.show"] = F(true),
         ["header.template"] = T("", 0, 80), ["header.frame"] = O("none", "box"),
         ["userMessage.bar"] = G("\u258e"), ["userMessage.barFg"] = C("accent"), ["userMessage.fg"] = C("text"),
+        ["userMessage.style"] = O("bar", "bubble"),
         ["agentHeader.mark"] = G("\u25b8", 2), ["agentHeader.rule"] = G("\u2500"), ["agentHeader.fg"] = C("agent"), ["agentHeader.ruleFg"] = C("#3A3A3A"),
         ["answer.lead"] = G("\u25cf"), ["answer.leadFg"] = C("muted"),
         ["reasoning.fg"] = C("grey"), ["reasoning.italic"] = F(true),
@@ -81,8 +82,8 @@ internal static class RegionStyle
         ["footer.style"] = O("dot", "pipe", "space", "powerline", "ascii"),
         ["footer.strip"] = F(false), ["footer.bg"] = C("cardBg"), ["footer.fill"] = O("space", "rule"),
         ["compose.gap"] = N(0, 0, 2),
-        ["compose.shape"] = O("classic", "rule", "bracket", "box", "bubble", "rail", "bare"),
-        ["compose.border"] = O("rounded", "square", "double", "thick", "ascii"),
+        ["compose.shape"] = O("classic", "rule", "bracket", "box", "bubble", "smooth", "rail", "bare"),
+        ["compose.border"] = O("square", "rounded", "double", "thick", "ascii"),   // box = sharp corners; bubble is always rounded
         ["compose.padX"] = N(1, 0, 3), ["compose.padY"] = N(0, 0, 1),
         ["compose.borderFg"] = C("border"), ["compose.rule"] = G("─"),
         ["compose.fill"] = C("inputBg"), ["compose.capLeft"] = G("▐"), ["compose.capRight"] = G("▌"),

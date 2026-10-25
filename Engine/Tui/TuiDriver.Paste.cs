@@ -186,7 +186,7 @@ internal sealed partial class TuiDriver
         lines.AddRange(frame.Lines);
     }
 
-    // Columns a compose shape draws before each input row's own lead (box/bubble border + padding, rail).
+    // Columns a compose shape draws before each input row's own lead (box/bubble/smooth border + padding, rail).
     private int _composeLeftCols;
 
     private void EchoDraft(string fullText)

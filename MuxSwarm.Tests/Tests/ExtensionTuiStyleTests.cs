@@ -33,6 +33,21 @@ public sealed class ExtensionTuiStyleTests : IDisposable
     private static string Plain(string markup) => TuiMarkup.Plain(markup);
 
     [Fact]
+    public void UserMessageBubble_OutlinesTheMessage_WithinTheWidth()
+    {
+        AddExtension("bub", """{ "tui": { "regions": { "userMessage": { "style": "bubble" } } } }""");
+        Assert.Empty(LoadEnabled().Problems);
+        var rows = TuiComponents.UserEcho("hello there, this wraps at a narrow width", 24).Select(Plain).ToList();
+        Assert.Equal("", rows[0]);
+        Assert.StartsWith("  \u256d", rows[1]);
+        Assert.StartsWith("  \u2570", rows[^1]);
+        Assert.All(rows.Skip(2).SkipLast(1), r => { Assert.StartsWith("  \u2502 ", r); Assert.EndsWith(" \u2502", r); });
+        Assert.Single(rows.Select(r => TuiMarkup.Width(r)).Skip(1).Distinct());   // every outline row the same width
+        Assert.All(rows, r => Assert.True(TuiMarkup.Width(r) <= 24, r));
+        Assert.Contains("hello there", string.Join(" ", rows));
+    }
+
+    [Fact]
     public void Regions_RestyleTheirBuilders_AndUnloadRestoresBuiltIns()
     {
         AddExtension("neon", """

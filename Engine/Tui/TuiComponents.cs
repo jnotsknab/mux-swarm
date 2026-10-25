@@ -93,6 +93,18 @@ internal static class TuiComponents
         int prefixWidth = w >= 4 ? 2 : 0; // leave room for a wide grapheme in tiny viewports
         var rows = new List<string> { "" };
         string display = ComposeAttachments.SafeText((line ?? "").Replace("\r\n", "\n").Replace('\r', '\n'));
+        // userMessage.style bubble: the message in a rounded outline that hugs the text ("  ╭───╮ / │ hi │ / ╰───╯").
+        if (RegionStyle.Choice("userMessage.style") == "bubble" && w >= 12)
+        {
+            var body = TuiMarkup.WrapPlain(display, w - 6).ToList();
+            int inner = Math.Max(1, body.Max(b => TuiMarkup.Width(b)));
+            string b = RegionStyle.Color("userMessage.barFg");
+            rows.Add($"  [{b}]\u256d{new string('\u2500', inner + 2)}\u256e[/]");
+            foreach (string text in body)
+                rows.Add($"  [{b}]\u2502[/] [{RegionStyle.Color("userMessage.fg")}]{Esc(text)}[/]{new string(' ', inner - TuiMarkup.Width(text))} [{b}]\u2502[/]");
+            rows.Add($"  [{b}]\u2570{new string('\u2500', inner + 2)}\u256f[/]");
+            return rows;
+        }
         foreach (string body in TuiMarkup.WrapPlain(display, Math.Max(1, w - prefixWidth)))
         {
             string prefix = prefixWidth == 0 ? "" : rows.Count == 1 ? $"[{RegionStyle.Color("userMessage.barFg")}]{RegionStyle.Glyph("userMessage.bar")}[/] " : "  ";
@@ -1307,7 +1319,7 @@ internal static class TuiComponents
                 // trailing boundary belongs here only when it is also the segment end (append spot);
                 // otherwise it rolls to the start of the next wrapped row.
                 if (cursorVRow < 0 && s == cursorLine && cursorCol >= pos &&
-                    (cursorCol < pos + take || (cursorCol == pos + take && pos + take == seg.Length)))
+                    (cursorCol < pos + take || (cursorCol == pos + take && pos + take == seg.Length && take < cap)))
                 {
                     cursorVRow = rows.Count;
                     cursorVCol = cursorCol - pos;
@@ -1334,7 +1346,9 @@ internal static class TuiComponents
 
                 pos += take;
                 firstOfSeg = false;
-                if (pos >= seg.Length) break;
+                // A caret owed at the end of a row that is already full rolls onto its own continuation row
+                // (as a terminal would): drawing its cell after `cap` columns made the row one cell too wide.
+                if (pos >= seg.Length && !(cursorVRow < 0 && s == cursorLine && cursorCol == seg.Length)) break;
             }
         }
         return Shade(rows);

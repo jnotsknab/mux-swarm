@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using MuxSwarm.Engine.Extensions;
 using MuxSwarm.Engine.Tui;
 using Xunit;
@@ -50,8 +50,9 @@ public sealed class TuiComposeShapeTests : IDisposable
     [Theory]
     [InlineData("rule", "\u2500", null)]
     [InlineData("bracket", "\u2500", "\u2500")]
-    [InlineData("box", "\u256d", "\u2570")]
-    [InlineData("bubble", null, null)]
+    [InlineData("box", "\u250c", "\u2514")]   // sharp corners (compose.border default square)
+    [InlineData("bubble", "\u256d", "\u2570")]
+    [InlineData("smooth", null, null)]
     [InlineData("rail", null, null)]
     [InlineData("bare", null, null)]
     public void EachShape_FramesTheInput_WithinTheWidth(string shape, string? top, string? bottom)
@@ -71,6 +72,7 @@ public sealed class TuiComposeShapeTests : IDisposable
     [Theory]
     [InlineData("box")]
     [InlineData("bubble")]
+    [InlineData("smooth")]
     [InlineData("rail")]
     [InlineData("bracket")]
     public void ClickToCaret_AccountsForTheShapesLeftChrome(string shape)
@@ -118,9 +120,28 @@ public sealed class TuiComposeShapeTests : IDisposable
         Assert.Equal(before, d.BuildLiveFrame(60));
     }
 
+    [Fact]
+    public void Bubble_OutlinesTheWholeInput()
+    {
+        Style("""{ "shape": "bubble" }""");
+        var (d, _) = AtPrompt(new string('x', 150));
+        var lines = Pinned(d);
+        int top = lines.FindIndex(l => l.StartsWith("\u256d"));
+        int bottom = lines.FindIndex(l => l.StartsWith("\u2570"));
+        Assert.True(top >= 0 && bottom > top + 3, string.Join("\n", lines));
+        Assert.EndsWith("\u256e", lines[top]);
+        Assert.EndsWith("\u256f", lines[bottom]);
+        for (int i = top + 1; i < bottom; i++)
+        {
+            Assert.StartsWith("\u2502", lines[i]);
+            Assert.EndsWith("\u2502", lines[i]);
+            Assert.Equal(d.Width, TuiMarkup.Width(lines[i]));
+        }
+    }
+
     [Theory]
-    [InlineData("""{ "shape": "pill" }""", "'compose.shape' must be one of classic, rule, bracket, box, bubble, rail, bare")]
-    [InlineData("""{ "border": "dotted" }""", "'compose.border' must be one of rounded, square, double, thick, ascii")]
+    [InlineData("""{ "shape": "pill" }""", "'compose.shape' must be one of classic, rule, bracket, box, bubble, smooth, rail, bare")]
+    [InlineData("""{ "border": "dotted" }""", "'compose.border' must be one of square, rounded, double, thick, ascii")]
     [InlineData("""{ "padX": 4 }""", "'compose.padX' must be a whole number from 0 to 3")]
     public void ShapeValues_AreValidated(string compose, string expected)
     {

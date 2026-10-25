@@ -2040,6 +2040,42 @@ public static class CliCmdUtils
         MuxConsole.WriteMuted("Change with /extensions enable|disable|trust|untrust <name>, /extensions new, /extensions reload.");
     }
 
+    /// <summary>
+    /// <c>/layout [shape|standard]</c>: show or switch the compose box shape (standard, rule, bracket, box, bubble, smooth,
+    /// rail, bare). Saved as <c>console.tui.regions.compose.shape</c> in config.json (wins over extensions; standard removes
+    /// it). Bare: a picker in the TUI, else the list.
+    /// </summary>
+    public static void HandleLayout(string userInput)
+    {
+        var choices = Extensions.LayoutCommand.Choices();
+        string active = Extensions.LayoutCommand.Active();
+        var parts = (userInput ?? "").Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        string? pick = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : null;
+        if (pick is null)
+        {
+            if (!MuxConsole.TuiActive && !MuxConsole.StdioMode)
+            {
+                MuxConsole.WriteInfo($"Layout: {active}. Available: {string.Join(", ", choices)}. Switch with /layout <name>.");
+                return;
+            }
+            // Current layout first, so Esc (which keeps the row under the cursor) changes nothing.
+            var order = choices.OrderBy(c => c == active ? 0 : 1).ToList();
+            var labels = order.Select(c => c == active ? $"{c}  (current)" : c).ToList();
+            pick = order[labels.IndexOf(MuxConsole.Select("Choose the input box layout (colours stay with /theme)", labels))];
+        }
+        if (!choices.Contains(pick))
+        {
+            MuxConsole.WriteWarning($"Unknown layout '{pick}'. Available: {string.Join(", ", choices)}");
+            return;
+        }
+        // Already in effect (from your config or an extension; also Esc on the picker): change nothing.
+        if (pick == active || !Extensions.LayoutCommand.Apply(App.Config.Console, pick)) { MuxConsole.WriteMuted($"Layout is already {pick}."); return; }
+        try { Common.SaveConfig(App.Config); }
+        catch (Exception ex) { MuxConsole.WriteWarning($"Layout changed for this session, but config.json could not be saved: {ex.Message}"); }
+        App.LoadExtensions(announce: false, quiet: true);   // re-applies console.tui over the extensions
+        MuxConsole.WriteSuccess($"Layout set to '{pick}' (saved).");
+    }
+
     /// <summary>Enable/disable/trust/untrust <paramref name="name"/>: save config.json, reload, and describe the result.</summary>
     private static string ApplyExtensionChange(string verb, string name, bool quiet = false)
     {

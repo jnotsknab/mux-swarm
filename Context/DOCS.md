@@ -922,6 +922,8 @@ Flags can be combined. Common stacks:
 /tools          List available MCP + native tools
 /skills         List loaded skills
 /theme          View or switch the TUI color theme (21 presets; bare /theme opens a picker; /theme <name> sets one)
+/layout         Switch the input box shape: standard, rule, bracket, box, bubble, smooth, rail, bare (saved as
+                console.tui compose.shape; colours stay with /theme)
 /memory         Deep-memory status / toggle (/memory [deep|standard|show])
 /deep           Toggle deep memory on/off (/deep [off])
 /taskgraph      Auto-decompose a goal into a blockedBy task graph (/taskgraph on|off|status)
@@ -1378,23 +1380,31 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
     j/k, PgUp/PgDn, `/` search, Esc/q close) and leaves a one-line note in the transcript.
   - `splash`: `show` (false = one version line instead of the banner card), `art` (1-12 lines, at most 80 cells each,
     replacing the MUX/SWARM art), `artFg`, `accentFg` (the built-in robot).
-  **Layout (shape) keys.** These change the shape of the live band, not just its colours:
+  **Layout (shape) keys.** These change the shape of the live band, not just its colours. `/layout <shape>` sets
+  `compose.shape` in your `console.tui` (it wins over extensions; `/layout standard` removes it), so a shape mixes with
+  any extension's other styles. In extensions, prefer theme roles (`accent`, `muted`, `border`, ...) over hex colours
+  so the look follows every `/theme`:
   - `compose.shape`: `classic` (default: rule, footer, rule, `›` input), `rule` (one rule, input under it), `bracket`
-    (rules above and below the input), `box` (a frame around the input), `bubble` (a filled field with round end
-    caps), `rail` (a filled field with one coloured left rail), `bare` (just the prompt). With a shape, the stock
-    footer and input rules are not drawn; the shape draws its own chrome.
-  - `compose.border` (`box`): `rounded` (default), `square`, `double`, `thick`, `ascii`. `compose.padX` 0-3 (default
+    (rules above and below the input), `box` (a frame around the input), `bubble` (a rounded outline all the way
+    round the input; with `footer.position: border` the footer is the last row inside it), `smooth` (a filled field
+    with round end caps), `rail` (a filled field with one coloured left rail), `bare` (just the prompt). With a shape,
+    the stock footer and input rules are not drawn; the shape draws its own chrome.
+  - `compose.border` (`box`): `square` (default, sharp corners), `rounded`, `double`, `thick`, `ascii`. `bubble` is
+    always rounded. `compose.padX` 0-3 (default
     1), `compose.padY` 0-1, `compose.gap` 0-2 blank rows above the footer and compose block. Colours/glyphs:
-    `compose.borderFg`, `compose.rule`, `compose.fill` (bubble/rail), `compose.capLeft`/`capRight`, `compose.rail`,
+    `compose.borderFg`, `compose.rule`, `compose.fill` (smooth/rail), `compose.capLeft`/`capRight`, `compose.rail`,
     `compose.railFg`.
   - `footer.position`: `above` (default), `below` the input, `hidden`, or `border`: inside the top edge of a `box`,
-    `rule` or `bracket` shape (`╭─ ultra · 45% ──── model ─╮`); other shapes fall back to `above`.
+    `rule` or `bracket` shape (`╭─ ultra · 45% ──── model ─╮`), or the last row inside a `bubble`; other shapes fall
+    back to `above`.
   - `footer.style`: `dot` (default), `pipe`, `space`, `powerline` (needs a Nerd/powerline font), `ascii`.
     `footer.strip: true` fills the row with `footer.bg`; `footer.fill: rule` draws a line between the left and right
     groups. Split the footer into groups with `||` in `footer.template`: `"{mode} {context} || {model} {effort}"`
     puts model and effort at the right edge (a single `|` stays plain text). Clickable chips follow their text.
   - `header.template`: the session card text with `{agent}`, `{model}`, `{provider}`, `{tools}`; `header.frame:
     box` draws a rounded card around it.
+  - `userMessage.style`: `bar` (default: accent bar before your message) or `bubble` (your message in a rounded
+    outline that hugs the text, in `userMessage.barFg`).
   - `splash.frame`: `rounded` (default), `square`, `double`, `thick`, `ascii`, `none`; `splash.borderFg`;
     `splash.padY` 0-2 (default 1); `splash.align`: `left` (default) or `center` (the panel hugs its content and
     is centered); `splash.columns`: `all` (logo, getting-started, recent; default), `logo`, `logo,recent`,
@@ -2202,6 +2212,16 @@ Execute external commands on lifecycle events. Configure in swarm.json:
 
 Dispatch modes: `async` (fire and continue), `blocking` (wait with timeout). Add `"persistent": true` for long-lived consumers receiving NDJSON on stdin.
 
+On an interactive start with hooks configured, Mux warns and asks "Proceed with hooks enabled?" (no = hooks muted for
+the session; `/hooks on` re-enables). To skip the warning and prompt and keep hooks enabled, set in config.json:
+
+```json
+"console": { "suppressActionWarnings": true }
+```
+
+Default `false`. It only affects startup warnings; in-session prompts (security approvals, ask_user, delete/overwrite
+confirms) still show.
+
 `/createhook` (or `/hooks create`) asks for the id, script, events, filters and mode, saves the entry, and, for a new
 script, starts a normal `/agent` session (your model and settings) whose first message is a brief with those choices.
 
@@ -2277,7 +2297,7 @@ Daemon-specific hook events emitted automatically:
 - Use environment variables for all credentials, never put secrets in config files
 - Scope MCP servers narrowly per agent role via `mcpServers` in swarm.json
 - Route execution-heavy tasks through Docker when possible (`/dockerexec`)
-- Review hook commands before confirming on startup (hooks run with user permissions)
+- Review hook commands before confirming on startup (hooks run with user permissions); `console.suppressActionWarnings` skips that check, so only set it once you trust your hooks
 - Scope daemon watch paths narrowly
 - Use `--register` from an elevated terminal only after validating daemon and hook config
 - For maximum isolation, run mux-swarm inside a Docker container with only necessary volumes mounted

@@ -1,4 +1,4 @@
-using System.Reflection;
+﻿using System.Reflection;
 using MuxSwarm.Engine.Extensions;
 using MuxSwarm.Engine.Tui;
 using Xunit;
@@ -93,7 +93,7 @@ public sealed class TuiFooterLayoutTests : IDisposable
     }
 
     [Theory]
-    [InlineData("box", "\u256d\u2500 ultra")]
+    [InlineData("box", "\u250c\u2500 ultra")]
     [InlineData("bracket", "\u2500\u2500 ultra")]
     [InlineData("rule", "\u2500\u2500 ultra")]
     public void BorderPosition_PutsTheFooterInTheTopEdge_AndBadgeClicksHitTheChip(string shape, string start)
@@ -116,9 +116,34 @@ public sealed class TuiFooterLayoutTests : IDisposable
     }
 
     [Fact]
+    public void BorderPosition_Bubble_PutsTheFooterInsideTheOutline_WithClickableChips()
+    {
+        Load("{ " + Split + ", \"tui\": { \"regions\": { \"compose\": { \"shape\": \"bubble\" }, \"footer\": { \"position\": \"border\" } } } }");
+        var d = AtPrompt();
+        var lines = d.BuildLiveFrame(80).Select(TuiMarkup.Plain).ToList();
+        int top = lines.FindIndex(l => l.StartsWith("\u256d"));
+        int input = lines.FindIndex(l => l.Contains("\u203a hi"));
+        int footer = lines.FindIndex(l => l.Contains("model-x"));
+        int bottom = lines.FindIndex(l => l.StartsWith("\u2570"));
+        Assert.True(top < input && input < footer && footer == bottom - 1, string.Join("\n", lines));
+        Assert.StartsWith("\u2502", lines[footer]);
+        Assert.EndsWith("\u2502", lines[footer]);
+        Assert.Equal(80, TuiMarkup.Width(lines[footer]));
+        Assert.EndsWith("high", lines[footer].TrimEnd('\u2502').TrimEnd());   // right group at the inner right edge
+
+        // The model chip is clickable where it is drawn.
+        var rows = d.ComposeFrameRows();
+        int physRow = rows.FindIndex(r => TuiMarkup.Plain(TuiMarkup.StripAnsi(r)).Contains("model-x")) + 1;
+        int col = TuiMarkup.Plain(TuiMarkup.StripAnsi(rows[physRow - 1])).IndexOf("model-x", StringComparison.Ordinal) + 1;
+        Assert.True(d.FrameHitMap!.TryHit(physRow, col + 2, out var hit, out _, out _), "no hit on the model chip");
+        Assert.Equal(MouseTargetKind.FooterBadge, hit.Kind);
+        Assert.Equal(TuiComponents.BadgeModel, hit.Tag);
+    }
+
+    [Fact]
     public void BorderPosition_WithAShapeWithoutAnEdge_FallsBackToAbove()
     {
-        Load("{ \"tui\": { \"regions\": { \"compose\": { \"shape\": \"bubble\" }, \"footer\": { \"position\": \"border\" } } } }");
+        Load("{ \"tui\": { \"regions\": { \"compose\": { \"shape\": \"smooth\" }, \"footer\": { \"position\": \"border\" } } } }");
         var lines = AtPrompt().BuildLiveFrame(80).Select(TuiMarkup.Plain).ToList();
         int footer = lines.FindIndex(l => l.Contains("model-x"));
         int input = lines.FindIndex(l => l.Contains("\u203a hi"));

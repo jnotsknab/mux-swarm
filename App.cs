@@ -157,10 +157,16 @@ internal class App
         return false;
     }
 
+    /// <summary>True once the background MCP connect phase has finished (or none was started).</summary>
+    internal static bool McpReady => McpInitTask is not { IsCompleted: false };
+
+    /// <summary>Strict MCP mode: every enabled server must connect, so sessions wait for MCP before they open.</summary>
+    internal static bool McpStrictMode => _mcpStrictMode;
+
     // Awaits the background MCP init (idempotent). On total connection failure,
     // reports the error and exits — preserving the original strict/non-strict
     // semantics, just deferred from startup to first tool use.
-    private static async Task EnsureMcpReadyAsync()
+    internal static async Task EnsureMcpReadyAsync()
     {
         var task = McpInitTask;
         if (task == null)
@@ -233,6 +239,9 @@ internal class App
         // post-theme.) Re-asserted later alongside the other render config (idempotent).
         LoadExtensions(announce: false);
 
+        // Frame engine: hold the primary-screen splash; the frame paints it in place (else it shows twice, moved).
+        MuxConsole.DeferSplashToFrame = !MuxConsole.StdioMode && Config.SetupCompleted && Config.Console.DockedFooter
+            && string.Equals(Config.Console.RenderEngine, "frame", StringComparison.OrdinalIgnoreCase);
         MuxConsole.WriteSplashScreen(version: Version, debugTag: DebugTag);
 
         if (!Config.SetupCompleted)
@@ -347,6 +356,7 @@ internal class App
         // --update : do-and-exit self-update from the latest GitHub release.
         if (parsed.UpdateMode)
         {
+            MuxConsole.EndQuietStartup();   // prints the held splash first
             var (staged, msg) = await MuxSwarm.State.SelfUpdater.RunAsync(line => MuxConsole.WriteInfo(line));
             MuxConsole.WriteInfo(msg);
             if (staged)
@@ -822,7 +832,6 @@ internal class App
                     break;
 
                 case "/agent":
-                    await EnsureMcpReadyAsync();
                     Config = LoadConfig(ConfigPath);
                     var singleAgentModel = LoadSingleAgentModel();
                     var agentCts = GetOrResetCts();
@@ -848,7 +857,8 @@ internal class App
                         interactiveHandle: agentHandle,
                         // A /setmodel switch rebuilds the lead with this; keep the steer (Ctrl+N) and
                         // mid-turn reflection wrappers the launch client has.
-                        leadClientFactory: modelId => CreateAgentLeadClient(modelId)
+                        leadClientFactory: modelId => CreateAgentLeadClient(modelId),
+                        deferMcp: true
                     );
                     await PumpSessionAsync(agentHandle);   // returns when the session parks or finishes
                     } finally { ServeMode.ActiveMode = "interactive"; }
@@ -879,6 +889,7 @@ internal class App
                         MuxConsole.WriteInfo("Context sharing disarmed. Delegation tools revert to their default schemas.");
                     break;
                 case "/onboard":
+                    await EnsureMcpReadyAsync();
                     Config = LoadConfig(ConfigPath);
                     var onboardModel = LoadSingleAgentModel();
                     var onboardCts = GetOrResetCts();
@@ -890,7 +901,6 @@ internal class App
                     );
                     break;
                 case "/stateless":
-                    await EnsureMcpReadyAsync();
                     Config = LoadConfig(ConfigPath);
                     var statelessAgent = LoadSingleAgentModel();
                     var statelessAgentCts = GetOrResetCts();
@@ -914,7 +924,8 @@ internal class App
                         persistSession: false,
                         allowSubAgents: AllowSubagents,
                         allowParallelSubAgents: AllowParallelSubAgents,
-                        interactiveHandle: statelessHandle
+                        interactiveHandle: statelessHandle,
+                        deferMcp: true
                     );
                     await PumpSessionAsync(statelessHandle);
                     } finally { ServeMode.ActiveMode = "interactive"; }
@@ -1031,7 +1042,8 @@ internal class App
                             resumedSessionDir: resumeData.Value.sessionDir,
                             allowSubAgents: AllowSubagents,
                             allowParallelSubAgents: AllowParallelSubAgents,
-                            leadClientFactory: modelId => CreateAgentLeadClient(modelId)
+                            leadClientFactory: modelId => CreateAgentLeadClient(modelId),
+                            deferMcp: true
                         );
                         } finally { ServeMode.ActiveMode = "interactive"; }
                     }
@@ -1283,6 +1295,10 @@ internal class App
 
                 case var th when th == "/theme" || th.StartsWith("/theme ", StringComparison.Ordinal):
                     CliCmdUtils.HandleTheme(userInput);
+                    break;
+
+                case var lay when lay == "/layout" || lay.StartsWith("/layout ", StringComparison.Ordinal):
+                    CliCmdUtils.HandleLayout(userInput);
                     break;
 
                 case var ins when Engine.Insight.InsightCommand.Matches(ins):
@@ -1686,9 +1702,6 @@ internal class App
             setModel: m => { if (!string.IsNullOrWhiteSpace(m)) _cliModelOverride = m; },
             runSession: async (reader, resume) =>
             {
-                // Tools are needed once the model actually runs a turn; await MCP readiness
-                // here (not at transport start) so the ACP handshake stays instant.
-                await EnsureMcpReadyAsync();
                 var model = LoadSingleAgentModel();
                 var acpCts = GetOrResetCts();
                 ServeMode.ActiveMode = "agent";
@@ -1712,7 +1725,8 @@ internal class App
                         resumedSessionDir: resume?.Dir,
                         allowSubAgents: AllowSubagents,
                         allowParallelSubAgents: AllowParallelSubAgents,
-                        interactiveHandle: handle);
+                        interactiveHandle: handle,
+                        deferMcp: true);
                     await handle.ChatTask;
                 }
                 finally
@@ -2360,13 +2374,14 @@ internal class App
         // Task.WhenAll over ~14 stdio servers spawns every subprocess at once
         // (uvx/npx/python package resolution + imports), and that spawn storm
         // saturates CPU/disk/thread pool right as the TUI paints and any startup
-        // prompt reads keys - the whole app feels sluggish. A gate of 4 keeps the
-        // pipeline full (spawns are mostly I/O-bound waits) while flattening the
-        // instantaneous load spike. Shared collections are still populated
+        // prompt reads keys - the whole app feels sluggish. A gate of 8 (with the
+        // StartupThreads pool floor) keeps the pipeline full - spawns are mostly
+        // I/O-bound waits - without hurting key echo; measured on 11 servers: gate 4
+        // = 4.3 s, 8 = 3.1 s, 11 = 2.9 s but p90 key echo 32 -> 70 ms. Shared collections are still populated
         // sequentially after the gather to avoid races on McpClients / McpTools.
         // Success is logged only (no console output); failures are reported to
         // the console inside ConnectMcpServerAsync.
-        using var connectGate = new SemaphoreSlim(4);
+        using var connectGate = new SemaphoreSlim(McpConnectConcurrency);
         var results = await Task.WhenAll(
             enabledServers.Select(async kvp =>
             {
@@ -2409,6 +2424,9 @@ internal class App
         // Non-strict: no enabled servers is a valid setup (native tools only), not a failed connection.
         return enabledCount == 0 || successCount > 0;
     }
+
+    /// <summary>MCP servers connected at once during startup (see InitMcpServersAsync).</summary>
+    internal const int McpConnectConcurrency = 8;
 
     private sealed record McpInitResult(string Name, McpClient Client, IReadOnlyList<McpClientTool> Tools, bool IsHttp);
 
@@ -2577,7 +2595,12 @@ internal class App
         // env-var check below passes - otherwise every launch after /login warns + prompts for a key
         // that is never user-supplied. The sidecar itself is still started lazily on first request.
         if (string.Equals(provider.ApiKeyEnvVar, CliProxyManager.ClientKeyEnvVar, StringComparison.Ordinal))
+        {
             CliProxyManager.ExportPersistedKey();
+            // Adopt (or start) the sidecar now, in the background: the first session would otherwise wait
+            // 0.5-1 s for it on its own thread (CreateChatClient). Its result is used by EnsureRunningAsync.
+            CliProxyManager.StartWarmup();
+        }
 
         if (!string.IsNullOrWhiteSpace(provider.ApiKeyEnvVar))
         {
@@ -2793,7 +2816,7 @@ internal class App
                 ? new Engine.Insight.InsightClient(inner, () => Engine.Insight.InsightLevels.Current)
                 : inner)
             .Use(inner => wrapMidTurnReflection || insight
-                ? new MidTurnSteerClient(inner, SingleAgentOrchestrator.DrainSteer)
+                ? new MidTurnSteerClient(inner, SingleAgentOrchestrator.DrainSteer, SingleAgentOrchestrator.RecordSteer)
                 : inner)
             // INSIDE function-invocation: if the endpoint rejects the top reasoning tier
             // (ExtraHigh -> wire "xhigh"), transparently retry that single call one tier lower
