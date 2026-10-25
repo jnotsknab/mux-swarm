@@ -623,12 +623,14 @@ public static partial class MuxConsole
                 {
                     _driver = new TuiDriver(frameEngine: FrameEngineEnabled);
                     _driver.InitializeInput(BracketedPaste, MouseTracking);
+                    _driver.ReserveInputBox();   // first paint already has the input box (no layout jump)
                     // Frame mode: seed the transcript with the retained splash so the first frame
                     // opens on the banner (the primary-buffer splash is hidden by the alt screen).
                     if (FrameEngineEnabled && FrameSplashFactory is { } splashFactory)
                     {
                         _driver.CommitStartup(splashFactory);
                         FrameSplashFactory = null;
+                        _deferredSplash = null;   // the frame owns the splash; the held primary print is dropped
                     }
                     _tuiActive = true;
                     // Idle-prompt backslash opens the Agent View dashboard (same entry as the
