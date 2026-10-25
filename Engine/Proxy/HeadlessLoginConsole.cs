@@ -20,7 +20,8 @@ namespace MuxSwarm.Engine.Proxy;
 /// </summary>
 internal sealed class HeadlessLoginConsole : IDisposable
 {
-    private static readonly Regex UrlPattern = new(@"https?://[^\s""'<>]+", RegexOptions.Compiled);
+    // A URL runs to whitespace or a quote/bracket; sentence punctuation right after it is not part of it.
+    private static readonly Regex UrlPattern = new(@"https?://[^\s""'<>]+?(?=[.,;:!?)\]]*(?:[\s""'<>]|$))", RegexOptions.Compiled);
 
     private readonly bool _raw;            // false = stdio/serve: lines go out as events, unchanged
     private readonly bool _links;          // wrap the URL in an OSC 8 hyperlink
