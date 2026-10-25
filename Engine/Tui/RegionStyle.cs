@@ -83,7 +83,7 @@ internal static class RegionStyle
         ["footer.strip"] = F(false), ["footer.bg"] = C("cardBg"), ["footer.fill"] = O("space", "rule"),
         ["compose.gap"] = N(0, 0, 2),
         ["compose.shape"] = O("classic", "rule", "bracket", "box", "bubble", "smooth", "rail", "bare"),
-        ["compose.border"] = O("rounded", "square", "double", "thick", "ascii"),
+        ["compose.border"] = O("square", "rounded", "double", "thick", "ascii"),   // box = sharp corners; bubble is always rounded
         ["compose.padX"] = N(1, 0, 3), ["compose.padY"] = N(0, 0, 1),
         ["compose.borderFg"] = C("border"), ["compose.rule"] = G("─"),
         ["compose.fill"] = C("inputBg"), ["compose.capLeft"] = G("▐"), ["compose.capRight"] = G("▌"),

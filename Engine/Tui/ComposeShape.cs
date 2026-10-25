@@ -22,7 +22,7 @@ internal static class ComposeShape
     };
 
     /// <summary>Allowed <c>compose.border</c> values.</summary>
-    internal static readonly string[] BorderNames = ["rounded", "square", "double", "thick", "ascii"];
+    internal static readonly string[] BorderNames = ["square", "rounded", "double", "thick", "ascii"];
 
     /// <summary>A shaped compose block: all lines, which of them are input rows, and the columns the
     /// shape adds before each input row's own lead.</summary>

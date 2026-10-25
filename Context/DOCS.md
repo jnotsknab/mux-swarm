@@ -1387,7 +1387,8 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
     round the input; with `footer.position: border` the footer is the last row inside it), `smooth` (a filled field
     with round end caps), `rail` (a filled field with one coloured left rail), `bare` (just the prompt). With a shape,
     the stock footer and input rules are not drawn; the shape draws its own chrome.
-  - `compose.border` (`box`): `rounded` (default), `square`, `double`, `thick`, `ascii`. `compose.padX` 0-3 (default
+  - `compose.border` (`box`): `square` (default, sharp corners), `rounded`, `double`, `thick`, `ascii`. `bubble` is
+    always rounded. `compose.padX` 0-3 (default
     1), `compose.padY` 0-1, `compose.gap` 0-2 blank rows above the footer and compose block. Colours/glyphs:
     `compose.borderFg`, `compose.rule`, `compose.fill` (smooth/rail), `compose.capLeft`/`capRight`, `compose.rail`,
     `compose.railFg`.
