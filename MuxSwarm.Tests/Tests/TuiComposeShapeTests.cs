@@ -50,7 +50,7 @@ public sealed class TuiComposeShapeTests : IDisposable
     [Theory]
     [InlineData("rule", "\u2500", null)]
     [InlineData("bracket", "\u2500", "\u2500")]
-    [InlineData("box", "\u256d", "\u2570")]
+    [InlineData("box", "\u250c", "\u2514")]   // sharp corners (compose.border default square)
     [InlineData("bubble", "\u256d", "\u2570")]
     [InlineData("smooth", null, null)]
     [InlineData("rail", null, null)]
@@ -141,7 +141,7 @@ public sealed class TuiComposeShapeTests : IDisposable
 
     [Theory]
     [InlineData("""{ "shape": "pill" }""", "'compose.shape' must be one of classic, rule, bracket, box, bubble, smooth, rail, bare")]
-    [InlineData("""{ "border": "dotted" }""", "'compose.border' must be one of rounded, square, double, thick, ascii")]
+    [InlineData("""{ "border": "dotted" }""", "'compose.border' must be one of square, rounded, double, thick, ascii")]
     [InlineData("""{ "padX": 4 }""", "'compose.padX' must be a whole number from 0 to 3")]
     public void ShapeValues_AreValidated(string compose, string expected)
     {
