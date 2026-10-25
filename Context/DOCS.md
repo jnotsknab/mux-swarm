@@ -920,6 +920,7 @@ Flags can be combined. Common stacks:
 /tools          List available MCP + native tools
 /skills         List loaded skills
 /theme          View or switch the TUI color theme (21 presets; bare /theme opens a picker; /theme <name> sets one)
+/layout         Switch the TUI layout (bubble, smooth, crt, ... or standard); colours stay with /theme
 /memory         Deep-memory status / toggle (/memory [deep|standard|show])
 /deep           Toggle deep memory on/off (/deep [off])
 /taskgraph      Auto-decompose a goal into a blockedBy task graph (/taskgraph on|off|status)
@@ -1376,7 +1377,10 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
     j/k, PgUp/PgDn, `/` search, Esc/q close) and leaves a one-line note in the transcript.
   - `splash`: `show` (false = one version line instead of the banner card), `art` (1-12 lines, at most 80 cells each,
     replacing the MUX/SWARM art), `artFg`, `accentFg` (the built-in robot).
-  **Layout (shape) keys.** These change the shape of the live band, not just its colours:
+  **Layout (shape) keys.** These change the shape of the live band, not just its colours. An extension whose `tui` block
+  sets `compose.shape` counts as a *layout*: `/layout <name>` enables it and disables the other layouts (two layouts would
+  otherwise merge per key), `/layout standard` turns them all off. Use theme roles (`accent`, `muted`, `border`, ...)
+  rather than hex colours so a layout follows every `/theme`:
   - `compose.shape`: `classic` (default: rule, footer, rule, `›` input), `rule` (one rule, input under it), `bracket`
     (rules above and below the input), `box` (a frame around the input), `bubble` (a rounded outline all the way
     round the input; with `footer.position: border` the footer is the last row inside it), `smooth` (a filled field

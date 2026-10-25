@@ -1297,6 +1297,10 @@ internal class App
                     CliCmdUtils.HandleTheme(userInput);
                     break;
 
+                case var lay when lay == "/layout" || lay.StartsWith("/layout ", StringComparison.Ordinal):
+                    CliCmdUtils.HandleLayout(userInput);
+                    break;
+
                 case var ins when Engine.Insight.InsightCommand.Matches(ins):
                     Engine.Insight.InsightCommand.Run(userInput);
                     break;

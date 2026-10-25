@@ -2040,6 +2040,54 @@ public static class CliCmdUtils
         MuxConsole.WriteMuted("Change with /extensions enable|disable|trust|untrust <name>, /extensions new, /extensions reload.");
     }
 
+    /// <summary>
+    /// <c>/layout [name|standard]</c>: show or switch the TUI layout (bubble, smooth, crt, ... = installed extensions that set
+    /// <c>compose.shape</c>; <c>standard</c> = none). Switching enables that one, disables the other layouts, saves and reloads.
+    /// Bare: a picker in the TUI, else the list.
+    /// </summary>
+    public static void HandleLayout(string userInput)
+    {
+        var cfg = App.Config.Extensions;
+        if (!cfg.Enabled)
+        {
+            MuxConsole.WriteInfo("Layouts are extensions, and extensions are off. Enable with /set extensions.enabled on, then /refresh.");
+            return;
+        }
+        var loaded = Extensions.ExtensionRegistry.Loaded;
+        var layouts = Extensions.LayoutCommand.Layouts(loaded);
+        string active = Extensions.LayoutCommand.Active(loaded, layouts);
+        var choices = new List<string> { Extensions.LayoutCommand.Standard };
+        choices.AddRange(layouts);
+        var parts = (userInput ?? "").Trim().Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+        string? pick = parts.Length > 1 ? parts[1].Trim().ToLowerInvariant() : null;
+        if (pick is null)
+        {
+            if (layouts.Count == 0)
+            {
+                MuxConsole.WriteInfo("No layouts installed (an extension whose tui block sets compose.shape). See /extensions new.");
+                return;
+            }
+            if (!MuxConsole.TuiActive && !MuxConsole.StdioMode)
+            {
+                MuxConsole.WriteInfo($"Layout: {active}. Available: {string.Join(", ", choices)}. Switch with /layout <name>.");
+                return;
+            }
+            // Current layout first, so Esc (which keeps the row under the cursor) changes nothing.
+            var order = choices.OrderBy(c => c == active ? 0 : 1).ToList();
+            var labels = order.Select(c => c == active ? $"{c}  (current)" : c).ToList();
+            pick = order[labels.IndexOf(MuxConsole.Select("Choose a TUI layout (colours stay with /theme)", labels))];
+        }
+        if (!choices.Contains(pick))
+        {
+            MuxConsole.WriteWarning($"Unknown layout '{pick}'. Available: {string.Join(", ", choices)}");
+            return;
+        }
+        if (!Extensions.LayoutCommand.Apply(cfg, layouts, pick)) { MuxConsole.WriteMuted($"Layout is already {pick}."); return; }
+        if (!SaveExtensionsConfig()) { MuxConsole.WriteWarning("Layout changed for this session, but config.json could not be saved."); }
+        App.LoadExtensions(announce: false, quiet: true);
+        MuxConsole.WriteSuccess($"Layout set to '{pick}' (saved).");
+    }
+
     /// <summary>Enable/disable/trust/untrust <paramref name="name"/>: save config.json, reload, and describe the result.</summary>
     private static string ApplyExtensionChange(string verb, string name, bool quiet = false)
     {
