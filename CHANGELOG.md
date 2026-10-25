@@ -11,6 +11,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 > with the reported version noted where the two disagree. Before v0.15.2 the `<Version>` field in
 > `MuxSwarm.csproj` was not maintained; since v0.15.2 it matches `App.Version` (enforced by a test).
 
+## [Unreleased]
+
+### Fixed
+- Headless `/login` (remote / SSH): the auth URL was wrapped into indented rows next to the scrollbar, so copying
+  it from the terminal garbled it. It now prints on its own line (a clickable link where the terminal supports
+  it), `c` copies it without selecting (OSC 52), and `Esc` cancels the login.
+
 ## [v0.15.2-alpha]
 
 ### Security
