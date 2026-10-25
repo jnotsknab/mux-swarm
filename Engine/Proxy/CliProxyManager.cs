@@ -609,10 +609,10 @@ internal static class CliProxyManager
         // console: (a) the ~100ms live-region repaint ticker interleaves with the child's raw stdout and
         // TRUNCATES the long auth URL (the "code_challenge_meth9" clip), and (b) leftover raw-mode input
         // bytes (bracketed-paste markers, a stray Enter) reach the child's inherited stdin and abort it
-        // early ("Exiting..."). So instead we REDIRECT the child's stdout/stderr and re-emit each line
-        // through MuxConsole (which commits cleanly above the live footer, URL intact), and hand it a
-        // closed stdin so no stray console bytes can reach it. Verified against the bundled 7.2.44 binary:
-        // with a closed stdin it prints the full URL and waits for the callback.
+        // early ("Exiting..."). So instead we REDIRECT the child's stdout/stderr and relay each line through
+        // HeadlessLoginConsole, and hand it a closed stdin so no stray console bytes can reach it. Verified
+        // against the bundled 7.2.44 binary: with a closed stdin it prints the full URL and waits for the
+        // callback. The relay suspends the TUI and prints the URL unwrapped so it copies cleanly (see there).
         psi.ArgumentList.Add("-no-browser");
         psi.RedirectStandardOutput = true;
         psi.RedirectStandardError = true;
@@ -620,6 +620,7 @@ internal static class CliProxyManager
         psi.StandardOutputEncoding = new System.Text.UTF8Encoding(false);
         psi.StandardErrorEncoding = new System.Text.UTF8Encoding(false);
 
+        using var console = HeadlessLoginConsole.Begin();
         using (var proc = Process.Start(psi)
             ?? throw new InvalidOperationException("Failed to start the CLIProxyAPI login process."))
         {
@@ -633,12 +634,7 @@ internal static class CliProxyManager
                 {
                     string? line;
                     while ((line = reader.ReadLine()) != null)
-                    {
-                        // Surface every child line intact through the console sink so the URL + the
-                        // "Waiting for callback..." / success lines render above the live footer.
-                        if (err) MuxConsole.WriteMuted(line);
-                        else MuxConsole.WriteInfo(line);
-                    }
+                        console.Line(line, err);
                 }
                 catch { /* stream closed on exit */ }
             }
@@ -648,11 +644,11 @@ internal static class CliProxyManager
             outPump.Start();
             errPump.Start();
 
-            await proc.WaitForExitAsync(ct).ConfigureAwait(false);
+            bool finished = await console.WaitAsync(proc, ct).ConfigureAwait(false);
             // Let the pumps drain any final buffered lines before returning.
             outPump.Join(TimeSpan.FromSeconds(2));
             errPump.Join(TimeSpan.FromSeconds(2));
-            return proc.ExitCode == 0;
+            return finished && proc.ExitCode == 0;
         }
     }
 
