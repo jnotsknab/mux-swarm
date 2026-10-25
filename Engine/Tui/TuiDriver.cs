@@ -551,6 +551,12 @@ internal sealed partial class TuiDriver
 
     // input state - true only inside ReadLine's raw-mode loop
     private bool _inInput;
+    // The empty input box is drawn before the first ReadLine (startup), so the first frame already has its final
+    // layout instead of growing by the compose rows a moment later. Cleared when ReadLine takes over.
+    private bool _inputReserved;
+
+    /// <summary>Draw the (empty) input box from the next paint, before the first <c>ReadLine</c>.</summary>
+    internal void ReserveInputBox() => _inputReserved = true;
     private bool _shuttingDown;
 
     // True while the NAV (vim view) overlay owns the screen. NAV can be opened mid-turn (via
@@ -2193,13 +2199,14 @@ internal sealed partial class TuiDriver
         int footerStart = lines.Count;
         string footerPos = RegionStyle.Choice("footer.position");
         // "border" needs a shape with a top edge and an input box on screen; otherwise the footer stays above.
-        if (footerPos == "border" && !(_inInput && !_editor.IsSearching && ComposeShape.HasTitleEdge(ComposeShape.Active))) footerPos = "above";
+        bool showInput = _inInput || _inputReserved;
+        if (footerPos == "border" && !(showInput && !_editor.IsSearching && ComposeShape.HasTitleEdge(ComposeShape.Active))) footerPos = "above";
         _footerLine = -1;
         _footerBadgeShift = 0;
         if (footerPos == "hidden") _footerBadges.Clear();
         if (footerPos == "above") AddFooterBlock(lines, width);
 
-        if (_inInput)
+        if (showInput)
         {
             // A second full-width rule gives the input/compose area its own visible band,
             // clearly separated from the footer above it (shaped compose boxes draw their own chrome).
@@ -3281,6 +3288,7 @@ internal sealed partial class TuiDriver
         _paletteSel = -1;
         _remoteAuthors.Clear();
         _inInput = true;
+        _inputReserved = false;
         // Replay keys the mid-turn EscapeKeyListener read but did not act on (typed chars the user
         // pressed while the agent was streaming). On the frame engine they go back to the FRONT of
         // the shared input pump (the single input plane) so they are the next events this loop
