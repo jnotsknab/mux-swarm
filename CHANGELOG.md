@@ -13,10 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.15.3-alpha]
+
 ### Fixed
 - Headless `/login` (remote / SSH): the auth URL was wrapped into indented rows next to the scrollbar, so copying
   it from the terminal garbled it. It now prints on its own line (a clickable link where the terminal supports
-  it), `c` copies it without selecting (OSC 52), and `Esc` cancels the login.
+  it), `c` copies it without selecting (OSC 52), and `Esc` cancels the login. A login that fails on its own
+  keeps the sidecar's last lines visible, and Esc or the 5-minute timeout stops the login process so its
+  callback port is freed. (#111)
 
 ## [v0.15.2-alpha]
 
