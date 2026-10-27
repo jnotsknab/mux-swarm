@@ -45,4 +45,14 @@ public class ExtensionsConfig
     /// </summary>
     [JsonPropertyName("disabled")]
     public List<string> Disabled { get; set; } = [];
+
+    /// <summary>
+    /// Limits an extension process to some agents: extension name -> agent names (case-insensitive), e.g.
+    /// <c>{ "concierge-gate": ["ConciergeAgent"] }</c>. A scoped extension only intercepts tool calls made
+    /// by those agents (or by their sub-agents), only receives their events (plus events not tied to an
+    /// agent), and its tools are offered only to them. Commands, panels and footer chips stay global.
+    /// Extensions not listed apply to every agent. Only your config can scope an extension.
+    /// </summary>
+    [JsonPropertyName("agents")]
+    public Dictionary<string, List<string>> Agents { get; set; } = [];
 }

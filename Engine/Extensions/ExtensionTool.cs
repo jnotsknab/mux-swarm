@@ -41,6 +41,14 @@ internal sealed class ExtensionTool : AIFunction
     /// <summary>True when <paramref name="tool"/> is an extension tool granted to <paramref name="agentName"/>.</summary>
     internal static bool IsGranted(AITool tool, string? agentName) => tool is ExtensionTool t && t.GrantedTo(agentName);
 
+    /// <summary>
+    /// <paramref name="tools"/> without the extension tools whose process is scoped (<c>extensions.agents</c>)
+    /// away from <paramref name="agentName"/>. Applied after the Swarm.json filter and manifest grants, so a
+    /// scope always wins. An unknown agent (null) keeps everything.
+    /// </summary>
+    internal static List<AITool> InScopeFor(IEnumerable<AITool> tools, string? agentName) =>
+        tools.Where(t => t is not ExtensionTool e || agentName is null || e._process.InScope(agentName, null)).ToList();
+
     /// <summary>Build the tools of every running extension process (empty when none run).</summary>
     internal static IEnumerable<AITool> ForRunning()
     {
@@ -57,10 +65,11 @@ internal sealed class ExtensionTool : AIFunction
     protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
     {
         var args = arguments.ToDictionary(kv => kv.Key, kv => kv.Value);
+        var (agent, parentAgent, flowId) = State.HookWorker.Caller();
         JsonElement reply;
         try
         {
-            reply = await _process.RequestAsync("tool/call", new { name = _spec.Name, arguments = args },
+            reply = await _process.RequestAsync("tool/call", new { name = _spec.Name, arguments = args, agent, parentAgent, flowId },
                 TimeSpan.FromSeconds(Timeout), cancellationToken);
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)

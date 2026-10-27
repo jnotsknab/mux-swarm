@@ -35,8 +35,11 @@ internal static class ExtensionCatalog
             bool trust = trusted.Contains(ext.Name);
             string state = ext.Process is null ? "" : proc is null ? (trust ? "not running" : "not trusted")
                 : (proc.IsRunning ? "running" : "exited") + $" ({proc.Isolation})";
+            var contributes = Contributions(ext);
+            if (ext.Process is not null && ExtensionHost.ScopeOf(ext.Name, cfg.Agents) is { } scope)
+                contributes.Insert(0, "agents: " + string.Join(", ", scope.Order(StringComparer.OrdinalIgnoreCase)));
             items.Add(new Item(ext.Name, ext.Version, ext.Description, ext.Dir, true, ext.Process is not null, trust, state,
-                Contributions(ext), loaded.Conflicts.Where(c => c.Winner == ext.Name || c.Loser == ext.Name).ToList(),
+                contributes, loaded.Conflicts.Where(c => c.Winner == ext.Name || c.Loser == ext.Name).ToList(),
                 Strip(all, ext.Name), proc?.StderrTail.TakeLast(5).ToList() ?? []));
         }
         foreach (var ext in loaded.Disabled)
