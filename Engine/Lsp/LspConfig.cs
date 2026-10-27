@@ -15,8 +15,8 @@ public sealed class LspConfig
     public bool Enabled { get; set; } = false;
 
     /// <summary>
-    /// Append a short "LSP: N errors" block to the result of any tool call that changed a file a
-    /// configured server covers (file tools, shell, REPL). Only applies while <see cref="Enabled"/>.
+    /// Append an <c>[LSP]</c> block with the errors to the result of any tool call that changed a file a
+    /// configured server covers (file tools, shell, REPL, MCP). Only applies while <see cref="Enabled"/>.
     /// </summary>
     [JsonPropertyName("diagnosticsOnWrite")]
     public bool DiagnosticsOnWrite { get; set; } = true;

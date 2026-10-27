@@ -159,6 +159,9 @@ internal sealed class LspClient : IDisposable
     /// <summary>The last published diagnostics for <paramref name="uri"/>, or null when none arrived since the last change.</summary>
     internal Published? DiagnosticsFor(string uri) => _diagnostics.TryGetValue(uri, out var d) ? d : null;
 
+    /// <summary>Every document with published diagnostics (uri -> latest publish).</summary>
+    internal IReadOnlyDictionary<string, Published> AllDiagnostics => _diagnostics;
+
     /// <summary>True when the server supports pull diagnostics (<c>textDocument/diagnostic</c>).</summary>
     internal bool SupportsPullDiagnostics =>
         Capabilities.ValueKind == JsonValueKind.Object && Capabilities.TryGetProperty("diagnosticProvider", out var p) && p.ValueKind != JsonValueKind.Null;

@@ -435,10 +435,16 @@ internal class App
         if (parsed.ServePort > 0)
             await ServeMode.StartAsync((int)parsed.ServePort);
 
-        // file_changed events for the web UI / stdio clients (never the model). ACP has its own edit locations.
-        if (MuxConsole.StdioMode && !MuxConsole.AcpActive && Config.Serve.FileEvents)
+        // file_changed events for the web UI / stdio clients (never the model; ACP has its own edit locations),
+        // and changed files for post-edit LSP diagnostics (any mode). Either one starts the watchers.
+        bool fileEvents = MuxConsole.StdioMode && !MuxConsole.AcpActive && Config.Serve.FileEvents;
+        if (fileEvents || Config.Lsp is { Enabled: true, DiagnosticsOnWrite: true })
         {
-            FileChangeTracker.Shared = new FileChangeTracker(MuxConsole.EmitFileChanged);
+            FileChangeTracker.Shared = new FileChangeTracker((path, change, tool) =>
+            {
+                if (fileEvents) MuxConsole.EmitFileChanged(path, change, tool);
+                Engine.Lsp.LspWriteDiagnostics.OnFileChanged(path, change);
+            });
             FileChangeTracker.Shared.Ignore(Config.Serve.FileEventsIgnore);
             FileChangeTracker.Shared.Exclude(FileChangeTracker.OwnStateDirs(PlatformContext.BaseDirectory,
                 Config.Filesystem.SessionsPath, Config.Filesystem.KnowledgeGraphPath, Config.Filesystem.ChromaDbPath));
@@ -1320,6 +1326,7 @@ internal class App
                     await CliCmdUtils.HandleFullReload(InitMcpServersAsync, ConfigPath);
                     LoadExtensions(announce: true);
                     Engine.Lsp.LspManager.Reset();   // servers restart on next use with the new lsp config
+                    Engine.Lsp.LspWriteDiagnostics.Reset();
                     break;
 
                 case var ext when ext == "/extensions" || ext.StartsWith("/extensions ", StringComparison.Ordinal):
@@ -2788,6 +2795,12 @@ internal class App
                         using var _ = fct.BeginToolCall(ctx.Function.Name);
                         return inner != null ? await inner(ctx, ct) : await ctx.Function.InvokeAsync(ctx.Arguments, ct);
                     };
+                }
+                // Post-edit diagnostics: append the language server's errors for files the tool changed.
+                if (Config.Lsp.Enabled)
+                {
+                    var inner = c.FunctionInvoker;
+                    c.FunctionInvoker = (ctx, ct) => Engine.Lsp.LspWriteDiagnostics.InvokeAsync(ctx, ct, inner);
                 }
                 // Built-in browser: start it (downloading on first use) before the first Playwright call.
                 // MCP servers may connect after this client is built, so the routing flag is read per call.

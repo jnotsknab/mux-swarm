@@ -2155,6 +2155,15 @@ server list, so any language works the same way:
   a workspace search with `query`), `status`. Code is addressed by a 1-based `line` plus the `symbol`
   text on it (`name#2` = its second occurrence on the line); Mux finds the column. Results are
   `path:line:col` with the source line, errors first, capped (50 diagnostics, 50 references, 200 symbols).
+- **Diagnostics after edits** (`lsp.diagnosticsOnWrite`, default true while `lsp` is on): when a tool
+  call changes files a configured server covers, an `[LSP]` block with their errors is appended to that
+  tool's result, whichever tool made the change: the file tools, `execute_command_async`,
+  `repl_shell_exec` or an MCP server (changes are seen by the same file watcher that drives
+  `file_changed`, which LSP starts in any mode). Errors only, up to 5 files and 20 errors each, plus
+  errors the edit caused in other open files; `no errors in ...` when clean; `diagnostics pending` when the
+  server has not finished checking within `lsp.diagnosticsWaitMs` (default 1500). A change that lands
+  while no tool call is running (a background job) is reported on the next tool result. When several
+  agents have calls running at once, each of their results may report the same change.
 
 **Size-tiered sub-agent context passing.** When a lead delegates work, the sub-agent's
 result is returned to the lead at a cost scaled to need:
