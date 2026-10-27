@@ -2146,6 +2146,51 @@ state. Exposed as `repl_shell_exec` (+ `check_python_status`, `send_python_input
 `filesystem.securityMode` / `shell.securityMode` settings, and may run inside a sandbox (see
 [Execution Sandbox](#execution-sandbox)).
 
+### Language servers (`lsp`)
+
+Off by default. Point Mux at any language server that speaks LSP over stdio; there is no built-in
+server list, so any language works the same way:
+
+```jsonc
+"lsp": {
+  "enabled": true,
+  "servers": {
+    "python": { "command": "basedpyright-langserver", "args": ["--stdio"], "extensions": [".py"],
+                "rootMarkers": ["pyproject.toml", "setup.py", ".git"] },
+    "csharp": { "command": "csharp-ls", "extensions": [".cs"], "rootMarkers": ["*.sln", "*.csproj"] },
+    "zig":    { "command": "zls", "extensions": [".zig"], "rootMarkers": ["build.zig"] }
+  }
+}
+```
+
+- Per server: `command` (PATH name or full path; on Windows `.exe`/`.cmd`/`.bat` are tried), `args`,
+  `env`, `extensions` (required), `languageIds` (extension -> LSP language id when it is not the
+  extension itself, e.g. `{ ".cs": "csharp" }`), `rootMarkers` (names or `*.ext` patterns searched upward
+  from the file; none found = the workspace root), `initializationOptions`, `settings` (answers
+  `workspace/configuration`), `startupTimeoutMs` (default 30000), `disabled`. Top level: `idleMinutes`
+  (stop idle servers, default 10, 0 = never).
+- A server starts the first time a file it covers is used, once per (server, project root). One that
+  fails to start is not retried until `/refresh`, which also restarts servers with the new config.
+  Mux only ever stops servers it started.
+- Files are synced from disk (full text, increasing version) before every question, so edits made by
+  any tool or by you are seen. Diagnostics that do not arrive in time are reported as **pending**,
+  never as "no problems".
+- Agents get the native **`lsp`** tool by listing `"Lsp"` in `mcpServers` (Swarm.json), like
+  `Filesystem` and `Shell`; it only exists while `lsp.enabled` is on with a server configured.
+  Read-only actions: `diagnostics`, `definition`, `references`, `hover`, `symbols` (a file's outline, or
+  a workspace search with `query`), `status`. Code is addressed by a 1-based `line` plus the `symbol`
+  text on it (`name#2` = its second occurrence on the line); Mux finds the column. Results are
+  `path:line:col` with the source line, errors first, capped (50 diagnostics, 50 references, 200 symbols).
+- **Diagnostics after edits** (`lsp.diagnosticsOnWrite`, default true while `lsp` is on): when a tool
+  call changes files a configured server covers, an `[LSP]` block with their errors is appended to that
+  tool's result, whichever tool made the change: the file tools, `execute_command_async`,
+  `repl_shell_exec` or an MCP server (changes are seen by the same file watcher that drives
+  `file_changed`, which LSP starts in any mode). Errors only, up to 5 files and 20 errors each, plus
+  errors the edit caused in other open files; `no errors in ...` when clean; `diagnostics pending` when the
+  server has not finished checking within `lsp.diagnosticsWaitMs` (default 1500). A change that lands
+  while no tool call is running (a background job) is reported on the next tool result. When several
+  agents have calls running at once, each of their results may report the same change.
+
 **Size-tiered sub-agent context passing.** When a lead delegates work, the sub-agent's
 result is returned to the lead at a cost scaled to need:
 
