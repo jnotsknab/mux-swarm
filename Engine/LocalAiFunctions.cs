@@ -208,6 +208,9 @@ public static class LocalAiFunctions
                     App.Config = Setup.Setup.LoadConfig(App.ConfigPath);
                     App.SwarmConfig = Setup.Setup.LoadSwarm();
                     App.LoadExtensions(announce: false);
+                    Lsp.LspManager.Reset();   // same as /refresh: servers restart on next use with the new lsp config
+                    Lsp.LspWriteDiagnostics.Reset();
+                    App.EnsureFileTracker();
                 }
 
                 if (refreshDaemon)

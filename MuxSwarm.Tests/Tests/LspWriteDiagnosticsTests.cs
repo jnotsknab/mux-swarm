@@ -1,4 +1,5 @@
 using Microsoft.Extensions.AI;
+using MuxSwarm.Engine;
 using MuxSwarm.Engine.Lsp;
 using Xunit;
 
@@ -103,5 +104,33 @@ public sealed class LspWriteDiagnosticsTests : IDisposable
         Assert.Equal("Wrote " + f, await Invoke(WriteTool(), ("path", f), ("content", "BUG")));
         LspWriteDiagnostics.OnFileChanged(f, "modified");
         Assert.Equal("x", await Invoke(AIFunctionFactory.Create(() => "x", "check_job_status")));
+    }
+
+    [Fact]
+    public void LspTurnedOnAfterStartup_EnsureFileTracker_StartsTheWatchersOnce()
+    {
+        // lsp enabled after startup (config edit + refresh): post-edit diagnostics need the file watchers,
+        // which used to start only at launch.
+        var savedConfig = App.Config; var savedTracker = FileChangeTracker.Shared;
+        try
+        {
+            FileChangeTracker.Shared = null;
+            App.Config = new AppConfig { Serve = { FileEvents = false }, Filesystem = { SandboxPath = _rig.Dir, AllowedPaths = [] } };
+            App.EnsureFileTracker();
+            Assert.Null(FileChangeTracker.Shared);   // lsp off, no file events: nothing needs watchers
+
+            App.Config.Lsp = _rig.Use();
+            App.EnsureFileTracker();
+            var tracker = FileChangeTracker.Shared;
+            Assert.NotNull(tracker);
+            Assert.Contains(FileChangeTracker.NormalizeRoots([_rig.Dir])[0], tracker!.Roots);
+            App.EnsureFileTracker();
+            Assert.Same(tracker, FileChangeTracker.Shared);   // idempotent: one set of watchers
+        }
+        finally
+        {
+            FileChangeTracker.Shared?.Stop();
+            FileChangeTracker.Shared = savedTracker; App.Config = savedConfig;
+        }
     }
 }
