@@ -19,8 +19,9 @@ internal static class ExtensionHost
     /// </summary>
     /// <param name="unsandboxed">Trusted extensions exempted from the sandbox by config.</param>
     /// <param name="sandbox">The configured sandbox; null runs every process on the host.</param>
+    /// <param name="scopes"><c>extensions.agents</c>: extension name -> the agents it is limited to.</param>
     internal static IReadOnlyList<string> Restart(IReadOnlyList<ExtensionRegistry.Extension> extensions, ICollection<string> trusted,
-        ICollection<string>? unsandboxed = null, SandboxConfig? sandbox = null)
+        ICollection<string>? unsandboxed = null, SandboxConfig? sandbox = null, IReadOnlyDictionary<string, List<string>>? scopes = null)
     {
         StopAll();
         NativeTools.SandboxSpec? spec = null;
@@ -48,7 +49,12 @@ internal static class ExtensionHost
                              $"Fix sandbox.backend or add \"{ext.Name}\" to extensions.unsandboxed.");
                 continue;
             }
-            try { started.Add(ExtensionProcess.Start(ext.Name, ext.Dir, procSpec, ext.Events, exempt ? null : spec, ext.Intercepts)); }
+            try
+            {
+                var process = ExtensionProcess.Start(ext.Name, ext.Dir, procSpec, ext.Events, exempt ? null : spec, ext.Intercepts);
+                process.Scope = ScopeOf(ext.Name, scopes);
+                started.Add(process);
+            }
             catch (Exception ex) { problems.Add($"{ext.Name}: process failed to start: {ex.Message}"); }
         }
         _running = [.. started];
@@ -63,12 +69,24 @@ internal static class ExtensionHost
         foreach (var p in running) p.Dispose();
     }
 
-    /// <summary>Forward a lifecycle event to every running extension subscribed to it. Never blocks.</summary>
+    /// <summary>
+    /// Forward a lifecycle event to every running extension subscribed to it. A scoped extension gets an
+    /// agent's events only for its agents (or their sub-agents); events tied to no agent reach everyone.
+    /// Never blocks.
+    /// </summary>
     internal static void Publish(HookEvent e)
     {
         var running = _running;
         if (running.Length == 0) return;
         foreach (var p in running)
-            if (p.Wants(e.Event)) p.PostEvent(e);
+            if (p.Wants(e.Event) && p.InScope(e.Agent, e.ParentAgent)) p.PostEvent(e);
+    }
+
+    /// <summary>The agents <paramref name="extension"/> is limited to, or null when it is not scoped (or the list is empty).</summary>
+    internal static IReadOnlySet<string>? ScopeOf(string extension, IReadOnlyDictionary<string, List<string>>? scopes)
+    {
+        if (scopes is null || !scopes.TryGetValue(extension, out var agents)) return null;
+        var set = new HashSet<string>(agents.Where(a => !string.IsNullOrWhiteSpace(a)).Select(a => a.Trim()), StringComparer.OrdinalIgnoreCase);
+        return set.Count == 0 ? null : set;
     }
 }

@@ -1728,6 +1728,19 @@ permissions, so each one must be listed in `extensions.trusted` before Mux start
 "extensions": { "enabled": true, "trusted": ["notify"] }
 ```
 
+**Limit an extension to some agents** with `extensions.agents` (only your config can do this):
+
+```jsonc
+"extensions": { "trusted": ["concierge-gate"], "agents": { "concierge-gate": ["ConciergeAgent"] } }
+```
+
+A scoped extension's process still runs once, but it only intercepts tool calls made by those agents
+(including their delegated sub-agents), only receives their events plus events not tied to any agent
+(`mcp_server_connected`, `theme_changed`, ...), and its tools are offered only to them, whatever
+Swarm.json or the tool's own `agents` grant says. A call whose agent is unknown still goes through its
+interceptors, so a scoped gate never silently skips one. Commands, panels and footer chips stay global.
+Extensions not listed apply to every agent; `/extensions` shows the scope.
+
 Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 
 - First message: notification `initialize` with `{ protocolVersion: 1, muxVersion, name, dir, dataDir }`

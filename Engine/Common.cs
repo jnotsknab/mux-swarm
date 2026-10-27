@@ -222,7 +222,7 @@ public static class Common
                         filtered.Add(tool);
                 }
 
-                return filtered;
+                return Extensions.ExtensionTool.InScopeFor(filtered, agent.Name);
             };
 
             definitions.Add(new AgentDefinition(
@@ -256,7 +256,8 @@ public static class Common
         var patterns = toolPatterns ?? Array.Empty<string>();
 
         if (servers.Count == 0 && patterns.Count == 0)
-            return includeAllWhenEmpty ? tools.ToList() : tools.Where(t => Extensions.ExtensionTool.IsGranted(t, agentName)).ToList();
+            return Extensions.ExtensionTool.InScopeFor(
+                includeAllWhenEmpty ? tools : tools.Where(t => Extensions.ExtensionTool.IsGranted(t, agentName)), agentName);
 
         var filtered = new List<AITool>();
 
@@ -300,7 +301,7 @@ public static class Common
                 filtered.Add(tool);
         }
 
-        return filtered;
+        return Extensions.ExtensionTool.InScopeFor(filtered, agentName);
     }
 
     public static AgentDefinition? ParseSingleAgentDefinition(SwarmConfig config)
@@ -349,7 +350,7 @@ public static class Common
                     include = false;
                 if (include) filtered.Add(tool);
             }
-            return filtered;
+            return Extensions.ExtensionTool.InScopeFor(filtered, agent.Name);
         };
 
         return new AgentDefinition(
