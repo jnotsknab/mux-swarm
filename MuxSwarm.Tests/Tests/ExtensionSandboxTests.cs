@@ -7,6 +7,7 @@ namespace MuxSwarm.Tests.Tests;
 
 // Extension processes inside the configured Mux sandbox. The real-sandbox test runs where bwrap
 // works (Linux with bubblewrap installed) and returns early elsewhere, like the other bwrap tests.
+[Collection("ConsoleState")]   // ExtensionHost.Running is process-global
 public sealed class ExtensionSandboxTests : IDisposable
 {
     private readonly string _dir = Path.Combine(Path.GetTempPath(), "mux-extsbx-" + Guid.NewGuid().ToString("N"));

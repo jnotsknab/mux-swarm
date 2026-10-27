@@ -49,6 +49,8 @@ public sealed class RpcCorrelatorTests
     }
 }
 
+// ExtensionHost.Running is process-global: share the collection with every test that restarts it.
+[Collection("ConsoleState")]
 public sealed class ExtensionProcessTests : IDisposable
 {
     // Echo extension: records notifications, answers "ping" requests, prints junk to stderr.
