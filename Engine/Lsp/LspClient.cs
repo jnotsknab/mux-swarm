@@ -24,6 +24,7 @@ internal sealed class LspClient : IDisposable
     private readonly LspServerConfig _config;
     private long _nextId;
     private volatile bool _disposed;
+    private volatile bool _pullRegistered;
 
     /// <summary>The latest <c>publishDiagnostics</c> for a document, with the version it named (if any) and when it came.</summary>
     internal sealed record Published(JsonElement Diagnostics, int? Version, DateTime At);
@@ -45,6 +46,9 @@ internal sealed class LspClient : IDisposable
 
     /// <summary>Raised when a document's diagnostics arrive (uri).</summary>
     internal event Action<string>? DiagnosticsChanged;
+
+    /// <summary>Raised when the server registers pull diagnostics after <c>initialize</c>.</summary>
+    internal event Action? PullDiagnosticsRegistered;
 
     private LspClient(string name, string root, LspServerConfig config, Process process)
     {
@@ -159,8 +163,11 @@ internal sealed class LspClient : IDisposable
     /// <summary>The last published diagnostics for <paramref name="uri"/>, or null when none arrived since the last change.</summary>
     internal Published? DiagnosticsFor(string uri) => _diagnostics.TryGetValue(uri, out var d) ? d : null;
 
-    /// <summary>True when the server supports pull diagnostics (<c>textDocument/diagnostic</c>).</summary>
-    internal bool SupportsPullDiagnostics =>
+    /// <summary>
+    /// True when the server supports pull diagnostics (<c>textDocument/diagnostic</c>): declared in its
+    /// capabilities, or registered later with <c>client/registerCapability</c> (servers that never push do this).
+    /// </summary>
+    internal bool SupportsPullDiagnostics => _pullRegistered ||
         Capabilities.ValueKind == JsonValueKind.Object && Capabilities.TryGetProperty("diagnosticProvider", out var p) && p.ValueKind != JsonValueKind.Null;
 
     /// <summary>Send a request and wait for its result. Throws <see cref="LspException"/> on an error reply.</summary>
@@ -275,9 +282,21 @@ internal sealed class LspClient : IDisposable
         }
         else if (method == "workspace/workspaceFolders")
             result = new JsonArray(new JsonObject { ["uri"] = LspUri.FromPath(Root), ["name"] = Path.GetFileName(Root) });
+        bool pullRegistered = method == "client/registerCapability" && RegisteredMethods(p, "registrations").Contains(PullMethod);
+        if (pullRegistered) _pullRegistered = true;
+        // The spec spells the unregister key "unregisterations".
+        else if (method == "client/unregisterCapability" && RegisteredMethods(p, "unregisterations").Contains(PullMethod)) _pullRegistered = false;
         try { await WriteAsync(new JsonObject { ["jsonrpc"] = "2.0", ["id"] = JsonNode.Parse(id.GetRawText()), ["result"] = result }); }
         catch (ObjectDisposedException) { }
+        if (pullRegistered) PullDiagnosticsRegistered?.Invoke();
     }
+
+    private const string PullMethod = "textDocument/diagnostic";
+
+    private static IEnumerable<string?> RegisteredMethods(JsonElement p, string key) =>
+        p.ValueKind == JsonValueKind.Object && p.TryGetProperty(key, out var list) && list.ValueKind == JsonValueKind.Array
+            ? list.EnumerateArray().Select(r => r.ValueKind == JsonValueKind.Object && r.TryGetProperty("method", out var m) ? m.GetString() : null)
+            : [];
 
     /// <summary>Ask the server to stop (LSP exit handshake), then end the process tree if it lingers.</summary>
     public void Dispose()

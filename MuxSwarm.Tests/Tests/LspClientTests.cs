@@ -80,6 +80,21 @@ public sealed class LspClientTests : IDisposable
     }
 
     [Fact]
+    public async Task PullOnlyServer_RegisteringAfterInitialize_DiagnosticsArePulled()
+    {
+        // Some servers never push; they register textDocument/diagnostic after initialize, possibly after the
+        // first wait began. The wait must notice the registration and pull instead of reporting pending.
+        _rig.SetEnv("FAKE_LSP_PULL_ONLY", "1");
+        _rig.SetEnv("FAKE_LSP_REGISTER_DELAY", "0.5");
+        _rig.Use();
+        var (client, uri, v) = await Open(_rig.Src("a.fake", "line one\nhas BUG here\nand BUG"));
+        var diags = await LspDiagnostics.WaitAsync(client, uri, v, TimeSpan.FromSeconds(5), CancellationToken.None);
+        Assert.NotNull(diags);
+        Assert.Equal(2, LspDiagnostics.Errors(diags!.Value));
+        Assert.True(client.SupportsPullDiagnostics);
+    }
+
+    [Fact]
     public async Task Diagnostics_Timeout_IsNull_NeverAnEmptyList()
     {
         _rig.SetEnv("FAKE_LSP_NO_DIAG", "1");

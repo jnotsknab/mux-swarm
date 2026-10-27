@@ -15,30 +15,35 @@ internal static class LspDiagnostics
 
     /// <summary>
     /// Fresh diagnostics for <paramref name="uri"/> at <paramref name="version"/>: pulled when the server supports
-    /// <c>textDocument/diagnostic</c>, else the pushed ones once they settle. Null when none arrived in time.
+    /// <c>textDocument/diagnostic</c> (including support registered while waiting), else the pushed ones once they
+    /// settle. Null when none arrived in time.
     /// </summary>
     internal static async Task<JsonElement?> WaitAsync(LspClient client, string uri, int? version, TimeSpan budget, CancellationToken ct)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
         timeout.CancelAfter(budget);
-        if (client.SupportsPullDiagnostics)
-        {
-            try
-            {
-                var report = await client.RequestAsync("textDocument/diagnostic",
-                    new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri } }, timeout.Token);
-                if (report.ValueKind == JsonValueKind.Object && report.TryGetProperty("items", out var items)) return items.Clone();
-            }
-            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return null; }
-            catch (LspException) { /* fall back to push */ }
-        }
         var changed = new SemaphoreSlim(0);
         void OnChange(string u) { if (LspUri.Same(u, uri)) changed.Release(); }
+        void OnPullRegistered() => changed.Release();
         client.DiagnosticsChanged += OnChange;
+        client.PullDiagnosticsRegistered += OnPullRegistered;
+        bool pulled = false;
         try
         {
             while (true)
             {
+                if (!pulled && client.SupportsPullDiagnostics)
+                {
+                    pulled = true;   // one pull per wait; a failed or empty report falls back to push
+                    try
+                    {
+                        var report = await client.RequestAsync("textDocument/diagnostic",
+                            new JsonObject { ["textDocument"] = new JsonObject { ["uri"] = uri } }, timeout.Token);
+                        if (report.ValueKind == JsonValueKind.Object && report.TryGetProperty("items", out var items)) return items.Clone();
+                    }
+                    catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return null; }
+                    catch (LspException) { /* fall back to push */ }
+                }
                 if (client.DiagnosticsFor(uri) is { } p && (p.Version is null || version is null || p.Version >= version))
                 {
                     var quietFor = DateTime.UtcNow - p.At;
@@ -50,7 +55,7 @@ internal static class LspDiagnostics
                 catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return null; }
             }
         }
-        finally { client.DiagnosticsChanged -= OnChange; }
+        finally { client.DiagnosticsChanged -= OnChange; client.PullDiagnosticsRegistered -= OnPullRegistered; }
     }
 
     /// <summary>Number of error-level diagnostics.</summary>
