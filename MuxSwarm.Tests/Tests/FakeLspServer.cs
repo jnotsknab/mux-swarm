@@ -7,7 +7,8 @@ namespace MuxSwarm.Tests.Tests;
 /// suite needs no real server installed. It reports one error per line containing "BUG" (plus one
 /// warning on line 1) and publishes the document version it saw. Env knobs:
 /// FAKE_LSP_DELAY_DIAG (seconds before publishing), FAKE_LSP_NO_DIAG=1 (never publish),
-/// FAKE_LSP_LOG_DIR (where initialize params are written as init.json).
+/// FAKE_LSP_PULL_ONLY=1 (never publish; registers <c>textDocument/diagnostic</c> after <c>initialized</c>,
+/// FAKE_LSP_REGISTER_DELAY seconds later, and answers pulls), FAKE_LSP_LOG_DIR (where initialize params are written as init.json).
 /// </summary>
 internal static class FakeLspServer
 {
@@ -48,12 +49,16 @@ internal static class FakeLspServer
         def send(o):
             b = json.dumps(o).encode()
             stdout.write(b"Content-Length: %d\r\n\r\n" % len(b) + b); stdout.flush()
-        def publish(uri):
-            if os.environ.get("FAKE_LSP_NO_DIAG") == "1": return
+        pull_only = os.environ.get("FAKE_LSP_PULL_ONLY") == "1"
+        def diagnostics(uri):
             text, ver = docs[uri]
             diags = [{"range": {"start": {"line": i, "character": l.index("BUG")}, "end": {"line": i, "character": l.index("BUG") + 3}},
                       "severity": 1, "message": "found a BUG", "source": "fake"} for i, l in enumerate(text.splitlines()) if "BUG" in l]
             diags.append({"range": {"start": {"line": 0, "character": 0}, "end": {"line": 0, "character": 1}}, "severity": 2, "message": "just a warning"})
+            return diags
+        def publish(uri):
+            if os.environ.get("FAKE_LSP_NO_DIAG") == "1" or pull_only: return
+            diags, ver = diagnostics(uri), docs[uri][1]
             time.sleep(float(os.environ.get("FAKE_LSP_DELAY_DIAG", "0")))
             send({"jsonrpc": "2.0", "method": "textDocument/publishDiagnostics", "params": {"uri": uri, "version": ver, "diagnostics": diags}})
         while True:
@@ -63,6 +68,12 @@ internal static class FakeLspServer
             if m == "initialize":
                 with open(os.path.join(os.environ.get("FAKE_LSP_LOG_DIR", "."), "init.json"), "w") as f: json.dump(p, f)
                 send({"jsonrpc": "2.0", "id": mid, "result": {"capabilities": {"textDocumentSync": 1}}})
+            elif m == "initialized" and pull_only:
+                time.sleep(float(os.environ.get("FAKE_LSP_REGISTER_DELAY", "0")))
+                send({"jsonrpc": "2.0", "id": "reg-1", "method": "client/registerCapability", "params": {"registrations": [
+                    {"id": "pull-1", "method": "textDocument/diagnostic", "registerOptions": {}}]}})
+            elif m == "textDocument/diagnostic" and pull_only:
+                send({"jsonrpc": "2.0", "id": mid, "result": {"kind": "full", "items": diagnostics(p["textDocument"]["uri"])}})
             elif m == "textDocument/didOpen":
                 d = p["textDocument"]; docs[d["uri"]] = (d["text"], d["version"]); publish(d["uri"])
             elif m == "textDocument/didChange":
@@ -72,7 +83,7 @@ internal static class FakeLspServer
                 send({"jsonrpc": "2.0", "id": mid, "result": None})
             elif m == "exit":
                 break
-            elif mid is not None:
+            elif mid is not None and m is not None:
                 send({"jsonrpc": "2.0", "id": mid, "result": None})
         """;
 }
