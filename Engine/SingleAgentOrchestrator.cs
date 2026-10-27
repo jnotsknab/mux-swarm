@@ -2343,6 +2343,8 @@ public static class SingleAgentOrchestrator
                         // stays large cannot re-trip forever.
                         bool midTurnCompactPending = false;
                         bool midTurnCompactDisabled = false;
+                        // Tool calls in this turn (and events without an agent) are attributed to the lead.
+                        using var agentScope = HookWorker.BeginAgent(singleAgentDef.Name);
                         do
                         {
                         turnCts.Token.ThrowIfCancellationRequested();

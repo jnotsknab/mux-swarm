@@ -62,7 +62,7 @@ internal static class ExtensionCommands
         try
         {
             reply = await proc.RequestAsync("command/run",
-                new { name = cmd.Name, args, cwd = PlatformContext.WorkspaceRoot, mode = ServeMode.ActiveMode },
+                new { name = cmd.Name, args, cwd = PlatformContext.WorkspaceRoot, mode = ServeMode.ActiveMode, agent = ExtensionHostApi.SessionAgent() },
                 TimeSpan.FromSeconds(cmd.TimeoutSeconds), cts.Token);
         }
         finally
@@ -92,7 +92,7 @@ internal static class ExtensionCommands
             var trimmed = line!.Trim();
             string args = trimmed.Length > cmd.Cmd.Length ? trimmed[cmd.Cmd.Length..].Trim() : "";
             var reply = await proc.RequestAsync("command/run",
-                new { name = cmd.Name, args, cwd = PlatformContext.WorkspaceRoot, mode = ServeMode.ActiveMode, immediate = true },
+                new { name = cmd.Name, args, cwd = PlatformContext.WorkspaceRoot, mode = ServeMode.ActiveMode, immediate = true, agent = ExtensionHostApi.SessionAgent() },
                 TimeSpan.FromSeconds(cmd.TimeoutSeconds));
             if (Interpret(cmd, reply, cancelled: false, running: proc.IsRunning).Prompt is { } prompt
                 && ExtensionHostApi.Inject(cmd.Extension, prompt) is { } why)

@@ -1742,7 +1742,7 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
   or non-ASCII text such as a moon glyph fails with `UnicodeEncodeError`. stderr is captured;
   `/extensions` shows its last lines.
 - **Tools**: a process can serve tools to the agent (`tools` key, below). Mux sends a request
-  `tool/call` with `{ name, arguments }`; reply `{ "result": { "content": "<text for the model>" } }`,
+  `tool/call` with `{ name, arguments, agent, parentAgent, flowId }` (the caller; see below); reply `{ "result": { "content": "<text for the model>" } }`,
   or a JSON-RPC `error` object (`{ "code": 1, "message": "..." }`). Errors, a missed timeout
   (`timeoutSeconds`, default 60, max 600) or an exited process are returned to the model as
   `[extension <name>] tool failed: <reason>`; they never stop the turn.
@@ -1766,8 +1766,9 @@ menu, on every interface (TUI, classic console, `--serve`, `--stdio`, ACP), and 
 
 - `name`: `a-z`, `0-9`, `-`, starting with a letter (max 32). Built-in commands (and their aliases)
   can never be taken; if two extensions declare the same command the first by name keeps it.
-- `/stats some args` sends a `command/run` request with `{ name, args, cwd, mode }` (`mode` is the
-  running mode: `agent`, `swarm`, `pswarm`, `interactive` at the menu, ...).
+- `/stats some args` sends a `command/run` request with `{ name, args, cwd, mode, agent }` (`mode` is the
+  running mode: `agent`, `swarm`, `pswarm`, `interactive` at the menu, ...; `agent` is the session's lead
+  agent, omitted at the menu).
 - While it runs the process may send `command/output` notifications (`{ "text": "..." }`), shown live.
   Esc cancels the wait and Mux sends `$/cancelRequest` (`{ id }`). `timeoutSeconds`: default 60, max 3600.
 - Reply `result`: `{ "output": "...", "prompt": "...", "open": { "id", "title", "view" } }`, all optional;
@@ -1934,12 +1935,17 @@ A trusted process can gate tool calls for every agent, team and daemon run:
 ]
 ```
 
-- `tool/before` request, params `{ tool, arguments }`. Reply `result`:
+- `tool/before` request, params `{ tool, arguments, agent, parentAgent, flowId }`. Reply `result`:
   `{ "decision": "allow" }`, `{ "decision": "allow", "arguments": { ... } }` (replaces the arguments),
   or `{ "decision": "deny", "reason": "..." }` (the tool does not run; the model sees
   `[BLOCKED by extension <name>] <reason>`).
-- `tool/after` request, params `{ tool, arguments, result }`. Reply `result: { "result": "<text>" }`
-  to replace what the model sees (e.g. redact secrets); any other reply keeps the original.
+- `tool/after` request, params `{ tool, arguments, result, agent, parentAgent, flowId }`. Reply
+  `result: { "result": "<text>" }` to replace what the model sees (e.g. redact secrets); any other reply
+  keeps the original.
+- **Caller**: `agent` is the agent whose turn made the call (the lead, `Orchestrator`, or a sub-agent's
+  name); `parentAgent` and `flowId` identify the delegation or background job it runs in (as in hook
+  events). Each is omitted when unknown, e.g. a tool run outside any agent turn. Use them for per-agent
+  rules (only gate `ConciergeAgent`, allow everyone else); parallel sub-agents each get their own.
 - No answer within `timeoutMs` (default 2000, max 30000), an `error` reply, or a dead process applies
   `onTimeout`: `allow` (default) or `deny`. Interceptors from several extensions run in name order.
 - Match the real tool names: the native shell tools are `execute_command_async` and `repl_shell_exec`
@@ -2271,7 +2277,8 @@ with this payload as `params`):
 | `daemon_status` | A status check changed state | `summary` (`recovered:`/`unhealthy:`/`restarted:`/`restart_failed:<id>`), `text` |
 | `daemon_bridge` | A bridge process started or exited | `summary` (`started:`/`exited:<id>`), `text` |
 
-**Correlation.** Events from a delegated sub-agent or a background job carry `flowId` (the delegation's
+**Correlation.** `agent` is the agent whose turn produced the event; events emitted without one during
+an agent's turn get that agent. Events from a delegated sub-agent or a background job carry `flowId` (the delegation's
 id, e.g. `d7`, or the job id, e.g. `bg2`) and `parentAgent` (the agent that delegated), so events from
 parallel sub-agents can be told apart; `delegation` and `delegation_end` carry the same `flowId`.
 `data` holds event-specific fields (ids, names, counts, durations), absent when unset.

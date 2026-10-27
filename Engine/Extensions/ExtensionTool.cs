@@ -57,10 +57,11 @@ internal sealed class ExtensionTool : AIFunction
     protected override async ValueTask<object?> InvokeCoreAsync(AIFunctionArguments arguments, CancellationToken cancellationToken)
     {
         var args = arguments.ToDictionary(kv => kv.Key, kv => kv.Value);
+        var (agent, parentAgent, flowId) = State.HookWorker.Caller();
         JsonElement reply;
         try
         {
-            reply = await _process.RequestAsync("tool/call", new { name = _spec.Name, arguments = args },
+            reply = await _process.RequestAsync("tool/call", new { name = _spec.Name, arguments = args, agent, parentAgent, flowId },
                 TimeSpan.FromSeconds(Timeout), cancellationToken);
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)

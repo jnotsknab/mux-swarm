@@ -7,7 +7,8 @@ namespace MuxSwarm.Engine.Extensions;
 /// Lets trusted extension processes gate tool calls. Before a matching tool runs, Mux sends a
 /// <c>tool/before</c> request; the extension answers <c>allow</c> (optionally with rewritten
 /// arguments) or <c>deny</c> (with a reason the model sees). After it runs, a <c>tool/after</c>
-/// request may replace the result (e.g. to redact secrets). Installed into the function-invocation
+/// request may replace the result (e.g. to redact secrets). Both carry the calling <c>agent</c>,
+/// <c>parentAgent</c> and <c>flowId</c> (null when unknown). Installed into the function-invocation
 /// pipeline only when extensions are enabled; with none running it is a direct pass-through.
 /// The ActivityTimeout watchdog is not involved: every wait is capped at <see cref="MaxTimeout"/>.
 /// </summary>
@@ -29,15 +30,17 @@ internal static class ToolInterceptor
             .ToList();
         if (chain.Count == 0) return await context.Function.InvokeAsync(context.Arguments, ct);
 
+        // Who is calling: lets an extension apply per-agent rules (null when not known).
+        var (agent, parentAgent, flowId) = State.HookWorker.Caller();
         foreach (var (process, rule) in chain.Where(c => c.Rule.Before))
         {
             var reply = await process.RequestAsync("tool/before",
-                new { tool, arguments = context.Arguments }, rule.Timeout, ct);
+                new { tool, arguments = context.Arguments, agent, parentAgent, flowId }, rule.Timeout, ct);
             var decision = Decide(reply, rule, out var reason, out var rewritten);
             if (decision == Decision.Deny)
             {
                 // tool_call already fired (when the model streamed it); this says it never ran.
-                State.HookWorker.Emit("tool_denied", summary: tool, data: [("tool", tool), ("by", process.Name), ("reason", reason)]);
+                State.HookWorker.Emit("tool_denied", agent, summary: tool, data: [("tool", tool), ("by", process.Name), ("reason", reason)]);
                 return $"[BLOCKED by extension {process.Name}] {reason}";
             }
             if (rewritten is not null)
@@ -49,7 +52,7 @@ internal static class ToolInterceptor
         foreach (var (process, rule) in chain.Where(c => c.Rule.After))
         {
             var reply = await process.RequestAsync("tool/after",
-                new { tool, arguments = context.Arguments, result = ResultText(result) }, rule.Timeout, ct);
+                new { tool, arguments = context.Arguments, result = ResultText(result), agent, parentAgent, flowId }, rule.Timeout, ct);
             if (reply.ValueKind == JsonValueKind.Object && reply.TryGetProperty("result", out var r)
                 && r.ValueKind == JsonValueKind.Object && r.TryGetProperty("result", out var replaced)
                 && replaced.ValueKind == JsonValueKind.String)
