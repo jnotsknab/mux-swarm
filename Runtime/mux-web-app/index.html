@@ -6588,8 +6588,8 @@ const icons = {
     const header = activeSessionMode ? ('Slash commands  ·  in ' + activeSessionMode + ' session') : 'Slash commands';
     const rows = paletteItems.map((c, i) =>
       '<div class="cmd-item' + (i === paletteActive ? ' active' : '') + '" data-idx="' + i + '" role="option">' +
-        '<span class="cmd-name">' + c.cmd + '</span>' +
-        '<span class="cmd-desc">' + c.desc + '</span>' +
+        '<span class="cmd-name">' + esc(c.cmd) + '</span>' +
+        '<span class="cmd-desc">' + esc(c.desc) + '</span>' +
       '</div>'
     ).join('');
     cmdPalette.innerHTML = '<div class="cmd-palette-header">' + header + '</div>' + rows;

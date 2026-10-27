@@ -57,7 +57,9 @@ internal static class ExtensionCatalog
         if (e.Footer) lines.Add("footer template");
         if (e.Markdown) lines.Add("markdown style");
         if (e.TuiRegions.Count > 0) lines.Add("tui styles: " + string.Join(", ", e.TuiRegions));
-        if (e.Commands.Count > 0) lines.Add("commands: " + string.Join(", ", e.Commands.Select(c => c.Cmd)));
+        if (e.Commands.Count > 0)
+            lines.Add("commands: " + string.Join(", ", e.Commands.Select(c =>
+                c.Subcommands.Count > 0 ? $"{c.Cmd} ({string.Join(" ", c.Subcommands.Select(s => s.Name))})" : c.Cmd)));
         var chips = ExtensionFooter.Snapshot().Where(c => c.Id.StartsWith(e.Name + ".", StringComparison.Ordinal)).Select(c => c.Id).ToList();
         if (chips.Count > 0) lines.Add("footer chips: " + string.Join(", ", chips));
         if (e.Tools.Count > 0)

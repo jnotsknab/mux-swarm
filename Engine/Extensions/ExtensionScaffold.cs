@@ -46,7 +46,11 @@ internal static class ExtensionScaffold
         }
         var commands = new JsonArray();
         if (parts.HasFlag(Parts.Command))
-            commands.Add(new JsonObject { ["name"] = CommandName(name), ["description"] = $"Say hello from {name}" });
+            commands.Add(new JsonObject
+            {
+                ["name"] = CommandName(name), ["description"] = $"Say hello from {name}", ["usage"] = "[who]",
+                ["subcommands"] = new JsonArray(new JsonObject { ["name"] = "loud", ["description"] = "Say it louder" }),
+            });
         if (parts.HasFlag(Parts.Panel))   // main.py answers this one with a panel ("open" in the reply)
             commands.Add(new JsonObject { ["name"] = PanelCommand(name), ["description"] = $"Open the {name} panel", ["immediate"] = true });
         if (commands.Count > 0) m["commands"] = commands;

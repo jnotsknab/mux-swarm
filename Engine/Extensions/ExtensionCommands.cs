@@ -17,7 +17,10 @@ internal static class ExtensionCommands
     private static volatile ExtensionRegistry.ExtensionCommand[] _commands = [];
     private static volatile (string Cmd, string Desc)[] _entries = [];
 
-    /// <summary>The loaded commands as palette entries (<c>/name</c>, description). Swapped as a whole on reload.</summary>
+    /// <summary>
+    /// The loaded commands as palette entries (<c>/name</c>, description + usage hint), each followed by one
+    /// row per subcommand (<c>/name sub</c>). Swapped as a whole on reload.
+    /// </summary>
     internal static (string Cmd, string Desc)[] Entries => _entries;
 
     /// <summary>Publish the commands of the loaded extensions (called by the extension loader).</summary>
@@ -25,7 +28,19 @@ internal static class ExtensionCommands
     {
         var all = commands.ToArray();
         _commands = all;
-        _entries = all.Select(c => (c.Cmd, $"{c.Description} [{c.Extension}]".TrimStart())).ToArray();
+        _entries = all.SelectMany(PaletteRows).ToArray();
+    }
+
+    /// <summary>
+    /// Palette rows for <paramref name="c"/>: <c>/name</c> with <c>"description  usage [ext]"</c>, then
+    /// <c>/name sub</c> with the subcommand's description, the same shape as built-in subcommand rows.
+    /// </summary>
+    internal static IEnumerable<(string Cmd, string Desc)> PaletteRows(ExtensionRegistry.ExtensionCommand c)
+    {
+        var head = string.Join("  ", new[] { c.Description, c.Usage }.Where(s => s.Length > 0));
+        yield return (c.Cmd, $"{head} [{c.Extension}]".TrimStart());
+        foreach (var (sub, desc) in c.Subcommands)
+            yield return ($"{c.Cmd} {sub}", desc.Length > 0 ? desc : $"[{c.Extension}]");
     }
 
     /// <summary>The command <paramref name="line"/> invokes (its first word), or null.</summary>

@@ -182,6 +182,29 @@ internal sealed class ExtensionCommandSpec
     /// </summary>
     [JsonPropertyName("immediate")]
     public bool? Immediate { get; set; }
+
+    /// <summary>Short argument hint shown after the description in the palette, e.g. <c>&lt;add|list&gt; [name]</c> (max 60 chars).</summary>
+    [JsonPropertyName("usage")]
+    public string? Usage { get; set; }
+
+    /// <summary>
+    /// Subcommands listed as their own palette rows (<c>/name sub</c>), like the built-ins' (max 24). Purely
+    /// descriptive: typing <c>/name sub args</c> still sends one <c>command/run</c> with <c>args = "sub args"</c>.
+    /// </summary>
+    [JsonPropertyName("subcommands")]
+    public List<ExtensionSubcommandSpec>? Subcommands { get; set; }
+}
+
+/// <summary>One <c>subcommands</c> entry of an extension command.</summary>
+internal sealed class ExtensionSubcommandSpec
+{
+    /// <summary>Subcommand word: <c>a-z</c>, <c>0-9</c>, <c>-</c>, starting with a letter (max 32).</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    /// <summary>One-line description shown in the palette.</summary>
+    [JsonPropertyName("description")]
+    public string? Description { get; set; }
 }
 
 /// <summary>One raw <c>intercepts</c> entry; validated into an <see cref="InterceptRule"/>.</summary>

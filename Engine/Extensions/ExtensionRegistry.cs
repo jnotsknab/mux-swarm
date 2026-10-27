@@ -55,7 +55,16 @@ internal static partial class ExtensionRegistry
     {
         /// <summary>The command as typed, e.g. <c>/standup</c>.</summary>
         internal string Cmd => "/" + Name;
+
+        /// <summary>Argument hint shown after the description, or empty.</summary>
+        internal string Usage { get; init; } = "";
+
+        /// <summary>Subcommands (name, description), each shown as its own palette row.</summary>
+        internal IReadOnlyList<(string Name, string Description)> Subcommands { get; init; } = [];
     }
+
+    /// <summary>Most subcommands one extension command may list.</summary>
+    internal const int MaxSubcommands = 24;
 
     /// <summary>Default and maximum <c>timeoutSeconds</c> for an extension command.</summary>
     internal const int DefaultCommandTimeoutSeconds = 60, MaxCommandTimeoutSeconds = 3600;
@@ -348,7 +357,11 @@ internal static partial class ExtensionRegistry
                 if (takenCommands.TryGetValue(cname, out var owner)) { conflicts.Add(new Conflict($"command /{cname}", owner, name)); continue; }
                 takenCommands[cname] = name;
                 int timeout = Math.Clamp(c.TimeoutSeconds ?? DefaultCommandTimeoutSeconds, 1, MaxCommandTimeoutSeconds);
-                commands.Add(new ExtensionCommand(name, cname, OneLine(c.Description ?? "", 120), timeout, c.Immediate == true));
+                commands.Add(new ExtensionCommand(name, cname, OneLine(c.Description ?? "", 120), timeout, c.Immediate == true)
+                {
+                    Usage = OneLine(c.Usage ?? "", 60),
+                    Subcommands = BuildSubcommands(name, cname, c.Subcommands, problems),
+                });
             }
             var web = manifest.Web is { } wm ? ExtensionWeb.Build(name, dir, wm, problems) : null;
             foreach (var wt in web?.Themes ?? []) Claim($"web theme '{wt.Id}'");
@@ -427,6 +440,29 @@ internal static partial class ExtensionRegistry
             else problems.Add($"{extension}: markdown.rule must be one visible terminal cell; ignored.");
         }
         return any ? style : null;
+    }
+
+    /// <summary>
+    /// Validate a command's <c>subcommands</c>: names like command names, no duplicates, at most
+    /// <see cref="MaxSubcommands"/>. Bad entries become problems and are dropped.
+    /// </summary>
+    internal static IReadOnlyList<(string Name, string Description)> BuildSubcommands(string ext, string command,
+        IEnumerable<ExtensionSubcommandSpec>? specs, List<string> problems)
+    {
+        var subs = new List<(string, string)>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var spec in specs ?? [])
+        {
+            var sub = (spec.Name ?? "").Trim().ToLowerInvariant();
+            string? error =
+                !CommandNamePattern().IsMatch(sub) ? $"invalid subcommand '{spec.Name}' (a-z, 0-9, '-', max 32)" :
+                !seen.Add(sub) ? $"duplicate subcommand '{sub}'" :
+                subs.Count >= MaxSubcommands ? $"more than {MaxSubcommands} subcommands" :
+                null;
+            if (error is not null) { problems.Add($"{ext}: /{command}: {error}; skipped."); continue; }
+            subs.Add((sub, OneLine(spec.Description ?? "", 120)));
+        }
+        return subs;
     }
 
     /// <summary>Validate <c>intercepts</c> entries; invalid ones become problems and are dropped.</summary>
