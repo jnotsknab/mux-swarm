@@ -1774,11 +1774,18 @@ menu, on every interface (TUI, classic console, `--serve`, `--stdio`, ACP), and 
 ```jsonc
 // extension.json
 "commands": [ { "name": "stats", "description": "Repo stats", "timeoutSeconds": 120 },
-              { "name": "board", "description": "Open the board", "immediate": true } ]
+              { "name": "board", "description": "Open the board", "immediate": true },
+              { "name": "contacts", "description": "Manage contacts", "usage": "<add|list|rm> [name]",
+                "subcommands": [ { "name": "add", "description": "Add a contact" },
+                                 { "name": "list", "description": "List contacts" } ] } ]
 ```
 
 - `name`: `a-z`, `0-9`, `-`, starting with a letter (max 32). Built-in commands (and their aliases)
   can never be taken; if two extensions declare the same command the first by name keeps it.
+- `usage` (optional, max 60 chars) is shown after the description in the palette and `/api/commands`.
+  `subcommands` (optional, max 24; names like command names) each get their own palette row
+  (`/contacts add`), so they filter and Tab-complete like built-in subcommands. They are descriptive
+  only: `/contacts add Ann` still sends one `command/run` with `args: "add Ann"`.
 - `/stats some args` sends a `command/run` request with `{ name, args, cwd, mode, agent }` (`mode` is the
   running mode: `agent`, `swarm`, `pswarm`, `interactive` at the menu, ...; `agent` is the session's lead
   agent, omitted at the menu).
