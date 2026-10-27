@@ -2120,6 +2120,36 @@ state. Exposed as `repl_shell_exec` (+ `check_python_status`, `send_python_input
 `filesystem.securityMode` / `shell.securityMode` settings, and may run inside a sandbox (see
 [Execution Sandbox](#execution-sandbox)).
 
+### Language servers (`lsp`)
+
+Off by default. Point Mux at any language server that speaks LSP over stdio; there is no built-in
+server list, so any language works the same way:
+
+```jsonc
+"lsp": {
+  "enabled": true,
+  "servers": {
+    "python": { "command": "basedpyright-langserver", "args": ["--stdio"], "extensions": [".py"],
+                "rootMarkers": ["pyproject.toml", "setup.py", ".git"] },
+    "csharp": { "command": "csharp-ls", "extensions": [".cs"], "rootMarkers": ["*.sln", "*.csproj"] },
+    "zig":    { "command": "zls", "extensions": [".zig"], "rootMarkers": ["build.zig"] }
+  }
+}
+```
+
+- Per server: `command` (PATH name or full path; on Windows `.exe`/`.cmd`/`.bat` are tried), `args`,
+  `env`, `extensions` (required), `languageIds` (extension -> LSP language id when it is not the
+  extension itself, e.g. `{ ".cs": "csharp" }`), `rootMarkers` (names or `*.ext` patterns searched upward
+  from the file; none found = the workspace root), `initializationOptions`, `settings` (answers
+  `workspace/configuration`), `startupTimeoutMs` (default 30000), `disabled`. Top level: `idleMinutes`
+  (stop idle servers, default 10, 0 = never).
+- A server starts the first time a file it covers is used, once per (server, project root). One that
+  fails to start is not retried until `/refresh`, which also restarts servers with the new config.
+  Mux only ever stops servers it started.
+- Files are synced from disk (full text, increasing version) before every question, so edits made by
+  any tool or by you are seen. Diagnostics that do not arrive in time are reported as **pending**,
+  never as "no problems".
+
 **Size-tiered sub-agent context passing.** When a lead delegates work, the sub-agent's
 result is returned to the lead at a cost scaled to need:
 

@@ -214,6 +214,7 @@ internal class App
         {
             HookWorker.Stop();
             Engine.Extensions.ExtensionHost.StopAll();
+            Engine.Lsp.LspManager.Reset();
             DaemonRunner?.DisposeAsync();
             OtelTracer.Shutdown();
             OtelMetrics.Shutdown();
@@ -1318,6 +1319,7 @@ internal class App
                     SwarmConfig = LoadSwarm();
                     await CliCmdUtils.HandleFullReload(InitMcpServersAsync, ConfigPath);
                     LoadExtensions(announce: true);
+                    Engine.Lsp.LspManager.Reset();   // servers restart on next use with the new lsp config
                     break;
 
                 case var ext when ext == "/extensions" || ext.StartsWith("/extensions ", StringComparison.Ordinal):
