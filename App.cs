@@ -435,22 +435,7 @@ internal class App
         if (parsed.ServePort > 0)
             await ServeMode.StartAsync((int)parsed.ServePort);
 
-        // file_changed events for the web UI / stdio clients (never the model; ACP has its own edit locations),
-        // and changed files for post-edit LSP diagnostics (any mode). Either one starts the watchers.
-        bool fileEvents = MuxConsole.StdioMode && !MuxConsole.AcpActive && Config.Serve.FileEvents;
-        if (fileEvents || Config.Lsp is { Enabled: true, DiagnosticsOnWrite: true })
-        {
-            FileChangeTracker.Shared = new FileChangeTracker((path, change, tool) =>
-            {
-                if (fileEvents) MuxConsole.EmitFileChanged(path, change, tool);
-                Engine.Lsp.LspWriteDiagnostics.OnFileChanged(path, change);
-            });
-            FileChangeTracker.Shared.Ignore(Config.Serve.FileEventsIgnore);
-            FileChangeTracker.Shared.Exclude(FileChangeTracker.OwnStateDirs(PlatformContext.BaseDirectory,
-                Config.Filesystem.SessionsPath, Config.Filesystem.KnowledgeGraphPath, Config.Filesystem.ChromaDbPath));
-            FileChangeTracker.Shared.Start(new[] { PlatformContext.WorkspaceRoot, Config.Filesystem.SandboxPath }
-                .Concat(Config.Filesystem.AllowedPaths ?? []));
-        }
+        EnsureFileTracker();
 
         if (parsed.TelemetryPort is int telemetryDashPort)
         {
@@ -1327,6 +1312,7 @@ internal class App
                     LoadExtensions(announce: true);
                     Engine.Lsp.LspManager.Reset();   // servers restart on next use with the new lsp config
                     Engine.Lsp.LspWriteDiagnostics.Reset();
+                    EnsureFileTracker();
                     break;
 
                 case var ext when ext == "/extensions" || ext.StartsWith("/extensions ", StringComparison.Ordinal):
@@ -2310,6 +2296,29 @@ internal class App
 
     /// <summary>Problems from the last <see cref="LoadExtensions"/> (manifest and process start), for <c>/extensions</c>.</summary>
     internal static IReadOnlyList<string> ExtensionProblems { get; private set; } = [];
+
+    /// <summary>
+    /// Start the file watchers once, when something needs them: file_changed events for the web UI / stdio
+    /// clients (never the model; ACP has its own edit locations) or post-edit LSP diagnostics (any mode).
+    /// Called at startup and after a config refresh, so turning <c>lsp</c> on later also starts them.
+    /// </summary>
+    internal static void EnsureFileTracker()
+    {
+        if (FileChangeTracker.Shared != null) return;
+        bool fileEvents = MuxConsole.StdioMode && !MuxConsole.AcpActive && Config.Serve.FileEvents;
+        if (!fileEvents && Config.Lsp is not { Enabled: true, DiagnosticsOnWrite: true }) return;
+        var tracker = new FileChangeTracker((path, change, tool) =>
+        {
+            if (fileEvents) MuxConsole.EmitFileChanged(path, change, tool);
+            Engine.Lsp.LspWriteDiagnostics.OnFileChanged(path, change);
+        });
+        tracker.Ignore(Config.Serve.FileEventsIgnore);
+        tracker.Exclude(FileChangeTracker.OwnStateDirs(PlatformContext.BaseDirectory,
+            Config.Filesystem.SessionsPath, Config.Filesystem.KnowledgeGraphPath, Config.Filesystem.ChromaDbPath));
+        tracker.Start(new[] { PlatformContext.WorkspaceRoot, Config.Filesystem.SandboxPath }
+            .Concat(Config.Filesystem.AllowedPaths ?? []));
+        FileChangeTracker.Shared = tracker;
+    }
 
     /// <summary>
     /// (Re)load extensions from <c>extensions</c> in config.json and report problems (unless
