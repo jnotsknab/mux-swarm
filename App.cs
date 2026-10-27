@@ -2314,7 +2314,8 @@ internal class App
         var result = Engine.Extensions.ExtensionRegistry.Load(Config.Extensions, Config.Console.Tui);
         var trusted = new HashSet<string>(Config.Extensions.Trusted ?? [], StringComparer.Ordinal);
         var unsandboxed = new HashSet<string>(Config.Extensions.Unsandboxed ?? [], StringComparer.Ordinal);
-        var problems = result.Problems.Concat(Engine.Extensions.ExtensionHost.Restart(result.Extensions, trusted, unsandboxed, Config.Sandbox)).ToList();
+        var problems = result.Problems.Concat(Engine.Extensions.ExtensionHost.Restart(result.Extensions, trusted, unsandboxed, Config.Sandbox,
+            Config.Extensions.Agents)).ToList();
         ExtensionProblems = problems;
         if (!quiet) foreach (var problem in problems) MuxConsole.WriteWarning($"Extension: {problem}");
         Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);

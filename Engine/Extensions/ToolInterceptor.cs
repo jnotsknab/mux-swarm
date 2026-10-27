@@ -24,14 +24,15 @@ internal static class ToolInterceptor
     internal static async ValueTask<object?> InvokeAsync(FunctionInvocationContext context, CancellationToken ct)
     {
         var tool = context.Function.Name;
+        // Who is calling: lets an extension apply per-agent rules (null when not known). A scoped extension
+        // (extensions.agents) only gates its agents' calls; an unknown caller still goes through it.
+        var (agent, parentAgent, flowId) = State.HookWorker.Caller();
         var chain = ExtensionHost.Running
-            .Where(p => p.IsRunning)
+            .Where(p => p.IsRunning && p.InScope(agent, parentAgent))
             .SelectMany(p => p.Intercepts.Where(i => i.Matches(tool)).Select(i => (Process: p, Rule: i)))
             .ToList();
         if (chain.Count == 0) return await context.Function.InvokeAsync(context.Arguments, ct);
 
-        // Who is calling: lets an extension apply per-agent rules (null when not known).
-        var (agent, parentAgent, flowId) = State.HookWorker.Caller();
         foreach (var (process, rule) in chain.Where(c => c.Rule.Before))
         {
             var reply = await process.RequestAsync("tool/before",
