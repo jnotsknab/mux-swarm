@@ -2149,6 +2149,12 @@ server list, so any language works the same way:
 - Files are synced from disk (full text, increasing version) before every question, so edits made by
   any tool or by you are seen. Diagnostics that do not arrive in time are reported as **pending**,
   never as "no problems".
+- Agents get the native **`lsp`** tool by listing `"Lsp"` in `mcpServers` (Swarm.json), like
+  `Filesystem` and `Shell`; it only exists while `lsp.enabled` is on with a server configured.
+  Read-only actions: `diagnostics`, `definition`, `references`, `hover`, `symbols` (a file's outline, or
+  a workspace search with `query`), `status`. Code is addressed by a 1-based `line` plus the `symbol`
+  text on it (`name#2` = its second occurrence on the line); Mux finds the column. Results are
+  `path:line:col` with the source line, errors first, capped (50 diagnostics, 50 references, 200 symbols).
 
 **Size-tiered sub-agent context passing.** When a lead delegates work, the sub-agent's
 result is returned to the lead at a cost scaled to need:
