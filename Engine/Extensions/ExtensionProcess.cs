@@ -181,6 +181,20 @@ internal sealed class ExtensionProcess : IDisposable
     /// <summary>True when the extension subscribed to <paramref name="eventName"/> (or to "*").</summary>
     internal bool Wants(string eventName) => IsRunning && (_subscriptions.Contains(eventName) || _subscriptions.Contains("*"));
 
+    /// <summary>Agents this process is limited to (<c>extensions.agents</c>), or null = every agent.</summary>
+    internal IReadOnlySet<string>? Scope { get; set; }
+
+    /// <summary>
+    /// True when work by <paramref name="agent"/> (delegated by <paramref name="parentAgent"/>) concerns this
+    /// process: unscoped, or either name is in <see cref="Scope"/>. An unknown caller (both null) counts as in
+    /// scope, so a scoped gate never silently skips a call it cannot attribute.
+    /// </summary>
+    internal bool InScope(string? agent, string? parentAgent) =>
+        Scope is null
+        || (agent is null && parentAgent is null)
+        || (agent is not null && Scope.Contains(agent))
+        || (parentAgent is not null && Scope.Contains(parentAgent));
+
     /// <summary>Queue an <c>event</c> notification. Dropped (never blocks) when the queue is full.</summary>
     internal void PostEvent(HookEvent e) => _outbox.Writer.TryWrite(Message("event", e, id: null));
 

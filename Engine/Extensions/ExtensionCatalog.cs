@@ -35,8 +35,11 @@ internal static class ExtensionCatalog
             bool trust = trusted.Contains(ext.Name);
             string state = ext.Process is null ? "" : proc is null ? (trust ? "not running" : "not trusted")
                 : (proc.IsRunning ? "running" : "exited") + $" ({proc.Isolation})";
+            var contributes = Contributions(ext);
+            if (ext.Process is not null && ExtensionHost.ScopeOf(ext.Name, cfg.Agents) is { } scope)
+                contributes.Insert(0, "agents: " + string.Join(", ", scope.Order(StringComparer.OrdinalIgnoreCase)));
             items.Add(new Item(ext.Name, ext.Version, ext.Description, ext.Dir, true, ext.Process is not null, trust, state,
-                Contributions(ext), loaded.Conflicts.Where(c => c.Winner == ext.Name || c.Loser == ext.Name).ToList(),
+                contributes, loaded.Conflicts.Where(c => c.Winner == ext.Name || c.Loser == ext.Name).ToList(),
                 Strip(all, ext.Name), proc?.StderrTail.TakeLast(5).ToList() ?? []));
         }
         foreach (var ext in loaded.Disabled)
@@ -57,7 +60,9 @@ internal static class ExtensionCatalog
         if (e.Footer) lines.Add("footer template");
         if (e.Markdown) lines.Add("markdown style");
         if (e.TuiRegions.Count > 0) lines.Add("tui styles: " + string.Join(", ", e.TuiRegions));
-        if (e.Commands.Count > 0) lines.Add("commands: " + string.Join(", ", e.Commands.Select(c => c.Cmd)));
+        if (e.Commands.Count > 0)
+            lines.Add("commands: " + string.Join(", ", e.Commands.Select(c =>
+                c.Subcommands.Count > 0 ? $"{c.Cmd} ({string.Join(" ", c.Subcommands.Select(s => s.Name))})" : c.Cmd)));
         var chips = ExtensionFooter.Snapshot().Where(c => c.Id.StartsWith(e.Name + ".", StringComparison.Ordinal)).Select(c => c.Id).ToList();
         if (chips.Count > 0) lines.Add("footer chips: " + string.Join(", ", chips));
         if (e.Tools.Count > 0)

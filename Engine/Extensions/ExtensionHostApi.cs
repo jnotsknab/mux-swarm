@@ -131,6 +131,10 @@ internal static class ExtensionHostApi
 
     private static bool InSession => !string.Equals(ServeMode.ActiveMode, "interactive", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>The lead agent of the running session, or null at the menu (no session).</summary>
+    internal static string? SessionAgent() =>
+        InSession ? SingleAgentOrchestrator.AgentDef?.Name ?? App.SwarmConfig?.SingleAgent?.Name : null;
+
     /// <summary>The <c>session/info</c> result.</summary>
     internal static object SessionInfo()
     {

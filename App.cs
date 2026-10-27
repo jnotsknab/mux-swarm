@@ -214,6 +214,7 @@ internal class App
         {
             HookWorker.Stop();
             Engine.Extensions.ExtensionHost.StopAll();
+            Engine.Lsp.LspManager.Reset();
             DaemonRunner?.DisposeAsync();
             OtelTracer.Shutdown();
             OtelMetrics.Shutdown();
@@ -434,16 +435,7 @@ internal class App
         if (parsed.ServePort > 0)
             await ServeMode.StartAsync((int)parsed.ServePort);
 
-        // file_changed events for the web UI / stdio clients (never the model). ACP has its own edit locations.
-        if (MuxConsole.StdioMode && !MuxConsole.AcpActive && Config.Serve.FileEvents)
-        {
-            FileChangeTracker.Shared = new FileChangeTracker(MuxConsole.EmitFileChanged);
-            FileChangeTracker.Shared.Ignore(Config.Serve.FileEventsIgnore);
-            FileChangeTracker.Shared.Exclude(FileChangeTracker.OwnStateDirs(PlatformContext.BaseDirectory,
-                Config.Filesystem.SessionsPath, Config.Filesystem.KnowledgeGraphPath, Config.Filesystem.ChromaDbPath));
-            FileChangeTracker.Shared.Start(new[] { PlatformContext.WorkspaceRoot, Config.Filesystem.SandboxPath }
-                .Concat(Config.Filesystem.AllowedPaths ?? []));
-        }
+        EnsureFileTracker();
 
         if (parsed.TelemetryPort is int telemetryDashPort)
         {
@@ -1318,6 +1310,9 @@ internal class App
                     SwarmConfig = LoadSwarm();
                     await CliCmdUtils.HandleFullReload(InitMcpServersAsync, ConfigPath);
                     LoadExtensions(announce: true);
+                    Engine.Lsp.LspManager.Reset();   // servers restart on next use with the new lsp config
+                    Engine.Lsp.LspWriteDiagnostics.Reset();
+                    EnsureFileTracker();
                     break;
 
                 case var ext when ext == "/extensions" || ext.StartsWith("/extensions ", StringComparison.Ordinal):
@@ -2303,6 +2298,29 @@ internal class App
     internal static IReadOnlyList<string> ExtensionProblems { get; private set; } = [];
 
     /// <summary>
+    /// Start the file watchers once, when something needs them: file_changed events for the web UI / stdio
+    /// clients (never the model; ACP has its own edit locations) or post-edit LSP diagnostics (any mode).
+    /// Called at startup and after a config refresh, so turning <c>lsp</c> on later also starts them.
+    /// </summary>
+    internal static void EnsureFileTracker()
+    {
+        if (FileChangeTracker.Shared != null) return;
+        bool fileEvents = MuxConsole.StdioMode && !MuxConsole.AcpActive && Config.Serve.FileEvents;
+        if (!fileEvents && Config.Lsp is not { Enabled: true, DiagnosticsOnWrite: true }) return;
+        var tracker = new FileChangeTracker((path, change, tool) =>
+        {
+            if (fileEvents) MuxConsole.EmitFileChanged(path, change, tool);
+            Engine.Lsp.LspWriteDiagnostics.OnFileChanged(path, change);
+        });
+        tracker.Ignore(Config.Serve.FileEventsIgnore);
+        tracker.Exclude(FileChangeTracker.OwnStateDirs(PlatformContext.BaseDirectory,
+            Config.Filesystem.SessionsPath, Config.Filesystem.KnowledgeGraphPath, Config.Filesystem.ChromaDbPath));
+        tracker.Start(new[] { PlatformContext.WorkspaceRoot, Config.Filesystem.SandboxPath }
+            .Concat(Config.Filesystem.AllowedPaths ?? []));
+        FileChangeTracker.Shared = tracker;
+    }
+
+    /// <summary>
     /// (Re)load extensions from <c>extensions</c> in config.json and report problems (unless
     /// <paramref name="quiet"/>, used by the <c>/extensions</c> panel, which shows them itself). With
     /// <paramref name="announce"/> it also prints a one-line summary (used by <c>/refresh</c>).
@@ -2314,7 +2332,8 @@ internal class App
         var result = Engine.Extensions.ExtensionRegistry.Load(Config.Extensions, Config.Console.Tui);
         var trusted = new HashSet<string>(Config.Extensions.Trusted ?? [], StringComparer.Ordinal);
         var unsandboxed = new HashSet<string>(Config.Extensions.Unsandboxed ?? [], StringComparer.Ordinal);
-        var problems = result.Problems.Concat(Engine.Extensions.ExtensionHost.Restart(result.Extensions, trusted, unsandboxed, Config.Sandbox)).ToList();
+        var problems = result.Problems.Concat(Engine.Extensions.ExtensionHost.Restart(result.Extensions, trusted, unsandboxed, Config.Sandbox,
+            Config.Extensions.Agents)).ToList();
         ExtensionProblems = problems;
         if (!quiet) foreach (var problem in problems) MuxConsole.WriteWarning($"Extension: {problem}");
         Theme.Set(Theme.Find(Config.Console.Theme) ?? Theme.Default);
@@ -2786,6 +2805,12 @@ internal class App
                         using var _ = fct.BeginToolCall(ctx.Function.Name);
                         return inner != null ? await inner(ctx, ct) : await ctx.Function.InvokeAsync(ctx.Arguments, ct);
                     };
+                }
+                // Post-edit diagnostics: append the language server's errors for files the tool changed.
+                if (Config.Lsp.Enabled)
+                {
+                    var inner = c.FunctionInvoker;
+                    c.FunctionInvoker = (ctx, ct) => Engine.Lsp.LspWriteDiagnostics.InvokeAsync(ctx, ct, inner);
                 }
                 // Built-in browser: start it (downloading on first use) before the first Playwright call.
                 // MCP servers may connect after this client is built, so the routing flag is read per call.

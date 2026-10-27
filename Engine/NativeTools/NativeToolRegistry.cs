@@ -21,6 +21,9 @@ public static class NativeToolRegistry
     public const string FilesystemServer = "Filesystem";
     public const string ShellServer = "Shell";
 
+    /// <summary>Virtual server of the native <c>lsp</c> tool (present only while <c>lsp.enabled</c> is on).</summary>
+    public const string LspServer = Lsp.LspTool.Server;
+
     /// <summary>No-op command/arg sentinel marking an mcpServers entry as a native, in-process toolset.</summary>
     public const string NativeMarker = "native-runtime-tools";
 
@@ -44,6 +47,8 @@ public static class NativeToolRegistry
             return FilesystemServer;
         if (_shellToolNames.Contains(toolName))
             return ShellServer;
+        if (string.Equals(toolName, Lsp.LspTool.Name, StringComparison.OrdinalIgnoreCase))
+            return LspServer;
         return null;
     }
 
@@ -119,6 +124,9 @@ public static class NativeToolRegistry
             pool.AddRange(FilesystemTools.Build());
         if (ServerEnabled(config, ShellServer))
             pool.AddRange(ReplShellTools.Build());
+        // The lsp tool exists only while lsp.enabled is on with a server configured; agents get it by
+        // listing "Lsp" in mcpServers, like the other native groups.
+        pool.AddRange(Lsp.LspTool.Build());
         // Tools served by running (trusted) extension processes, named "{extension}_{tool}" so the
         // per-agent filter gates them by extension name exactly like an MCP server.
         pool.AddRange(Extensions.ExtensionTool.ForRunning());

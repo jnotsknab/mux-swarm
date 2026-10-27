@@ -1300,6 +1300,7 @@ public static class MultiAgentOrchestrator
 
 
                 string? lastUsageResponseId = null;   // a repeated usage chunk counts once
+                using var agentScope = HookWorker.BeginAgent("Orchestrator");
                 await foreach (var update in orchestratorAgent
                     .RunStreamingAsync(messages, orchestratorSession)
                     .WithCancellation(cancellationToken))
@@ -1674,6 +1675,7 @@ public static class MultiAgentOrchestrator
                 var pendingAskUser = new HashSet<string>();
 
                 string? lastUsageResponseId = null;   // a repeated usage chunk counts once
+                using var agentScope = HookWorker.BeginAgent(specialist.Def.Name);
                 await foreach (var update in specialist.Agent
                     .RunStreamingAsync(messages, specialist.Session)
                     .WithCancellation(cancellationToken))

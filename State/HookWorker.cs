@@ -61,6 +61,7 @@ public static class HookWorker
     public static void Enqueue(HookEvent e)
     {
         e.GoalId ??= _goalId.Value;
+        e.Agent ??= _agent.Value;
         if (_flow.Value is { } flow) { e.ParentAgent ??= flow.Parent; e.FlowId ??= flow.Id; }
         Observed?.Invoke(e);
         Channel.Writer.TryWrite(e);
@@ -144,6 +145,38 @@ public static class HookWorker
     public static string NextFlowId(string prefix) => prefix + Interlocked.Increment(ref _flowSeq);
 
     private static readonly AsyncLocal<string?> _goalId = new();
+
+    private static readonly AsyncLocal<string?> _agent = new();
+
+    /// <summary>The agent whose turn is running on this async flow (lead, orchestrator or sub-agent), or null.</summary>
+    internal static string? CurrentAgent => _agent.Value;
+
+    /// <summary>
+    /// Mark the current async flow (and its child tasks, e.g. tool calls) as running <paramref name="agent"/>'s
+    /// turn: events enqueued without an agent get it, and extension interceptors and tools receive it as the
+    /// caller. Set where each agent's model stream starts. Dispose to restore the outer agent.
+    /// </summary>
+    public static IDisposable BeginAgent(string? agent)
+    {
+        var prior = _agent.Value;
+        _agent.Value = agent;
+        return new AgentScope(prior);
+    }
+
+    private sealed class AgentScope(string? prior) : IDisposable
+    {
+        public void Dispose() => _agent.Value = prior;
+    }
+
+    /// <summary>
+    /// The caller fields sent to extension processes with tool requests: the running agent, the agent that
+    /// delegated to it, and the delegation/job flow id (all null when unknown, e.g. at the menu).
+    /// </summary>
+    internal static (string? Agent, string? ParentAgent, string? FlowId) Caller()
+    {
+        var flow = _flow.Value;
+        return (_agent.Value, flow?.Parent, flow?.Id);
+    }
 
     /// <summary>Ambient goal id (<c>--goal-id</c> or a continuous run's generated id) stamped onto every
     /// event enqueued from this async flow. Set at orchestrator entry; flows into child tasks. A null id

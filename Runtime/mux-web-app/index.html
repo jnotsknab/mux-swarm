@@ -6588,8 +6588,8 @@ const icons = {
     const header = activeSessionMode ? ('Slash commands  ·  in ' + activeSessionMode + ' session') : 'Slash commands';
     const rows = paletteItems.map((c, i) =>
       '<div class="cmd-item' + (i === paletteActive ? ' active' : '') + '" data-idx="' + i + '" role="option">' +
-        '<span class="cmd-name">' + c.cmd + '</span>' +
-        '<span class="cmd-desc">' + c.desc + '</span>' +
+        '<span class="cmd-name">' + esc(c.cmd) + '</span>' +
+        '<span class="cmd-desc">' + esc(c.desc) + '</span>' +
       '</div>'
     ).join('');
     cmdPalette.innerHTML = '<div class="cmd-palette-header">' + header + '</div>' + rows;
@@ -15500,7 +15500,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 <!-- ===== Extension panels (ui/open): element trees an extension pushes, drawn as a right-side drawer ===== -->
 <style>
 /* Unlayered on purpose: the global reset (*{margin:0}) is unlayered and would beat a layered margin. */
-body.mux-xp-docked { --mux-xp-dock: min(440px, 45vw); }
+body.mux-xp-docked { --mux-xp-dock: var(--mux-xp-side-w, min(440px, 45vw)); }
 body.mux-xp-docked .app { margin-right: var(--mux-xp-dock); }
 body.mux-xp-docked .input-area { --composer-right-inset: var(--mux-xp-dock); }
 @media (max-width: 900px) {
@@ -15573,9 +15573,16 @@ body.mux-xp-docked .input-area { --composer-right-inset: var(--mux-xp-dock); }
   .mux-xp-band.open { display: flex; }
   .mux-xp-band .mux-xp-head { padding: 4px 8px; }
   .mux-xp-band .mux-xp-body { padding: 8px 12px; }
+  /* Drag to resize: the side drawer's left edge (width) and the band's top edge (height). Double-click resets. */
+  .mux-xp-sash { position: absolute; z-index: 2; display: none; touch-action: none; }
+  .mux-xp.docked .mux-xp-sash { display: block; top: 0; bottom: 0; left: -3px; width: 6px; cursor: col-resize; }
+  .mux-xp-band .mux-xp-sash { display: block; left: 0; right: 0; top: -3px; height: 6px; cursor: row-resize; }
+  .mux-xp-sash:hover, .mux-xp-sash.dragging { background: rgba(var(--accent-rgb), .35); }
+  .mux-xp-band[data-sized] { height: var(--mux-xp-band-h); max-height: none; }
   @media (max-width: 900px) {
     .mux-xp.docked { box-shadow: -12px 0 32px rgba(0,0,0,.35); z-index: 9998; }
     .mux-xp.docked .mux-xp-x { display: inline; }
+    .mux-xp.docked .mux-xp-sash { display: none; }
   }
 }
 </style>
@@ -15591,6 +15598,8 @@ body.mux-xp-docked .input-area { --composer-right-inset: var(--mux-xp-dock); }
     document.body.appendChild(root);
     var s = { root: root, tabs: root.querySelector('.mux-xp-tabs'), body: root.querySelector('.mux-xp-body'), active: null };
     root.querySelector('.mux-xp-x').addEventListener('click', function(){ if (s.active) close(s.active, true); });
+    var sash = document.createElement('div'); sash.className = 'mux-xp-sash'; sash.title = 'Drag to resize (double-click to reset)';
+    root.appendChild(sash); s.sash = sash;
     root.addEventListener('keydown', function(e){
       if (e.key === 'Escape') { e.preventDefault(); var p = panels.get(s.active);
         if (p && p.placement !== 'screen' && !root.classList.contains('mux-xp-overlay')) { document.activeElement && document.activeElement.blur(); return; }
@@ -15602,6 +15611,33 @@ body.mux-xp-docked .input-area { --composer-right-inset: var(--mux-xp-dock); }
     return s;
   }
   var drawer = surface('mux-xp', 'Extension panel'), band = surface('mux-xp-band', 'Extension band');
+  // Resizable surfaces: one saved size per surface (side width, band height), like the TUI's sash.
+  var SIZE_KEY = 'muxExtPanelSize.v1', size = {};
+  try { size = JSON.parse(localStorage.getItem(SIZE_KEY) || '{}') || {}; } catch(_) {}
+  function sideClamp(w){ return Math.round(Math.max(280, Math.min(w, window.innerWidth * 0.7, window.innerWidth - 480))); }
+  function bandClamp(h){ return Math.round(Math.max(80, Math.min(h, window.innerHeight * 0.5))); }
+  function applySize(){
+    var r = document.documentElement.style;
+    if (size.side) r.setProperty('--mux-xp-side-w', sideClamp(size.side) + 'px'); else r.removeProperty('--mux-xp-side-w');
+    if (size.band) { r.setProperty('--mux-xp-band-h', bandClamp(size.band) + 'px'); band.root.setAttribute('data-sized', ''); }
+    else { r.removeProperty('--mux-xp-band-h'); band.root.removeAttribute('data-sized'); }
+  }
+  function saveSize(){ try { localStorage.setItem(SIZE_KEY, JSON.stringify(size)); } catch(_) {} }
+  function sashDrag(s, key, measure){
+    s.sash.addEventListener('pointerdown', function(e){
+      if (e.button !== 0) return;
+      e.preventDefault(); s.sash.classList.add('dragging'); s.sash.setPointerCapture(e.pointerId);
+      function mv(ev){ size[key] = measure(ev); applySize(); }
+      function up(ev){ s.sash.classList.remove('dragging'); try { s.sash.releasePointerCapture(ev.pointerId); } catch(_) {}
+        s.sash.removeEventListener('pointermove', mv); s.sash.removeEventListener('pointerup', up); s.sash.removeEventListener('pointercancel', up);
+        saveSize(); renderAll(); }
+      s.sash.addEventListener('pointermove', mv); s.sash.addEventListener('pointerup', up); s.sash.addEventListener('pointercancel', up);
+    });
+    s.sash.addEventListener('dblclick', function(){ delete size[key]; saveSize(); applySize(); renderAll(); });
+  }
+  sashDrag(drawer, 'side', function(ev){ return sideClamp(window.innerWidth - ev.clientX); });
+  sashDrag(band, 'band', function(ev){ return bandClamp(band.root.getBoundingClientRect().bottom - ev.clientY); });
+  applySize();
   function where(p){ return p.placement === 'band' || (p.placement === 'auto' && window.innerWidth < 1100) ? band : drawer; }
   function k(p){ return p.extension + '/' + p.id; }
   function send(p, ev){
@@ -15702,7 +15738,7 @@ body.mux-xp-docked .input-area { --composer-right-inset: var(--mux-xp-dock); }
     var p = panels.get(key); if (!p) return;
     panels.delete(key); if (tell) send(p, { type: 'close' }); renderAll();
   }
-  window.addEventListener('resize', function(){ if (panels.size) renderAll(); });
+  window.addEventListener('resize', function(){ applySize(); if (panels.size) renderAll(); });
   window.MuxExtPanels = {
     /** An ext_panel event from the engine (op = open | update | close). */
     event: function(m){ if (!m || !m.extension || !m.id) return; if (m.op === 'close') close(k(m), false); else upsert(m); },

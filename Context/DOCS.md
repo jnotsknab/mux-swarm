@@ -1730,6 +1730,19 @@ permissions, so each one must be listed in `extensions.trusted` before Mux start
 "extensions": { "enabled": true, "trusted": ["notify"] }
 ```
 
+**Limit an extension to some agents** with `extensions.agents` (only your config can do this):
+
+```jsonc
+"extensions": { "trusted": ["concierge-gate"], "agents": { "concierge-gate": ["ConciergeAgent"] } }
+```
+
+A scoped extension's process still runs once, but it only intercepts tool calls made by those agents
+(including their delegated sub-agents), only receives their events plus events not tied to any agent
+(`mcp_server_connected`, `theme_changed`, ...), and its tools are offered only to them, whatever
+Swarm.json or the tool's own `agents` grant says. A call whose agent is unknown still goes through its
+interceptors, so a scoped gate never silently skips one. Commands, panels and footer chips stay global.
+Extensions not listed apply to every agent; `/extensions` shows the scope.
+
 Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 
 - First message: notification `initialize` with `{ protocolVersion: 1, muxVersion, name, dir, dataDir }`
@@ -1744,7 +1757,7 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
   or non-ASCII text such as a moon glyph fails with `UnicodeEncodeError`. stderr is captured;
   `/extensions` shows its last lines.
 - **Tools**: a process can serve tools to the agent (`tools` key, below). Mux sends a request
-  `tool/call` with `{ name, arguments }`; reply `{ "result": { "content": "<text for the model>" } }`,
+  `tool/call` with `{ name, arguments, agent, parentAgent, flowId }` (the caller; see below); reply `{ "result": { "content": "<text for the model>" } }`,
   or a JSON-RPC `error` object (`{ "code": 1, "message": "..." }`). Errors, a missed timeout
   (`timeoutSeconds`, default 60, max 600) or an exited process are returned to the model as
   `[extension <name>] tool failed: <reason>`; they never stop the turn.
@@ -1763,13 +1776,21 @@ menu, on every interface (TUI, classic console, `--serve`, `--stdio`, ACP), and 
 ```jsonc
 // extension.json
 "commands": [ { "name": "stats", "description": "Repo stats", "timeoutSeconds": 120 },
-              { "name": "board", "description": "Open the board", "immediate": true } ]
+              { "name": "board", "description": "Open the board", "immediate": true },
+              { "name": "contacts", "description": "Manage contacts", "usage": "<add|list|rm> [name]",
+                "subcommands": [ { "name": "add", "description": "Add a contact" },
+                                 { "name": "list", "description": "List contacts" } ] } ]
 ```
 
 - `name`: `a-z`, `0-9`, `-`, starting with a letter (max 32). Built-in commands (and their aliases)
   can never be taken; if two extensions declare the same command the first by name keeps it.
-- `/stats some args` sends a `command/run` request with `{ name, args, cwd, mode }` (`mode` is the
-  running mode: `agent`, `swarm`, `pswarm`, `interactive` at the menu, ...).
+- `usage` (optional, max 60 chars) is shown after the description in the palette and `/api/commands`.
+  `subcommands` (optional, max 24; names like command names) each get their own palette row
+  (`/contacts add`), so they filter and Tab-complete like built-in subcommands. They are descriptive
+  only: `/contacts add Ann` still sends one `command/run` with `args: "add Ann"`.
+- `/stats some args` sends a `command/run` request with `{ name, args, cwd, mode, agent }` (`mode` is the
+  running mode: `agent`, `swarm`, `pswarm`, `interactive` at the menu, ...; `agent` is the session's lead
+  agent, omitted at the menu).
 - While it runs the process may send `command/output` notifications (`{ "text": "..." }`), shown live.
   Esc cancels the wait and Mux sends `$/cancelRequest` (`{ id }`). `timeoutSeconds`: default 60, max 3600.
 - Reply `result`: `{ "output": "...", "prompt": "...", "open": { "id", "title", "view" } }`, all optional;
@@ -1936,12 +1957,17 @@ A trusted process can gate tool calls for every agent, team and daemon run:
 ]
 ```
 
-- `tool/before` request, params `{ tool, arguments }`. Reply `result`:
+- `tool/before` request, params `{ tool, arguments, agent, parentAgent, flowId }`. Reply `result`:
   `{ "decision": "allow" }`, `{ "decision": "allow", "arguments": { ... } }` (replaces the arguments),
   or `{ "decision": "deny", "reason": "..." }` (the tool does not run; the model sees
   `[BLOCKED by extension <name>] <reason>`).
-- `tool/after` request, params `{ tool, arguments, result }`. Reply `result: { "result": "<text>" }`
-  to replace what the model sees (e.g. redact secrets); any other reply keeps the original.
+- `tool/after` request, params `{ tool, arguments, result, agent, parentAgent, flowId }`. Reply
+  `result: { "result": "<text>" }` to replace what the model sees (e.g. redact secrets); any other reply
+  keeps the original.
+- **Caller**: `agent` is the agent whose turn made the call (the lead, `Orchestrator`, or a sub-agent's
+  name); `parentAgent` and `flowId` identify the delegation or background job it runs in (as in hook
+  events). Each is omitted when unknown, e.g. a tool run outside any agent turn. Use them for per-agent
+  rules (only gate `ConciergeAgent`, allow everyone else); parallel sub-agents each get their own.
 - No answer within `timeoutMs` (default 2000, max 30000), an `error` reply, or a dead process applies
   `onTimeout`: `allow` (default) or `deny`. Interceptors from several extensions run in name order.
 - Match the real tool names: the native shell tools are `execute_command_async` and `repl_shell_exec`
@@ -2061,6 +2087,9 @@ a small MIT loopback proxy that holds the OAuth tokens and exposes a normal
 OpenAI-compatible endpoint Mux talks to unchanged.
 
 - `/login [provider]` - run the provider's OAuth flow (browser opens automatically).
+  `/login <provider> headless` (also offered as a choice, default over SSH / without a display) prints the
+  auth URL on its own line instead, to open in a browser on any machine: press `c` to copy it (OSC 52, plus
+  the local clipboard when not over SSH), `Esc` to cancel.
   Providers: `claude`, `codex`, `codex-device` (headless device-code), `kimi`, `xai`,
   `antigravity`. The first successful login auto-registers a single `cliproxy` provider
   (endpoint `http://127.0.0.1:<port>/v1`, bearer via the `MUX_CLIPROXY_KEY` env var);
@@ -2118,6 +2147,51 @@ state. Exposed as `repl_shell_exec` (+ `check_python_status`, `send_python_input
 `send_command_input`, `install_package_async`). Filesystem/shell access is gated by the
 `filesystem.securityMode` / `shell.securityMode` settings, and may run inside a sandbox (see
 [Execution Sandbox](#execution-sandbox)).
+
+### Language servers (`lsp`)
+
+Off by default. Point Mux at any language server that speaks LSP over stdio; there is no built-in
+server list, so any language works the same way:
+
+```jsonc
+"lsp": {
+  "enabled": true,
+  "servers": {
+    "python": { "command": "basedpyright-langserver", "args": ["--stdio"], "extensions": [".py"],
+                "rootMarkers": ["pyproject.toml", "setup.py", ".git"] },
+    "csharp": { "command": "csharp-ls", "extensions": [".cs"], "rootMarkers": ["*.sln", "*.csproj"] },
+    "zig":    { "command": "zls", "extensions": [".zig"], "rootMarkers": ["build.zig"] }
+  }
+}
+```
+
+- Per server: `command` (PATH name or full path; on Windows `.exe`/`.cmd`/`.bat` are tried), `args`,
+  `env`, `extensions` (required), `languageIds` (extension -> LSP language id when it is not the
+  extension itself, e.g. `{ ".cs": "csharp" }`), `rootMarkers` (names or `*.ext` patterns searched upward
+  from the file; none found = the workspace root), `initializationOptions`, `settings` (answers
+  `workspace/configuration`), `startupTimeoutMs` (default 30000), `disabled`. Top level: `idleMinutes`
+  (stop idle servers, default 10, 0 = never).
+- A server starts the first time a file it covers is used, once per (server, project root). One that
+  fails to start is not retried until `/refresh`, which also restarts servers with the new config.
+  Mux only ever stops servers it started.
+- Files are synced from disk (full text, increasing version) before every question, so edits made by
+  any tool or by you are seen. Diagnostics that do not arrive in time are reported as **pending**,
+  never as "no problems".
+- Agents get the native **`lsp`** tool by listing `"Lsp"` in `mcpServers` (Swarm.json), like
+  `Filesystem` and `Shell`; it only exists while `lsp.enabled` is on with a server configured.
+  Read-only actions: `diagnostics`, `definition`, `references`, `hover`, `symbols` (a file's outline, or
+  a workspace search with `query`), `status`. Code is addressed by a 1-based `line` plus the `symbol`
+  text on it (`name#2` = its second occurrence on the line); Mux finds the column. Results are
+  `path:line:col` with the source line, errors first, capped (50 diagnostics, 50 references, 200 symbols).
+- **Diagnostics after edits** (`lsp.diagnosticsOnWrite`, default true while `lsp` is on): when a tool
+  call changes files a configured server covers, an `[LSP]` block with their errors is appended to that
+  tool's result, whichever tool made the change: the file tools, `execute_command_async`,
+  `repl_shell_exec` or an MCP server (changes are seen by the same file watcher that drives
+  `file_changed`, which LSP starts in any mode). Errors only, up to 5 files and 20 errors each, plus
+  errors the edit caused in other open files; `no errors in ...` when clean; `diagnostics pending` when the
+  server has not finished checking within `lsp.diagnosticsWaitMs` (default 1500). A change that lands
+  while no tool call is running (a background job) is reported on the next tool result. When several
+  agents have calls running at once, each of their results may report the same change.
 
 **Size-tiered sub-agent context passing.** When a lead delegates work, the sub-agent's
 result is returned to the lead at a cost scaled to need:
@@ -2270,7 +2344,8 @@ with this payload as `params`):
 | `daemon_status` | A status check changed state | `summary` (`recovered:`/`unhealthy:`/`restarted:`/`restart_failed:<id>`), `text` |
 | `daemon_bridge` | A bridge process started or exited | `summary` (`started:`/`exited:<id>`), `text` |
 
-**Correlation.** Events from a delegated sub-agent or a background job carry `flowId` (the delegation's
+**Correlation.** `agent` is the agent whose turn produced the event; events emitted without one during
+an agent's turn get that agent. Events from a delegated sub-agent or a background job carry `flowId` (the delegation's
 id, e.g. `d7`, or the job id, e.g. `bg2`) and `parentAgent` (the agent that delegated), so events from
 parallel sub-agents can be told apart; `delegation` and `delegation_end` carry the same `flowId`.
 `data` holds event-specific fields (ids, names, counts, durations), absent when unset.

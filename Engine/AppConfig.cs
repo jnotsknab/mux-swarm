@@ -97,6 +97,10 @@ public class AppConfig
     [JsonPropertyName("extensions")]
     public Extensions.ExtensionsConfig Extensions { get; set; } = new();
 
+    /// <summary>Language servers for the native <c>lsp</c> tool and post-edit diagnostics (see <see cref="Lsp.LspConfig"/>). Off by default.</summary>
+    [JsonPropertyName("lsp")]
+    public Lsp.LspConfig Lsp { get; set; } = new();
+
 }
 
 /// <summary>
