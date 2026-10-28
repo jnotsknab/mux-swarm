@@ -7,6 +7,9 @@ using MuxSwarm.Engine.Insight;
 namespace MuxSwarm.Tests.Tests;
 
 /// <summary>/insight for specialists, team members and delegated sub-agents: their OWN numbers, never the lead's.</summary>
+// ContextGauge's prompt baseline and drop counter are process-global: serialize with every other class that
+// touches console/insight state (a parallel PromptStarted from another class reset the baseline mid-assert).
+[Collection("ConsoleState")]
 public class InsightAgentsTests
 {
     private static ChatMessage ToolResult(string id, string text) => new(ChatRole.Tool, [new FunctionResultContent(id, text)]);
