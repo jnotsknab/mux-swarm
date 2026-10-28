@@ -880,17 +880,21 @@ internal class App
                     else
                         MuxConsole.WriteInfo("Context sharing disarmed. Delegation tools revert to their default schemas.");
                     break;
-                case "/onboard":
-                    await EnsureMcpReadyAsync();
-                    Config = LoadConfig(ConfigPath);
-                    var onboardModel = LoadSingleAgentModel();
-                    var onboardCts = GetOrResetCts();
-                    await CliCmdUtils.HandleOnboard(
-                        chatClientFactory: modelId => CreateChatClient(modelId),
-                        singleAgentModel: onboardModel,
-                        mcpTools: McpTools,
-                        ct: onboardCts.Token
-                    );
+                case var onb when onb == "/onboard" || onb.StartsWith("/onboard ", StringComparison.Ordinal):
+                    {
+                        var onbArgs = userInput.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
+                        await EnsureMcpReadyAsync();
+                        Config = LoadConfig(ConfigPath);
+                        var onboardModel = LoadSingleAgentModel();
+                        var onboardCts = GetOrResetCts();
+                        await CliCmdUtils.HandleOnboard(
+                            chatClientFactory: modelId => CreateChatClient(modelId),
+                            singleAgentModel: onboardModel,
+                            mcpTools: McpTools,
+                            ct: onboardCts.Token,
+                            args: onbArgs.Length > 1 ? onbArgs[1] : null
+                        );
+                    }
                     break;
                 case "/stateless":
                     Config = LoadConfig(ConfigPath);

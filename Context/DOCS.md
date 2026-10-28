@@ -944,7 +944,8 @@ Flags can be combined. Common stacks:
 
 ### System
 ```
-/onboard        Create or update operator profile (BRAIN.md + MEMORY.md)
+/onboard        Guided setup: profile (BRAIN.md + MEMORY.md) + config it applies after you confirm
+/onboard undo   Restore Config.json, Swarm.json, BRAIN.md, MEMORY.md from the latest onboarding backup
 /tools          List available MCP + native tools
 /skills         List loaded skills
 /theme          View or switch the TUI color theme (21 presets; bare /theme opens a picker; /theme <name> sets one)

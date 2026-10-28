@@ -1096,15 +1096,28 @@ public static class CliCmdUtils
             MuxConsole.WriteError("One or more MCP servers failed to reconnect.");
     }
 
+    /// <summary>
+    /// <c>/onboard</c>: back up Config.json, Swarm.json, BRAIN.md and MEMORY.md, then run the onboarding session
+    /// (ONBOARD.md as the system prompt), which may apply the setup the user confirms. <c>/onboard undo</c>
+    /// restores the newest backup instead.
+    /// </summary>
     public static async Task HandleOnboard(
         Func<string, IChatClient> chatClientFactory,
         string singleAgentModel,
         IList<McpClientTool>? mcpTools,
-        CancellationToken ct)
+        CancellationToken ct,
+        string? args = null)
     {
         var contextDirectory = PlatformContext.ContextDirectory;
-        var onboardPromptPath = Path.Combine(contextDirectory, "ONBOARD.md");
+        var backupRoot = PlatformContext.ConfigDirectory;
 
+        if (string.Equals(args?.Trim(), "undo", StringComparison.OrdinalIgnoreCase))
+        {
+            UndoOnboard(backupRoot);
+            return;
+        }
+
+        var onboardPromptPath = Path.Combine(contextDirectory, "ONBOARD.md");
         if (!File.Exists(onboardPromptPath))
         {
             MuxConsole.WriteError($"ONBOARD.md not found at: {onboardPromptPath}");
@@ -1115,34 +1128,65 @@ public static class CliCmdUtils
         var memoryPath = Path.Combine(contextDirectory, "MEMORY.md");
         bool existing = File.Exists(brainPath) || File.Exists(memoryPath);
 
-        if (existing)
+        if (existing && !MuxConsole.Confirm("Existing profile found. Re-run onboarding to update it?", defaultValue: true))
         {
-            var confirm = MuxConsole.Prompt("Existing BRAIN.md/MEMORY.md found. Update? (y/n): ");
-            if (!confirm.Trim().Equals("y", StringComparison.OrdinalIgnoreCase))
-            {
-                MuxConsole.WriteMuted("Onboarding cancelled.");
-                return;
-            }
+            MuxConsole.WriteMuted("Onboarding cancelled.");
+            return;
         }
 
-        var rawPrompt = File.ReadAllText(onboardPromptPath);
-        var resolvedPrompt = TokenInjector.InjectTokens(rawPrompt);
+        string? backup;
+        try
+        {
+            backup = OnboardSnapshot.Take(
+                OnboardSnapshot.Files(PlatformContext.ConfigPath, PlatformContext.SwarmPath, contextDirectory),
+                backupRoot, DateTime.UtcNow);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            MuxConsole.WriteError($"Could not back up your config before onboarding ({ex.Message}); onboarding not started.");
+            return;
+        }
+
+        var resolvedPrompt = TokenInjector.InjectTokens(File.ReadAllText(onboardPromptPath));
 
         MuxConsole.WriteInfo("Starting onboarding session...");
-        MuxConsole.WriteMuted(existing
-            ? $"Updating existing profile in: {contextDirectory}"
-            : $"Files will be written to: {contextDirectory}");
+        if (backup != null)
+            MuxConsole.WriteMuted($"Backed up your config and profile to {backup} ('/onboard undo' restores it).");
 
         MuxConsole.InputOverride = new FallbackReader("Begin onboarding.", MuxConsole.InputOverride);
 
         await SingleAgentOrchestrator.ChatAgentAsync(
             client: chatClientFactory(singleAgentModel),
             ct,
-            maxIterations: 3,
+            maxIterations: OnboardMaxIterations,
             mcpTools: mcpTools,
             continuous: false,
             systemPromptOverride: resolvedPrompt
         );
+    }
+
+    /// <summary>
+    /// Per-turn round cap for the onboarding session. Onboarding detects tools, writes several files and verifies
+    /// them in one turn, so it needs the normal agent budget (it was 3, which cut the session short).
+    /// </summary>
+    internal const int OnboardMaxIterations = 15;
+
+    private static void UndoOnboard(string backupRoot)
+    {
+        var latest = OnboardSnapshot.Latest(backupRoot);
+        if (latest is null)
+        {
+            MuxConsole.WriteMuted("No onboarding backup found.");
+            return;
+        }
+        if (!MuxConsole.Confirm($"Restore your config and profile from {Path.GetFileName(latest)}?", defaultValue: false))
+        {
+            MuxConsole.WriteMuted("Undo cancelled.");
+            return;
+        }
+        var restored = OnboardSnapshot.Restore(latest);
+        MuxConsole.WriteSuccess($"Restored {restored.Count} file(s) from {latest}.");
+        MuxConsole.WriteMuted("Run /refresh (or restart Mux) to load the restored config.");
     }
 
     public static async Task HandleFullReload(Func<AppConfig, Task<bool>> initMcpServers,

@@ -13,6 +13,7 @@ public static class TokenInjector
         content = content.Replace("{{paths.context}}", PlatformContext.ContextDirectory);
         content = content.Replace("{{paths.config}}", PlatformContext.ConfigDirectory);
         content = content.Replace("{{paths.prompts}}", PlatformContext.PromptsDirectory);
+        content = content.Replace("{{paths.docs}}", Path.Combine(PlatformContext.ContextDirectory, "DOCS.md"));
         content = content.Replace("{{user}}", Environment.UserName);
         content = content.Replace("{{os}}", Common.GetOsFriendlyName());
         content = content.Replace("{{shell}}", PlatformContext.Shell);
