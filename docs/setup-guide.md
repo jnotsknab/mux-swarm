@@ -118,6 +118,14 @@ Each enabled MCP server is validated for connectivity. On success you'll see a s
 
 > **Troubleshooting:** If a server fails to connect and you're running in strict mode (default), Mux-Swarm will exit. You can disable a problematic server by editing `Configs/Config.json` and setting `"enabled": false` on that server, then re-launch. You can also replace any default MCP server with your own - point to a local binary, a custom runtime, or a remote HTTP/SSE endpoint. As long as it implements the MCP protocol, Mux-Swarm will pick it up. Re-run `/setup` at any time to reconfigure.
 
+### After setup: onboarding
+
+`/setup` ends by offering onboarding (default yes). It's a short guided session that asks how you work: hands-on,
+collaborative, or mostly away and reachable by phone. It then proposes a setup (security modes, web UI access, a phone
+bridge, models, language servers, an optional command-guard extension, a personal theme). It shows you one change
+plan, applies only what you approve, and checks that it works. Your config is backed up first; `/onboard undo` puts it
+back. Run `/onboard` again any time to tune things.
+
 ## Verifying Your Setup
 
 The real test is whether your agents can make LLM calls end to end. Launch a single-agent session and send a simple prompt:
