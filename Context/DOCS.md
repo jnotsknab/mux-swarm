@@ -476,8 +476,9 @@ transcription (Whisper) is an optional extra: add `--extra voice` before the scr
 
 ### Telegram
 
-Required env var: `TELEGRAM_BOT_TOKEN`
-Optional: `WHISPER_MODEL` (default: base), `ALLOWED_CHAT_IDS` (comma-separated, empty = open access)
+Required env var: `TELEGRAM_BOT_TOKEN` (create a bot with @BotFather).
+Optional: `ALLOWED_CHAT_IDS` (comma-separated), `MUX_BRIDGE_ALLOW_ALL=1` (let any chat in; not recommended),
+`MUX_BRIDGE_STATE` (paired-chats file), `WHISPER_MODEL` (with `--extra voice`).
 
 ```json
 {
@@ -485,11 +486,21 @@ Optional: `WHISPER_MODEL` (default: base), `ALLOWED_CHAT_IDS` (comma-separated, 
   "type": "bridge",
   "command": "uv",
   "args": "run --project Runtime Runtime/telegram_bridge.py",
-  "env": { "WHISPER_MODEL": "base" },
   "restart": true,
   "interval": 10
 }
 ```
+
+- **Access is closed by default.** Unknown chats get a "this bot is private" reply. To add your phone, find the
+  one-time pairing code in the bridge log (`[Bridge:telegram-bridge:ERR] ... Pairing code: XXXXXX`) and send
+  `/pair XXXXXX` to the bot. Paired chats are remembered across restarts.
+- **Questions come as buttons:** `ask_user`, approvals and confirms show as Telegram buttons ("Type my own" and
+  "Cancel" when the prompt allows them); multi-select takes numbers (`1,3`); text prompts take your next message.
+  Secret prompts (API keys) are refused over the bridge.
+- **Clean rendering:** answers are converted to Telegram HTML (bold, italics, code, links); tables and code blocks
+  become monospace blocks; long answers split without breaking a code block. Thinking text is not sent; sub-agent
+  output is labelled with the agent's name.
+- Commands: `/stop` interrupts the running agent, `/cancel` dismisses a pending question, `/pair <code>`.
 
 ### Discord
 
