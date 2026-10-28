@@ -504,8 +504,9 @@ Optional: `ALLOWED_CHAT_IDS` (comma-separated), `MUX_BRIDGE_ALLOW_ALL=1` (let an
 
 ### Discord
 
-Required env vars: `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`
-Optional: `WHISPER_MODEL`
+Required env var: `DISCORD_BOT_TOKEN` (Developer Portal > Bot; enable the **Message Content** intent).
+Optional: `DISCORD_CHANNEL_ID` (also listen in that server channel; DMs to the bot always work), `ALLOWED_USER_IDS`
+(comma-separated), `MUX_BRIDGE_ALLOW_ALL=1` (not recommended), `MUX_BRIDGE_STATE`, `WHISPER_MODEL` (with `--extra voice`).
 
 ```json
 {
@@ -513,13 +514,19 @@ Optional: `WHISPER_MODEL`
   "type": "bridge",
   "command": "uv",
   "args": "run --project Runtime Runtime/discord_bridge.py",
-  "env": { "WHISPER_MODEL": "base" },
   "restart": true,
   "interval": 10
 }
 ```
 
-The bot only responds in the channel specified by `DISCORD_CHANNEL_ID`. Create a bot at https://discord.com/developers/applications, enable Message Content Intent, and invite with message permissions.
+- **Closed by default:** only paired or allowlisted users are answered. Send `/pair <code>` (one-time code from the
+  bridge log) in a DM or the channel to pair.
+- **Questions come as buttons** (up to 20 choices; longer lists and multi-select are numbered, reply with numbers).
+  Secret prompts are refused over the bridge.
+- **Rendering:** tables become code blocks, `####`+ headings become `###`, console markup is stripped, messages split
+  under 2000 characters without breaking a code block. No @mentions are ever pinged. Thinking text is not sent;
+  sub-agent output is labelled.
+- `/stop` interrupts the running agent; `/cancel` dismisses a pending question.
 
 ### Signal
 

@@ -194,7 +194,7 @@ source ~/.bashrc
 [System.Environment]::SetEnvironmentVariable("TELEGRAM_BOT_TOKEN", "your-token-here", "User")
 ```
 
-For Discord, use `DISCORD_BOT_TOKEN` instead. Discord also requires `DISCORD_CHANNEL_ID` set to the channel ID the bot should listen on.
+For Discord, use `DISCORD_BOT_TOKEN` instead. DMs to the bot work out of the box; set `DISCORD_CHANNEL_ID` to also listen in one server channel.
 
 For Signal, set `SIGNAL_NUMBER` and `SIGNAL_API_URL`:
 ```bash
@@ -300,7 +300,7 @@ different Whisper model, set `WHISPER_MODEL` in the bridge's `env` block (`tiny`
 
 **Telegram:** Closed by default. Pair your phone by sending `/pair <code>` to the bot, using the one-time code printed in the bridge log; or list chat IDs in `ALLOWED_CHAT_IDS`. `MUX_BRIDGE_ALLOW_ALL=1` opens the bot to any chat (not recommended: it drives agents that can run commands).
 
-**Discord:** The bot only responds in the channel specified by `DISCORD_CHANNEL_ID`.
+**Discord:** Closed by default. Pair with `/pair <code>` (one-time code in the bridge log) in a DM to the bot or the channel in `DISCORD_CHANNEL_ID`, or list user IDs in `ALLOWED_USER_IDS`. `MUX_BRIDGE_ALLOW_ALL=1` opens it to everyone (not recommended).
 
 **Signal:** Set `ALLOWED_NUMBERS` as a comma-separated list of E.164 phone numbers (e.g. `+15551234567,+15559876543`). Empty means open access.
 
