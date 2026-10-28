@@ -289,7 +289,12 @@ mux-swarm --serve --daemon
 
 ### Audio Transcription
 
-All three bridges support voice messages and audio attachments via local Whisper (no API key needed). FFmpeg is resolved automatically via the `static-ffmpeg` Python package. If you want to use a different Whisper model, set `WHISPER_MODEL` in the bridge's `env` block (options: `tiny`, `base`, `small`, `medium`, `large`, `turbo`).
+Voice messages and audio attachments are transcribed locally with Whisper (no API key needed). It is an optional
+extra so text-only bridges install in seconds: add `--extra voice` to the trigger's `args`, e.g.
+`"args": "run --project Runtime --extra voice Runtime/telegram_bridge.py"`. FFmpeg comes from the `static-ffmpeg`
+package in the same extra. Without the extra, voice messages get a reply explaining how to enable it. To pick a
+different Whisper model, set `WHISPER_MODEL` in the bridge's `env` block (`tiny`, `base`, `small`, `medium`,
+`large`, `turbo`).
 
 ### Restricting Access
 

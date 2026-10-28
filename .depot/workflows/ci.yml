@@ -51,6 +51,18 @@ jobs:
         run: dotnet restore
       - name: Run tests
         run: dotnet test MuxSwarm.Tests --configuration Release --no-restore --verbosity normal
+
+      # Messaging bridges (Runtime/*_bridge.py) against a fake /ws. Python, so it only needs to run once:
+      # on the Linux leg (Depot sandboxes are Linux x86_64 regardless of runs-on, so this always executes).
+      - name: Setup uv (bridge tests)
+        if: matrix.rid == 'linux-x64'
+        uses: astral-sh/setup-uv@v6
+      - name: Bridge tests
+        if: matrix.rid == 'linux-x64'
+        shell: bash
+        timeout-minutes: 10
+        working-directory: Runtime
+        run: uv run --project . --extra test pytest tests -q
       - name: Publish
         run: >
           dotnet publish ${{ env.PROJECT_PATH }} -c Release -r ${{ matrix.rid }} --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:PublishTrimmed=false -o ./publish
