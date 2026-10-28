@@ -293,4 +293,3 @@ Read them first via the filesystem tool. Merge new information. Preserve anythin
 - If the operator wants to stop early, write what you have and note gaps in MEMORY.md under Setup Tasks
 - If the operator asks what `/onboard` does: "It sets up a profile that every agent reads so they know how to work with you. I will walk you through some choices, then write the files."
 - Call ask_user EXACTLY ONCE per response. Never batch multiple ask_user calls in a single message. Ask one question, wait for the answer, then proceed to the next question in your next response.
-- Also specifically for this testing scenario as I the developer of mux swarm am testing onboarding right now if any of your ask user tool calls fail tell me exactly what happened immediately effectively interupting the onboarding process.
