@@ -33,6 +33,91 @@ public sealed class ExtensionTuiStyleTests : IDisposable
     private static string Plain(string markup) => TuiMarkup.Plain(markup);
 
     [Fact]
+    public void ToolRow_DefaultIsMergedWithAnInlineArrow()
+    {
+        ExtensionRegistry.Load(null);
+        var rows = TuiComponents.ToolCallResultMerged("shell", null, "Status: completed", false, false).Select(Plain).ToList();
+        Assert.Equal("  \u25cf shell  \u2192 Status: completed", Assert.Single(rows));
+    }
+
+    [Fact]
+    public void ToolRow_ThemeThatSetsOnlyResult_KeepsItsGlyphInline()
+    {
+        AddExtension("arc", """{ "tui": { "regions": { "toolCard": { "result": "\u2570" } } } }""");
+        Assert.Empty(LoadEnabled().Problems);
+        Assert.Contains("  \u2570 ok", Plain(TuiComponents.ToolCallResultMerged("shell", null, "ok", false, false)[0]));
+        AddExtension("arrow", """{ "tui": { "regions": { "toolCard": { "resultInline": "=>" } } } }""");
+        Assert.Empty(LoadEnabled().Problems);
+        Assert.Contains("  => ok", Plain(TuiComponents.ToolCallResultMerged("shell", null, "ok", false, false)[0]));   // explicit inline wins
+    }
+
+    [Theory]
+    [InlineData("bullet", "  \u25cf shell", "    \u23bf Status: completed (+2 lines, ctrl+e expand)")]
+    [InlineData("gutter", "  \u250a \u25cf shell", "  \u250a   \u23bf Status: completed (+2 lines, ctrl+e expand)")]
+    [InlineData("box", "  \u2595 \u25cf shell \u258f", "  \u2595   \u23bf Status: completed (+2 lines, ctrl+e expand) \u258f")]
+    public void ToolRow_Stacked_PutsTheResultUnderTheCall(string style, string callRow, string resultRow)
+    {
+        AddExtension("stack", $$"""{ "tui": { "regions": { "toolCard": { "layout": "stacked", "style": "{{style}}" } } } }""");
+        Assert.Empty(LoadEnabled().Problems);
+        var rows = TuiComponents.ToolCallResultMerged("shell", null, "Status: completed\na\nb", false, true).Select(Plain).ToList();
+        Assert.Equal([callRow, resultRow], rows);
+        // A call with no result text stays one row in either layout.
+        Assert.Single(TuiComponents.ToolCallResultMerged("shell", null, "", false, false));
+    }
+
+    [Fact]
+    public void ToolRow_Stacked_FailureKeepsItsGlyphAndTag()
+    {
+        AddExtension("stack", """{ "tui": { "regions": { "toolCard": { "layout": "stacked" } } } }""");
+        Assert.Empty(LoadEnabled().Problems);
+        var rows = TuiComponents.ToolCallResultMerged("shell", null, "STDERR: boom", true, false).Select(Plain).ToList();
+        Assert.Equal("  \u2717 shell failed", rows[0]);
+        Assert.Equal("    \u23bf STDERR: boom", rows[1]);
+    }
+
+    private sealed class RecordingTerminal : ITuiTerminal
+    {
+        private readonly System.Text.StringBuilder _sb = new();
+        public int Width { get; set; } = 80;
+        public int Height { get; set; } = 30;
+        public void Write(string s) => _sb.Append(s);
+        public void Flush() { }
+        public string Output => _sb.ToString();
+    }
+
+    [Fact]
+    public void ToolRow_Stacked_ResultRowIsTheExpandableEntryInTheDriver()
+    {
+        AddExtension("stack", """{ "tui": { "regions": { "toolCard": { "layout": "stacked" } } } }""");
+        Assert.Empty(LoadEnabled().Problems);
+        var term = new RecordingTerminal();
+        var d = new TuiDriver(term);
+        d.SetFooter(0, 0, false, false, false);
+        d.SetCollapseThreshold(3);
+        d.BeginToolCall("read_file", "big.txt");
+        d.ResolveMergedToolResult(string.Join("\n", Enumerable.Range(1, 20).Select(i => $"line {i}")));
+        d.FlushSettlingResult();
+
+        var entries = ((System.Collections.IEnumerable)typeof(TuiDriver).GetField("_transcript",
+            System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic)!.GetValue(d)!).Cast<object>().ToList();
+        string Row(object e) => Plain((string)e.GetType().GetField("Collapsed")!.GetValue(e)!);
+        bool IsExpandable(object e) => e.GetType().GetField("Expandable")!.GetValue(e) is not null;
+        Assert.Contains("read_file", Row(entries[^2]));
+        Assert.False(IsExpandable(entries[^2]));
+        Assert.StartsWith("    \u23bf line 1", Row(entries[^1]));
+        Assert.True(IsExpandable(entries[^1]));
+        Assert.True(d.ExpandLatestInline());                        // Ctrl+E opens the result
+        Assert.Contains("line 20", term.Output);
+    }
+
+    [Fact]
+    public void ToolRow_UnknownLayout_IsAProblem()
+    {
+        AddExtension("bad", """{ "tui": { "regions": { "toolCard": { "layout": "sideways" } } } }""");
+        Assert.NotEmpty(LoadEnabled().Problems);
+    }
+
+    [Fact]
     public void UserMessageBubble_OutlinesTheMessage_WithinTheWidth()
     {
         AddExtension("bub", """{ "tui": { "regions": { "userMessage": { "style": "bubble" } } } }""");

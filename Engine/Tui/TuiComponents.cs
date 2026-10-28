@@ -158,6 +158,11 @@ internal static class TuiComponents
     private static string CardErr => $"[{RegionStyle.Color("toolCard.errorFg")}]{RegionStyle.Glyph("toolCard.error")}[/]";
     private static string CardLabel => RegionStyle.Color("toolCard.labelFg");
     private static string CardResult => $"[{Dim}]{RegionStyle.Glyph("toolCard.result")}[/]";
+    // The result on the SAME row as its tool (merged line) reads as a continuation, so it gets an arrow; the hook
+    // glyph above only reads right on its own row under the call. A theme that styled only toolCard.result keeps
+    // that glyph inline too.
+    private static string CardResultInline => $"[{Dim}]{RegionStyle.Glyph(
+        RegionStyle.IsSet("toolCard.resultInline") || !RegionStyle.IsSet("toolCard.result") ? "toolCard.resultInline" : "toolCard.result")}[/]";
     private static string CardBand => Bg(RegionStyle.Color("toolCard.bg"));
 
     /// <summary>True if <paramref name="s"/> already begins with a Braille spinner glyph
@@ -475,10 +480,34 @@ internal static class TuiComponents
             ? CardErr
             : (frame >= 0 ? PulsingDot(frame, okFg, CardDot) : $"[{okFg}]{CardDot}[/]");
         string failTag = error ? $" [{RegionStyle.Color("toolCard.errorFg")}]failed[/]" : "";
-        string resultPart = first.Length > 0
-            ? $"  {CardResult} [{Muted}]{Esc(first)}[/]{moreHint}"
-            : "";
-        return ToolLine(glyph, $"[{CardLabel}]{Esc(tool)}[/]{hint}{failTag}{resultPart}");
+        string head = $"[{CardLabel}]{Esc(tool)}[/]{hint}{failTag}";
+        if (first.Length == 0) return ToolLine(glyph, head);
+        string result = $"[{Muted}]{Esc(first)}[/]{moreHint}";
+        // toolCard.layout: "merged" (default) keeps the result on the call's row after an inline arrow; "stacked"
+        // puts it on its own row under the call, led by the result hook, which then stems from the call above.
+        if (RegionStyle.Choice("toolCard.layout") == "stacked")
+            return [ToolLine(glyph, head)[0], ResultLine($"{CardResult} {result}")];
+        return ToolLine(glyph, $"{head}  {CardResultInline} {result}");
+    }
+
+    /// <summary>
+    /// The result row of a stacked tool card: the same left prefix as <see cref="ToolLine"/> for the current
+    /// <c>toolCard.style</c> (so gutter/box rails continue down), then the body indented under the call's label.
+    /// </summary>
+    private static string ResultLine(string body)
+    {
+        switch (RegionStyle.Choice("toolCard.style"))
+        {
+            case "gutter":
+                return $"  [{RegionStyle.Color("toolCard.railFg")}]{RegionStyle.Glyph("toolCard.gutter")}[/]   {body}";
+            case "box":
+            {
+                string rail = RegionStyle.Color("toolCard.railFg");
+                return $"  [{rail}]{RegionStyle.Glyph("toolCard.boxLeft")}[/]   {body} [{rail}]{RegionStyle.Glyph("toolCard.boxRight")}[/]";
+            }
+            default:
+                return $"    {body}";
+        }
     }
 
     /// <summary>Collapsed one-line tool result (Claude-Code style: first line + "(+N lines)").</summary>
