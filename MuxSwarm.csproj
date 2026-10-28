@@ -30,7 +30,8 @@
 
     <ItemGroup>
 
-        <Content Include="Runtime\**\*.*">
+        <!-- Bridge dev artifacts (uv venv, tests, caches) stay out of builds and releases. -->
+        <Content Include="Runtime\**\*.*" Exclude="Runtime\.venv\**;Runtime\tests\**;Runtime\**\__pycache__\**;Runtime\.pytest_cache\**;Runtime\uv.lock">
             <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
             <CopyToPublishDirectory>Always</CopyToPublishDirectory>
         </Content>

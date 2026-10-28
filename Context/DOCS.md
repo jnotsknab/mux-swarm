@@ -455,7 +455,9 @@ Bot tokens and secrets should be set as environment variables in the operator's 
 
 ## Bridge Setup
 
-Three bridges ship under `Runtime/`:
+Three bridges ship under `Runtime/`. Each runs with `uv run --project Runtime Runtime/<name>_bridge.py`. Voice
+transcription (Whisper) is an optional extra: add `--extra voice` before the script path to install it. Bridge tests:
+`uv run --project Runtime --extra test pytest Runtime/tests`.
 
 ### Telegram
 
