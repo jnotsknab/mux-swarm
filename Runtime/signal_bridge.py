@@ -18,7 +18,7 @@ Environment:
   WHISPER_MODEL        tiny | base | small | medium | large | turbo (voice extra only; default base)
 
 Access: only ALLOWED_NUMBERS, paired senders, and your own "Note to Self" are answered. To pair another number, send
-`/pair <code>` with the one-time code from the bridge log.
+`/pair <code>` with the one-time code Mux shows when the bridge starts (also in /logs).
 """
 
 from __future__ import annotations
@@ -542,7 +542,7 @@ def main(argv: Optional[list[str]] = None, stop: Optional[threading.Event] = Non
         if text.lower().startswith("/pair"):
             ok = access.is_allowed(msg.sender) or access.try_pair(msg.sender, text[5:])
             api.send(msg.sender, "Paired. You can now talk to Mux here." if ok else
-                     "That code didn't match. Check the Mux bridge log for the current code.")
+                     "That code didn't match. The current code is shown in Mux (notice, or /logs).")
             return
         if not access.is_allowed(msg.sender):
             log.info("ignored message from unpaired sender")
