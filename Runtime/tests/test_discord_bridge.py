@@ -73,6 +73,10 @@ def test_many_choices_and_multiselect_become_numbered_lists():
 
 # --- rendering ------------------------------------------------------------------------------------------------------
 
+def test_link_labels_and_bracketed_words_survive():
+    assert db.render_discord("see [docs](https://x.y) and [note] [bold]b[/]") == "see [docs](https://x.y) and [note] b"
+
+
 def test_render_tables_headings_and_markup():
     md = "#### Deep\n| A | B |\n|---|---|\n| x | yy |\n[bold]hi[/] \x1b[31mred\x1b[0m"
     assert db.render_discord(md) == "### Deep\n```\nA  B\n-  --\nx  yy\n```\nhi red"
