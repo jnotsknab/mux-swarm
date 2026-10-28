@@ -18,7 +18,7 @@ Environment:
   WHISPER_MODEL        tiny | base | small | medium | large | turbo (voice extra only; default base)
 
 Access: by default only users in ALLOWED_USER_IDS or paired users are answered. To pair, look for the one-time code
-in the bridge log and send `/pair <code>` to the bot (DM or the channel).
+Mux shows when the bridge starts (also in /logs) and send `/pair <code>` to the bot (DM or the channel).
 """
 
 from __future__ import annotations
@@ -555,13 +555,13 @@ def main(argv: Optional[list[str]] = None) -> int:
             elif access.try_pair(message.author.id, code):
                 await message.reply("Paired. You can now talk to Mux here.", allowed_mentions=no_pings)
             else:
-                await message.reply("That code didn't match. Check the Mux bridge log for the current code.",
+                await message.reply("That code didn't match. The current code is shown in Mux (notice, or /logs).",
                                     allowed_mentions=no_pings)
             return
         if not access.is_allowed(message.author.id):
             if is_dm:
                 await message.reply("This bot is private. If it's yours, send /pair <code> with the code shown in "
-                                    "the Mux bridge log.", allowed_mentions=no_pings)
+                                    "Mux (a notice when the bridge starts, also in /logs).", allowed_mentions=no_pings)
             return
         if text.lower() == "/stop":
             link.send("__CANCEL__")

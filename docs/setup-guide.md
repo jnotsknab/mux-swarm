@@ -300,7 +300,7 @@ different Whisper model, set `WHISPER_MODEL` in the bridge's `env` block (`tiny`
 
 **Telegram:** Set `ALLOWED_CHAT_IDS` as a comma-separated list of Telegram chat IDs. Empty means open access. Get your chat ID by sending `/start` to the bot.
 
-**Discord:** Closed by default. Pair with `/pair <code>` (one-time code in the bridge log) in a DM to the bot or the channel in `DISCORD_CHANNEL_ID`, or list user IDs in `ALLOWED_USER_IDS`. `MUX_BRIDGE_ALLOW_ALL=1` opens it to everyone (not recommended).
+**Discord:** Closed by default. Pair with `/pair <code>` (the one-time code Mux shows when the bridge starts; also in `/logs`) in a DM to the bot or the channel in `DISCORD_CHANNEL_ID`, or list user IDs in `ALLOWED_USER_IDS`. `MUX_BRIDGE_ALLOW_ALL=1` opens it to everyone (not recommended).
 
 **Signal:** Set `ALLOWED_NUMBERS` as a comma-separated list of E.164 phone numbers (e.g. `+15551234567,+15559876543`). Empty means open access.
 
