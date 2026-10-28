@@ -551,9 +551,9 @@ public sealed class DaemonRunner : IAsyncDisposable
                         WorkingDirectory = PlatformContext.BaseDirectory
                     };
 
-                    //handle expected defaults  
-                    if (!psi.EnvironmentVariables.ContainsKey("MUX_WS_URL"))
-                        psi.EnvironmentVariables["MUX_WS_URL"] = $"ws://localhost:{App.ServePort}/ws";
+                    // Defaults a bridge needs to reach /ws: the address serve actually bound (not always localhost)
+                    // and, when serve.auth is on, the token. A trigger's own env (merged below) wins.
+                    BridgeEnvDefaults(psi.EnvironmentVariables, App.Config.ServeAddress, App.ServePort, App.Config.Serve?.Auth);
 
                     // Merge env vars from trigger
                     if (trigger.Env is { Count: > 0 })
@@ -629,6 +629,18 @@ public sealed class DaemonRunner : IAsyncDisposable
         {
             MuxConsole.WriteError($"[Daemon:{trigger.Id}] Bridge loop fatal: {ex.Message}");
         }
+    }
+
+    /// <summary>
+    /// Fill <c>MUX_WS_URL</c> (reachable bound address) and, when <c>serve.auth</c> resolves a token, <c>MUX_SERVE_TOKEN</c>
+    /// into a bridge's environment, unless already present.
+    /// </summary>
+    internal static void BridgeEnvDefaults(System.Collections.Specialized.StringDictionary env, string? serveAddress, int port, ServeAuthConfig? auth)
+    {
+        if (!env.ContainsKey("MUX_WS_URL"))
+            env["MUX_WS_URL"] = ServeMode.LocalWsUrl(serveAddress, port);
+        if (!env.ContainsKey("MUX_SERVE_TOKEN") && ServeMode.ResolvedAuthToken(auth) is { } token)
+            env["MUX_SERVE_TOKEN"] = token;
     }
 
     private static async Task PipeLogs(string id, StreamReader reader, string prefix, CancellationToken ct)
