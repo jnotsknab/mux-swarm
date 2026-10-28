@@ -311,7 +311,7 @@ different Whisper model, set `WHISPER_MODEL` in the bridge's `env` block (`tiny`
 
 **Discord:** Closed by default. Pair with `/pair <code>` (the one-time code Mux shows when the bridge starts; also in `/logs`) in a DM to the bot or the channel in `DISCORD_CHANNEL_ID`, or list user IDs in `ALLOWED_USER_IDS`. `MUX_BRIDGE_ALLOW_ALL=1` opens it to everyone (not recommended).
 
-**Signal:** Closed by default: your own Note to Self always works; other numbers must be listed in `ALLOWED_NUMBERS` (E.164, comma-separated) or pair with `/pair <code>` (one-time code in the bridge log). `MUX_BRIDGE_ALLOW_ALL=1` opens it to everyone (not recommended).
+**Signal:** Closed by default: your own Note to Self always works; other numbers must be listed in `ALLOWED_NUMBERS` (E.164, comma-separated) or pair with `/pair <code>` (the one-time code Mux shows when the bridge starts; also in `/logs`). `MUX_BRIDGE_ALLOW_ALL=1` opens it to everyone (not recommended).
 
 ## Serve Layer: Editor & Auth (Optional)
 

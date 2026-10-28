@@ -573,7 +573,7 @@ Link via QR code at `http://localhost:8080/v1/qrcodelink?device_name=mux-swarm`.
 ```
 
 - **Closed by default:** your own **Note to Self** always works; other numbers must be in `ALLOWED_NUMBERS` or pair with
-  `/pair <code>` (one-time code from the bridge log). Group chats are ignored.
+  `/pair <code>` (the one-time code Mux shows when the bridge starts; also in `/logs`). Group chats are ignored.
 - **Questions** come as numbered lists (Signal has no buttons): reply with a number, numbers for multi-select, yes/no
   for confirms, your own text when the prompt allows it, or `/cancel`. Secret prompts are refused.
 - **Rendering:** styled text (bold, italic, strikethrough, monospace); code and tables as monospace lines; links as
