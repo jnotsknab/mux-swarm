@@ -468,6 +468,24 @@ IMPORTANT: The `type` field MUST be `bridge`. Not `discord_bridge`, not `telegra
 
 Bot tokens and secrets should be set as environment variables in the operator's shell, not in config.
 
+## Onboarding (`/onboard`)
+
+`/onboard` runs a guided session (prompt: `Context/ONBOARD.md`) that learns how the user works and **applies the
+setup they confirm**, instead of only writing notes. `/setup` offers it at the end (default yes).
+
+- **Backup first:** before the session starts, Mux copies Config.json, Swarm.json, BRAIN.md and MEMORY.md (those that
+  exist) to `Configs/.onboard-backup-<utc timestamp>/` with a `manifest.tsv`. `/onboard undo` restores the newest
+  backup (files created later are left alone); then `/refresh`. If the backup fails, onboarding does not start.
+- **Flow:** detect (OS, toolchains, language servers, container runtime, Tailscale, existing config; discovered by
+  the agent with the platform's own commands, nothing hardcoded) -> a posture preset (Collaborative / Hands-on /
+  Delegator / Away) that only pre-fills settings -> interfaces (web UI bind + auth, Zed, desktop, phone bridge) ->
+  models -> agents, MCP and `lsp` -> memory -> optional shell-guard extension, custom extensions and a personal theme
+  -> one change plan per file -> apply -> refresh -> verify -> summary.
+- **Rules it follows:** nothing the user didn't choose is imposed (no forced sandbox); config keys come from this
+  file; secrets go to user env vars referenced as `${NAME}`; it uses only the tools the onboarding agent (the
+  `singleAgent`) actually has and lists the rest as steps for the user.
+- The session uses the normal agent turn budget (15 rounds). Prompt token `{{paths.docs}}` resolves to this file.
+
 ## Bridge Setup
 
 Three bridges ship under `Runtime/`. Each runs with `uv run --project Runtime Runtime/<name>_bridge.py`. Voice

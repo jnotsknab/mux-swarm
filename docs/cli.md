@@ -173,7 +173,8 @@ Available at the top-level REPL.
 | `/createteam` | Guided wizard to define a team (lead, members, coordination, parallelism) |
 | `/createhook [id]` | Guided wizard: scaffold a hook, an outbound webhook, or an inbound webhook |
 | `/hooks (on\|off\|create)` | Hooks status / toggle / create |
-| `/onboard` | Create or update your operator profile (BRAIN.md + MEMORY.md) |
+| `/onboard` | Guided setup: learns how you work and applies the config you confirm (profile, security posture, interfaces, bridges, models, LSP, extensions, theme) |
+| `/onboard undo` | Restore Config.json, Swarm.json, BRAIN.md, MEMORY.md from the backup taken when onboarding started |
 
 **Toggles and configuration**
 
