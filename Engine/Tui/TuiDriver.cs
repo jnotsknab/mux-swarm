@@ -1717,8 +1717,11 @@ internal sealed partial class TuiDriver
         bool retain = s.Expandable || clippedLine;
         if (retain && merged.Count > 0)
         {
-            RetainExpandable(merged[0], toolName, s.ExpandBody ?? s.Result, s.Error);
-            for (int k = 1; k < merged.Count; k++) AddTranscriptEntry(new Entry { Collapsed = merged[k] });
+            // The expandable entry is the row that carries the result: the single merged row, or the last row
+            // (the result under the call) in the stacked toolCard.layout. Rows above it are plain entries.
+            int expandRow = merged.Count - 1;
+            for (int k = 0; k < expandRow; k++) AddTranscriptEntry(new Entry { Collapsed = merged[k] });
+            RetainExpandable(merged[expandRow], toolName, s.ExpandBody ?? s.Result, s.Error);
             TrimTranscript();
             if (!_navActive) CommitPaint(merged);
         }

@@ -42,9 +42,9 @@ internal static class RegionStyle
         ["toast.mark"] = G("\u25c6"), ["toast.markFg"] = C("accent"), ["toast.fg"] = C("muted"),
         ["divider.glyph"] = G("\u2502"), ["divider.fg"] = C("muted"), ["divider.activeFg"] = C("accent"),
         ["scrollbar.thumb"] = G("\u2588"), ["scrollbar.track"] = G("\u2502"), ["scrollbar.thumbFg"] = C("accent"), ["scrollbar.trackFg"] = C("muted"),
-        ["toolCard.dot"] = G("\u25cf"), ["toolCard.ok"] = G("\u2713"), ["toolCard.error"] = G("\u2717"), ["toolCard.result"] = G("\u23bf"),
+        ["toolCard.dot"] = G("\u25cf"), ["toolCard.ok"] = G("\u2713"), ["toolCard.error"] = G("\u2717"), ["toolCard.result"] = G("\u23bf"), ["toolCard.resultInline"] = G("\u2192", 2),
         ["toolCard.rail"] = G("\u2502"), ["toolCard.pendingFg"] = C("warning"), ["toolCard.okFg"] = C("success"), ["toolCard.errorFg"] = C("error"),
-        ["toolCard.style"] = O("bullet", "gutter", "box"), ["toolCard.gutter"] = G("\u250a"),
+        ["toolCard.style"] = O("bullet", "gutter", "box"), ["toolCard.gutter"] = G("\u250a"), ["toolCard.layout"] = O("merged", "stacked"),
         ["toolCard.boxLeft"] = G("\u2595"), ["toolCard.boxRight"] = G("\u258f"),
         ["toolCard.labelFg"] = C("accent"), ["toolCard.railFg"] = C("#3A3A3A"), ["toolCard.bg"] = C("cardBg"),
         ["diff.rail"] = G("\u2502"), ["diff.railFg"] = C("#3A3A3A"), ["diff.addFg"] = C("success"), ["diff.delFg"] = C("error"), ["diff.ctxFg"] = C("#A0A0A0"),
@@ -96,7 +96,7 @@ internal static class RegionStyle
     {
         ["notice.okMark"] = "+", ["header.mark"] = "|", ["userMessage.bar"] = "|", ["agentHeader.mark"] = ">", ["agentHeader.rule"] = "-",
         ["answer.lead"] = "*", ["toast.mark"] = "*", ["divider.glyph"] = "|", ["scrollbar.thumb"] = "#", ["scrollbar.track"] = "|",
-        ["toolCard.dot"] = "*", ["toolCard.ok"] = "+", ["toolCard.error"] = "x", ["toolCard.result"] = "-", ["toolCard.rail"] = "|",
+        ["toolCard.dot"] = "*", ["toolCard.ok"] = "+", ["toolCard.error"] = "x", ["toolCard.result"] = "-", ["toolCard.resultInline"] = "->", ["toolCard.rail"] = "|",
         ["diff.rail"] = "|", ["diff.corner"] = "+", ["diff.end"] = "+", ["diff.line"] = "-",
         ["delegation.arrow"] = ">", ["delegation.branch"] = "`", ["delegation.mark"] = ">", ["delegation.done"] = "+", ["delegation.failed"] = "x",
         ["footer.separator"] = "|", ["footer.rule"] = "-", ["input.prompt"] = ">", ["input.continuation"] = "|", ["input.rail"] = "|",
@@ -146,6 +146,9 @@ internal static class RegionStyle
     /// <summary>Overridden glyphs that lead a transcript row (bars and marks), for clipboard and hang-indent rules.</summary>
     internal static IEnumerable<string> LeadGlyphs(params string[] keys) =>
         keys.Where(_overrides.ContainsKey).Select(Raw);
+
+    /// <summary>True when an extension (or a glyph set) overrides <paramref name="key"/>.</summary>
+    internal static bool IsSet(string key) => _overrides.ContainsKey(key);
 
     private static string Raw(string key) =>
         _overrides.TryGetValue(key, out var v) ? v : Props.TryGetValue(key, out var p) ? p.Default

@@ -1281,8 +1281,13 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   - `reasoning`: `fg`, `italic` (true/false). Also applies in the classic console.
   - `toast`: `mark` (`◆`), `markFg`, `fg`.
   - `divider` (side-pane divider): `glyph`, `fg`, `activeFg` (while dragging). `scrollbar`: `thumb`, `track`, `thumbFg`, `trackFg`.
-  - `toolCard` (tool calls, results, expanded cards, live panels): `dot` (running/done), `ok`, `error`, `result` (`⎿`),
-    `rail`, `pendingFg`, `okFg`, `errorFg`, `labelFg`, `railFg`, `bg` (card fill; off with content backgrounds off).
+  - `toolCard` (tool calls, results, expanded cards, live panels): `dot` (running/done), `ok`, `error`, `result` (`⎿`, a
+    result on its own row under the call), `resultInline` (`→`, 1-2 cells, a result on the call's row; when a theme
+    sets only `result`, that glyph is used inline too), `rail`, `pendingFg`, `okFg`, `errorFg`, `labelFg`, `railFg`,
+    `bg` (card fill; off with content backgrounds off).
+  - `toolCard.layout`: `merged` (default; one row, `● tool  → result`) or `stacked` (the result on its own row:
+    `● tool` then `⎿ result` under it; Ctrl+E expands the result row). Set it for yourself in `console.tui`:
+    `"console": { "tui": { "regions": { "toolCard": { "layout": "stacked" } } } }`.
   - `diff`: `rail`, `railFg`, `addFg`, `delFg`, `ctxFg`, `addBg`, `delBg`, `hunkBg`, `gutterFg`.
   - `delegation` (delegations, sub-agent rows): `arrow` (`→`), `branch` (`└`), `mark` (`▸`), `done`, `failed`, `fg`.
   - `thinking` (the working line and live sub-agent status): `fg`. Frames and quips stay in `thinking` at the top level.

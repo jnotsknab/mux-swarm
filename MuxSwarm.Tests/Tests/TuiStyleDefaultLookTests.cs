@@ -163,7 +163,10 @@ public class TuiStyleDefaultLookTests
     {
         string output = RenderCards();
         Assert.Contains("diff", output);
-        Assert.Equal("6C50EBF1B6D3DEAF", Hash(output));
+        // Re-recorded on feat/tui-tool-row-layout: the three merged tool rows now separate the result with the
+        // inline arrow (toolCard.resultInline, "\u2192") instead of "\u23bf"; every other row is unchanged
+        // (previous reference 6C50EBF1B6D3DEAF, verified on 8af6020 before the change).
+        Assert.Equal("3334B091627C7B2D", Hash(output));
     }
 
     /// <summary>Every region T3 styles: palettes, modal, picker rules, dock tabs + side pane, splash.</summary>
