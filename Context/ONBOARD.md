@@ -130,10 +130,10 @@ Read `## Bridge Setup` and `### bridge` in DOCS.md first. For the platform they 
    env var; you never see or store it.
 3. Add the `bridge` trigger to `daemon.triggers` exactly as DOCS.md shows (add `--extra voice` only if they want
    voice notes). Mux passes the `/ws` URL and serve token to the bridge automatically.
-4. Bridges are closed by default. After the daemon starts the bridge, the one-time pairing code is in the bridge
-   log; they send `/pair <code>` from their phone. (Allowlist env vars work too.)
-5. Test: they send a message from the phone and confirm the reply arrived. If something fails, check the bridge log
-   lines and DOCS.md before guessing.
+4. Bridges are closed by default. When the daemon starts the bridge, Mux shows its one-time pairing code as a notice
+   (also in `/logs`); they send `/pair <code>` from their phone. (Allowlist env vars work too.)
+5. Test: they send a message from the phone and confirm the reply arrived. If something fails, read the `[Bridge:<id>]`
+   lines in `/logs` (bridge output goes there, not to the screen) and DOCS.md before guessing.
 
 ## Output files
 
