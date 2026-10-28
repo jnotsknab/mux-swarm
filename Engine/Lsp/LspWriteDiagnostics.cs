@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
@@ -30,6 +31,11 @@ internal static class LspWriteDiagnostics
     private static readonly ConcurrentDictionary<Call, byte> InFlight = new();
     private static readonly ConcurrentDictionary<string, byte> Orphans = new(PathComparer);
 
+    // Content fingerprint of each file at its last clean/errors report. The watcher also sees a write the file
+    // tool already reported, and that event can land after the call ended; without this it was repeated on the
+    // next, unrelated result (an async shell call read as "no errors" before it had written anything).
+    private static readonly ConcurrentDictionary<string, string> Reported = new(PathComparer);
+
     /// <summary>True when post-edit diagnostics are on.</summary>
     internal static bool Enabled => LspManager.Active && LspManager.Config().DiagnosticsOnWrite;
 
@@ -43,7 +49,7 @@ internal static class LspWriteDiagnostics
     }
 
     /// <summary>Forget pending changes (tests, <c>/refresh</c>).</summary>
-    internal static void Reset() { Orphans.Clear(); InFlight.Clear(); }
+    internal static void Reset() { Orphans.Clear(); InFlight.Clear(); Reported.Clear(); }
 
     /// <summary>
     /// Function invoker: runs the tool through <paramref name="inner"/> (or directly), then appends the
@@ -56,22 +62,34 @@ internal static class LspWriteDiagnostics
         var call = new Call();
         InFlight[call] = 0;
         object? result;
+        var own = new HashSet<string>(PathComparer);
         try
         {
             result = inner != null ? await inner(ctx, ct) : await ctx.Function.InvokeAsync(ctx.Arguments, ct);
             foreach (var p in ArgPaths(ctx))
-                if (LspManager.ServerFor(p) is not null) call.Dirty[p] = 0;
+                if (LspManager.ServerFor(p) is not null) { call.Dirty[p] = 0; own.Add(p); }
             if (NativeTools.NativeToolRegistry.VirtualServer(ctx.Function.Name) == NativeTools.NativeToolRegistry.ShellServer)
                 await Task.Delay(ShellSettle, ct);
         }
         finally { InFlight.TryRemove(call, out _); }
         foreach (var p in Orphans.Keys)
             if (Orphans.TryRemove(p, out _)) call.Dirty[p] = 0;
-        if (call.Dirty.IsEmpty) return result;
+        // Files this tool wrote itself are always reported; watcher-seen ones only when their content changed
+        // since their last report.
+        var paths = call.Dirty.Keys.Where(p => File.Exists(p) && (own.Contains(p) || !AlreadyReported(p))).ToList();
+        if (paths.Count == 0) return result;
         string block;
-        try { block = await ReportAsync(call.Dirty.Keys.Where(File.Exists).ToList(), call.Started, ct); }
+        try { block = await ReportAsync(paths, call.Started, ct); }
         catch (OperationCanceledException) when (!ct.IsCancellationRequested) { return result; }
         return block.Length == 0 ? result : Append(result, block);
+    }
+
+    private static bool AlreadyReported(string path) => Reported.TryGetValue(path, out var fp) && fp == Fingerprint(path);
+
+    private static string? Fingerprint(string path)
+    {
+        try { return Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path))); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
     // The native file tools that write say which file they wrote; no need to wait for the watcher.
@@ -98,8 +116,10 @@ internal static class LspWriteDiagnostics
         {
             var (client, languageId, why) = await LspManager.ClientForAsync(path, ct);
             if (client is null) return (path, client, Text: (string?)null, Pending: false, Why: why);
+            var fingerprint = Fingerprint(path);   // the content the server is about to check
             var version = await client.SyncAsync(path, languageId);
             var diags = await LspDiagnostics.WaitAsync(client, LspUri.FromPath(path), version, budget, ct);
+            if (diags is not null && fingerprint is not null) Reported[path] = fingerprint;   // pending stays reportable
             return (path, client, Text: diags is { } d ? LspDiagnostics.Format(path, d, MaxErrorsPerFile, errorsOnly: true) : null, Pending: diags is null, Why: why);
         }));
 
