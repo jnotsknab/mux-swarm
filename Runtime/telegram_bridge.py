@@ -17,7 +17,7 @@ Environment:
   WHISPER_MODEL        tiny | base | small | medium | large | turbo (voice extra only; default base)
 
 Access: by default only chats in ALLOWED_CHAT_IDS or paired chats are answered. To pair, look for the one-time
-code in the bridge log (or `/daemon` output) and send `/pair <code>` to the bot from your phone.
+code Mux shows when the bridge starts (also in /logs) and send `/pair <code>` to the bot from your phone.
 """
 
 from __future__ import annotations
@@ -581,7 +581,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             return True
         if update.message:
             await update.message.reply_text("This bot is private. If it's yours, send /pair <code> with the code "
-                                            "shown in the Mux bridge log.")
+                                            "shown in Mux (a notice when the bridge starts, also in /logs).")
         log.info("ignored message from unpaired chat %s", chat.id)
         return False
 
@@ -600,7 +600,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         elif access.try_pair(update.effective_chat.id, code):
             await update.message.reply_text("Paired. You can now talk to Mux here.")
         else:
-            await update.message.reply_text("That code didn't match. Check the Mux bridge log for the current code.")
+            await update.message.reply_text("That code didn't match. The current code is shown in Mux (notice, or /logs).")
 
     async def on_start(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if await guard(update):

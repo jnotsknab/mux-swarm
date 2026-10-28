@@ -477,7 +477,7 @@ Optional: `ALLOWED_CHAT_IDS` (comma-separated), `MUX_BRIDGE_ALLOW_ALL=1` (let an
 ```
 
 - **Access is closed by default.** Unknown chats get a "this bot is private" reply. To add your phone, find the
-  one-time pairing code in the bridge log (`[Bridge:telegram-bridge:ERR] ... Pairing code: XXXXXX`) and send
+  one-time pairing code Mux shows when the bridge starts (`[telegram-bridge] pairing code: XXXXXX`; also in `/logs`) and send
   `/pair XXXXXX` to the bot. Paired chats are remembered across restarts.
 - **Questions come as buttons:** `ask_user`, approvals and confirms show as Telegram buttons ("Type my own" and
   "Cancel" when the prompt allows them); multi-select takes numbers (`1,3`); text prompts take your next message.

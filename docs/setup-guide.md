@@ -298,7 +298,7 @@ different Whisper model, set `WHISPER_MODEL` in the bridge's `env` block (`tiny`
 
 ### Restricting Access
 
-**Telegram:** Closed by default. Pair your phone by sending `/pair <code>` to the bot, using the one-time code printed in the bridge log; or list chat IDs in `ALLOWED_CHAT_IDS`. `MUX_BRIDGE_ALLOW_ALL=1` opens the bot to any chat (not recommended: it drives agents that can run commands).
+**Telegram:** Closed by default. Pair your phone by sending `/pair <code>` to the bot, using the one-time code Mux shows when the bridge starts (also in `/logs`); or list chat IDs in `ALLOWED_CHAT_IDS`. `MUX_BRIDGE_ALLOW_ALL=1` opens the bot to any chat (not recommended: it drives agents that can run commands).
 
 **Discord:** The bot only responds in the channel specified by `DISCORD_CHANNEL_ID`.
 
