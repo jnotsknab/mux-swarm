@@ -75,6 +75,24 @@ public sealed class LspWriteDiagnosticsTests : IDisposable
     }
 
     [Fact]
+    public async Task LateWatcherEchoOfAReportedWrite_IsNotRepeatedOnTheNextResult()
+    {
+        // The file tool reports its own write; the watcher sees the same write and its event can arrive after that
+        // call ended. Repeating it on the next result (e.g. an async shell call still "running") read as "that
+        // command left no errors" before the command had written anything.
+        _rig.Use();
+        var f = Path.Combine(_rig.Dir, "proj", "src", "g.fake");
+        Assert.Contains("[LSP] no errors in", await Invoke(WriteTool(), ("path", f), ("content", "fine\n")));
+        LspWriteDiagnostics.OnFileChanged(f, "modified");   // the late echo of that write
+        var running = AIFunctionFactory.Create(() => "Job ID: job_1\nStatus: running", "execute_command_async");
+        Assert.Equal("Job ID: job_1\nStatus: running", await Invoke(running));
+
+        File.WriteAllText(f, "BUG later\n");   // a real change afterwards is still reported
+        LspWriteDiagnostics.OnFileChanged(f, "modified");
+        Assert.Contains("g.fake:1:1 error", await Invoke(AIFunctionFactory.Create(() => "done", "check_job_status")));
+    }
+
+    [Fact]
     public async Task ReadsAndUncoveredFiles_LeaveTheResultAlone()
     {
         _rig.Use();
