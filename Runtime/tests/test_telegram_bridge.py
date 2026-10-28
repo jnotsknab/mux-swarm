@@ -133,6 +133,10 @@ def test_render_code_fence_and_table():
     assert "<pre>Name  Size\n----  ----\na     1\nbb    22</pre>" in out
 
 
+def test_link_labels_and_bracketed_words_survive():
+    assert tb.render_html("see [docs](https://x.y) and [note]") == 'see <a href="https://x.y">docs</a> and [note]'
+
+
 def test_render_strips_terminal_markup():
     assert tb.render_html("[bold]hi[/] \x1b[31mred\x1b[0m") == "hi red"
 

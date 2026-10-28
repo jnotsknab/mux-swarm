@@ -54,7 +54,10 @@ TYPING_EVERY_SECONDS = 4.0
 # =====================================================================================================================
 
 _ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]")
-_SPECTRE_RE = re.compile(r"\[(?:/|(?:bold|dim|italic|underline|strikethrough|link|grey\d*|gray\d*|#?[0-9a-fA-F]{6}|[a-z]+\d*)(?:[ =][^\]]*)?)\]")
+# Only real Spectre console tags: [/], styles, colours (named, numbered, #hex), optional "on <colour>", link=.
+# A bare word in brackets (e.g. a Markdown link label "[docs]") is NOT markup and is kept.
+_SPECTRE_STYLE = r"(?:bold|dim|italic|underline|strikethrough|invert|blink|conceal|default|black|red|green|yellow|blue|magenta|purple|cyan|teal|white|silver|grey\d*|gray\d*|orange\d*|aqua|lime|navy|maroon|olive|fuchsia|#[0-9a-fA-F]{6}|rgb\(\d+,\d+,\d+\))"
+_SPECTRE_RE = re.compile(r"\[(?:/|link(?:=[^\]]*)?|" + _SPECTRE_STYLE + r"(?:\s+(?:" + _SPECTRE_STYLE + r"|on\s+" + _SPECTRE_STYLE + r"))*)\]")
 _FENCE_RE = re.compile(r"^```([\w+-]*)\s*$")
 _TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$")
 
