@@ -179,6 +179,9 @@ can load its login prompt. Token compare is constant-time, never logged, and nev
 returned by `/api/config` (which exposes only a boolean `authRequired`). If enabled
 but no token resolves, auth stays inactive with a warning (never silently locks out).
 
+On connect, `/ws` replays recent output (up to 500 lines) so a reopened web UI catches up. `/ws?replay=0` skips the
+replay (used by messaging bridges, which would otherwise resend old output after a reconnect).
+
 ## Self-Update & Lifecycle
 
 Mux-Swarm can update itself in place from the latest GitHub release, and restart/shut down over the
@@ -447,7 +450,7 @@ Required fields: `command`
 | `restart` | bool | Whether to restart the process if it exits |
 | `interval` | uint | Restart delay in seconds (default 30) |
 
-Behavior: starts the process with `UseShellExecute=false`, redirects stdout/stderr to daemon log with `[Bridge:id:OUT]` and `[Bridge:id:ERR]` prefixes. Working directory is set to the mux-swarm base directory. The runtime auto-injects `MUX_WS_URL` (e.g. `ws://localhost:6723/ws`) into the process environment. If the process exits and `restart` is true, waits `interval` seconds then restarts. On daemon shutdown, all bridge processes are killed with `entireProcessTree: true`.
+Behavior: starts the process with `UseShellExecute=false`, redirects stdout/stderr to daemon log with `[Bridge:id:OUT]` and `[Bridge:id:ERR]` prefixes. Working directory is set to the mux-swarm base directory. The runtime auto-injects `MUX_WS_URL` (the address serve bound, e.g. `ws://127.0.0.1:6723/ws`; loopback when bound to `0.0.0.0`) and, when `serve.auth` is on, `MUX_SERVE_TOKEN` into the process environment (a trigger's own `env` wins). Bridges should connect to `/ws?replay=0` so a reconnect does not resend old output. If the process exits and `restart` is true, waits `interval` seconds then restarts. On daemon shutdown, all bridge processes are killed with `entireProcessTree: true`.
 
 IMPORTANT: The `type` field MUST be `bridge`. Not `discord_bridge`, not `telegram_bridge`, just `bridge`. The bridge type is generic; what makes it a Telegram or Discord bridge is the `command` and `args` pointing to the appropriate Python script.
 

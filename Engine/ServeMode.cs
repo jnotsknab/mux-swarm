@@ -222,7 +222,8 @@ public static partial class ServeMode
 
         try
         {
-            // Replay buffer
+            // Replay buffer (skipped with ?replay=0: bridges that reconnect must not resend old output)
+            if (WantsReplay(context.Request.Query))
             foreach (var line in _replayBuffer.ToArray())
             {
                 if (ws.State != WebSocketState.Open) break;
@@ -592,6 +593,30 @@ public static partial class ServeMode
         else if (_authEnabled)
             MuxConsole.WriteSuccess("Serve auth enabled (bearer token required for /api and /ws).");
     }
+
+    /// <summary>
+    /// Whether a <c>/ws</c> client gets the replay buffer on connect. <c>?replay=0</c> (or <c>false</c>) skips it;
+    /// anything else, including no parameter, replays as before.
+    /// </summary>
+    internal static bool WantsReplay(IQueryCollection query) =>
+        !(query.TryGetValue("replay", out var v) && (v.ToString() == "0" || v.ToString().Equals("false", StringComparison.OrdinalIgnoreCase)));
+
+    /// <summary>
+    /// The <c>/ws</c> URL a local child process (a daemon bridge) can reach: the bound <paramref name="serveAddress"/>,
+    /// or loopback when it is a wildcard (<c>0.0.0.0</c>, <c>::</c>, <c>*</c>, <c>+</c>) or empty.
+    /// </summary>
+    internal static string LocalWsUrl(string? serveAddress, int port)
+    {
+        var host = (serveAddress ?? "").Trim();
+        if (host is "" or "0.0.0.0" or "*" or "+") host = "127.0.0.1";
+        else if (host is "::" or "[::]") host = "[::1]";
+        else if (host.Contains(':') && !host.StartsWith('[')) host = $"[{host}]";   // IPv6 literal
+        return $"ws://{host}:{port}/ws";
+    }
+
+    /// <summary>The resolved serve auth token when <c>serve.auth</c> is enabled, else null (for local bridges).</summary>
+    internal static string? ResolvedAuthToken(ServeAuthConfig? auth) =>
+        auth is { Enabled: true } && ResolveTokenValue(auth.Token) is { Length: > 0 } t ? t : null;
 
     /// <summary>Expand an env-var reference if present; otherwise return the literal.</summary>
     private static string ResolveTokenValue(string raw)
