@@ -497,13 +497,14 @@ The bot only responds in the channel specified by `DISCORD_CHANNEL_ID`. Create a
 
 ### Signal
 
-Required env vars: `SIGNAL_NUMBER` (E.164 format), `SIGNAL_API_URL`
-Optional: `WHISPER_MODEL`, `ALLOWED_NUMBERS` (comma-separated E.164)
+Required env var: `SIGNAL_NUMBER` (E.164). Optional: `SIGNAL_API_URL` (default `http://127.0.0.1:8080`),
+`ALLOWED_NUMBERS` (comma-separated E.164), `MUX_BRIDGE_ALLOW_ALL=1` (not recommended), `MUX_BRIDGE_STATE`,
+`WHISPER_MODEL` (with `--extra voice`).
 
-Requires a self-hosted signal-cli-rest-api container:
+Requires a self-hosted signal-cli-rest-api container in **json-rpc** mode (the bridge receives over its WebSocket):
 
 ```bash
-docker run -d --name signal-api -p 8080:8080 -v signal-cli-data:/home/.local/share/signal-cli bbernhard/signal-cli-rest-api
+docker run -d --name signal-api -p 8080:8080 -e MODE=json-rpc -v signal-cli-data:/home/.local/share/signal-cli bbernhard/signal-cli-rest-api
 ```
 
 Link via QR code at `http://localhost:8080/v1/qrcodelink?device_name=mux-swarm`.
@@ -514,15 +515,19 @@ Link via QR code at `http://localhost:8080/v1/qrcodelink?device_name=mux-swarm`.
   "type": "bridge",
   "command": "uv",
   "args": "run --project Runtime Runtime/signal_bridge.py",
-  "env": {
-    "SIGNAL_NUMBER": "+1XXXXXXXXXX",
-    "SIGNAL_API_URL": "http://localhost:8080",
-    "WHISPER_MODEL": "base"
-  },
+  "env": { "SIGNAL_NUMBER": "+1XXXXXXXXXX" },
   "restart": true,
   "interval": 60
 }
 ```
+
+- **Closed by default:** your own **Note to Self** always works; other numbers must be in `ALLOWED_NUMBERS` or pair with
+  `/pair <code>` (one-time code from the bridge log). Group chats are ignored.
+- **Questions** come as numbered lists (Signal has no buttons): reply with a number, numbers for multi-select, yes/no
+  for confirms, your own text when the prompt allows it, or `/cancel`. Secret prompts are refused.
+- **Rendering:** styled text (bold, italic, strikethrough, monospace); code and tables as monospace lines; links as
+  `label (url)`; messages split under 1800 characters without leaving a style open.
+- `/stop` interrupts the running agent.
 
 ## Swarm.json Structure
 

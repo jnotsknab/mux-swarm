@@ -207,6 +207,7 @@ source ~/.bashrc
 ```bash
 docker run -d --name signal-api \
   -p 8080:8080 \
+  -e MODE=json-rpc \
   -v signal-cli-data:/home/.local/share/signal-cli \
   bbernhard/signal-cli-rest-api
 ```
@@ -302,7 +303,7 @@ different Whisper model, set `WHISPER_MODEL` in the bridge's `env` block (`tiny`
 
 **Discord:** The bot only responds in the channel specified by `DISCORD_CHANNEL_ID`.
 
-**Signal:** Set `ALLOWED_NUMBERS` as a comma-separated list of E.164 phone numbers (e.g. `+15551234567,+15559876543`). Empty means open access.
+**Signal:** Closed by default: your own Note to Self always works; other numbers must be listed in `ALLOWED_NUMBERS` (E.164, comma-separated) or pair with `/pair <code>` (one-time code in the bridge log). `MUX_BRIDGE_ALLOW_ALL=1` opens it to everyone (not recommended).
 
 ## Serve Layer: Editor & Auth (Optional)
 

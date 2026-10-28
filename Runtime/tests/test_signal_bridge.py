@@ -1,0 +1,116 @@
+"""Signal bridge: protocol, numbered prompts, styled rendering, envelope parsing, access, and both live links."""
+from __future__ import annotations
+
+import json
+import threading
+
+import signal_bridge as sb
+from fake_mux import FakeMux
+
+CUSTOM = "\u270e enter custom\u2026"
+CANCEL = "\u2717 cancel (Esc)"
+ME = "+15550000001"
+FRIEND = "+15550000002"
+
+
+def test_turn_flush_reasoning_and_labels():
+    s = sb.MuxSession()
+    s.on_event({"type": "stream", "text": "hmm", "reasoning": True})
+    s.on_event({"type": "stream", "text": "lead", "agent": "Orchestrator"})
+    assert s.on_event({"type": "stream", "text": "found", "agent": "WebAgent"}) == ["lead"]
+    assert s.on_event({"type": "agent_turn_end"}) == ["**WebAgent:** found"]
+
+
+def test_select_is_numbered_and_answers_map():
+    s = sb.MuxSession()
+    out = s.on_event({"type": "select_request", "prompt": "Pick", "choices": ["Fast", "Safe", CUSTOM, CANCEL], "bailout": True})
+    assert "1. Fast\n2. Safe" in out[0] and "/cancel" in out[0]
+    assert s.answer_for_text("2") == "2"
+    s.on_event({"type": "select_request", "prompt": "Pick", "choices": ["Fast", CUSTOM, CANCEL], "bailout": True})
+    assert s.answer_for_text("something else") == "=something else"
+    s.on_event({"type": "multiselect_request", "prompt": "Which", "choices": ["a", "b", "c"]})
+    assert s.answer_for_text("1, 3") == "1,3"
+
+
+def test_confirm_input_secret_cancel():
+    s = sb.MuxSession()
+    s.on_event({"type": "confirm_request", "prompt": "Go?", "bailout": True})
+    assert s.answer_for_text("/cancel") == "cancel"
+    s.on_event({"type": "confirm_request", "prompt": "Go?"})
+    assert s.answer_for_text("Yes") == "y"
+    s.on_event({"type": "input_request", "prompt": "Name?"})
+    assert s.answer_for_text("J") == "J"
+    out = s.on_event({"type": "input_request", "prompt": "Key", "secret": True})
+    assert "can't be entered over Signal" in out[0] and s.answer_for_text("sk") == ""
+    assert s.answer_for_text("hello") is None
+
+
+def test_link_labels_and_bracketed_words_survive():
+    assert sb.strip_terminal_markup("[docs] [note] [bold]x[/] [red on black]y[/] [link=https://a]z[/]") == "[docs] [note] x y z"
+
+
+def test_render_styled_text():
+    md = "# Title\nUse __this__ and _that_ ~~old~~ [docs](https://x.y)\n```\ncode `x`\n```\n| A | B |\n|---|---|\n| 1 | 22 |"
+    assert sb.render_signal(md) == (
+        "**Title**\nUse **this** and *that* ~old~ docs (https://x.y)\n"
+        "`code \u2018x\u2018`\n`A  B`\n`-  --`\n`1  22`")
+
+
+def test_chunking_keeps_lines_whole():
+    text = "\n".join(f"**line {i}** " + "y" * 80 for i in range(100))
+    chunks = sb.chunk_signal(text)
+    assert all(len(c) <= sb.CHUNK_LIMIT for c in chunks)
+    assert all(c.count("**") % 2 == 0 for c in chunks)       # no style left open across messages
+
+
+def test_parse_envelopes():
+    dm = json.dumps({"envelope": {"sourceNumber": FRIEND, "dataMessage": {"message": "hi"}}})
+    assert sb.parse_envelope(dm, ME) == sb.Incoming(FRIEND, "hi", [])
+    rpc = json.dumps({"jsonrpc": "2.0", "method": "receive", "params": {"envelope": {"source": FRIEND, "dataMessage": {"message": "rpc"}}}})
+    assert sb.parse_envelope(rpc, ME).text == "rpc"
+    note = json.dumps({"envelope": {"sourceNumber": ME, "syncMessage": {"sentMessage": {"destinationNumber": ME, "message": "to self"}}}})
+    assert sb.parse_envelope(note, ME).text == "to self"
+    other_sync = json.dumps({"envelope": {"sourceNumber": ME, "syncMessage": {"sentMessage": {"destinationNumber": FRIEND, "message": "x"}}}})
+    assert sb.parse_envelope(other_sync, ME) is None              # my message to someone else, not to Mux
+    group = json.dumps({"envelope": {"sourceNumber": FRIEND, "dataMessage": {"message": "g", "groupInfo": {"groupId": "a"}}}})
+    assert sb.parse_envelope(group, ME) is None
+    receipt = json.dumps({"envelope": {"sourceNumber": FRIEND, "receiptMessage": {}}})
+    assert sb.parse_envelope(receipt, ME) is None
+    assert sb.parse_envelope("not json", ME) is None
+
+
+def test_access(tmp_path):
+    a = sb.Access(ME, set(), allow_all=False, state_path=str(tmp_path / "s.json"))
+    assert a.is_allowed(ME)                                       # Note to Self always works
+    assert not a.is_allowed(FRIEND) and not a.try_pair(FRIEND, "bad")
+    assert a.try_pair(FRIEND, a.pair_code) and a.is_allowed(FRIEND)
+    assert sb.Access(ME, set(), allow_all=False, state_path=str(tmp_path / "s.json")).is_allowed(FRIEND)
+
+
+def test_mux_link_auth_replay_round_trip():
+    s = sb.MuxSession()
+    out: list[str] = []
+    asked = threading.Event()
+
+    def on_event(ev):
+        out.extend(s.on_event(ev))
+        if ev.get("type") == "select_request":
+            asked.set()
+
+    with FakeMux(token="tok", replay=[{"type": "stream", "text": "OLD"}]) as mux:
+        link = sb.ReconnectingWs(sb.ws_url_with(mux.url, "tok"), sb.mux_event_handler(on_event), "Mux")
+        link.start()
+        assert link.connected.wait(5)
+        mux.wait_connected()
+        assert mux.connections[-1]["authorized"] and mux.connections[-1]["params"]["replay"] == "0"
+        mux.send("select_request", prompt="Approve?", choices=["Yes", "No", CUSTOM, CANCEL], bailout=True)
+        assert asked.wait(5)
+        assert not any("OLD" in o for o in out)
+        assert link.send(s.answer_for_text("1"))
+        assert mux.next_line() == "1"
+        link.stop()
+
+
+def test_receive_url():
+    assert sb.SignalApi("https://sig.local:8443/", ME).receive_url() == f"wss://sig.local:8443/v1/receive/{ME}"
+    assert sb.SignalApi("http://127.0.0.1:8080", ME).receive_url() == f"ws://127.0.0.1:8080/v1/receive/{ME}"
