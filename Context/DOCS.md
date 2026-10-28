@@ -537,8 +537,8 @@ Optional: `DISCORD_CHANNEL_ID` (also listen in that server channel; DMs to the b
 }
 ```
 
-- **Closed by default:** only paired or allowlisted users are answered. Send `/pair <code>` (one-time code from the
-  bridge log) in a DM or the channel to pair.
+- **Closed by default:** only paired or allowlisted users are answered. Send `/pair <code>` (the one-time code Mux shows when the
+  bridge starts; also in `/logs`) in a DM or the channel to pair.
 - **Questions come as buttons** (up to 20 choices; longer lists and multi-select are numbered, reply with numbers).
   Secret prompts are refused over the bridge.
 - **Rendering:** tables become code blocks, `####`+ headings become `###`, console markup is stripped, messages split

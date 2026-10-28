@@ -309,7 +309,7 @@ different Whisper model, set `WHISPER_MODEL` in the bridge's `env` block (`tiny`
 
 **Telegram:** Closed by default. Pair your phone by sending `/pair <code>` to the bot, using the one-time code Mux shows when the bridge starts (also in `/logs`); or list chat IDs in `ALLOWED_CHAT_IDS`. `MUX_BRIDGE_ALLOW_ALL=1` opens the bot to any chat (not recommended: it drives agents that can run commands).
 
-**Discord:** Closed by default. Pair with `/pair <code>` (one-time code in the bridge log) in a DM to the bot or the channel in `DISCORD_CHANNEL_ID`, or list user IDs in `ALLOWED_USER_IDS`. `MUX_BRIDGE_ALLOW_ALL=1` opens it to everyone (not recommended).
+**Discord:** Closed by default. Pair with `/pair <code>` (the one-time code Mux shows when the bridge starts; also in `/logs`) in a DM to the bot or the channel in `DISCORD_CHANNEL_ID`, or list user IDs in `ALLOWED_USER_IDS`. `MUX_BRIDGE_ALLOW_ALL=1` opens it to everyone (not recommended).
 
 **Signal:** Closed by default: your own Note to Self always works; other numbers must be listed in `ALLOWED_NUMBERS` (E.164, comma-separated) or pair with `/pair <code>` (one-time code in the bridge log). `MUX_BRIDGE_ALLOW_ALL=1` opens it to everyone (not recommended).
 
