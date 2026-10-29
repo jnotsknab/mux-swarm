@@ -557,6 +557,18 @@ internal sealed partial class TuiDriver
 
     /// <summary>Draw the (empty) input box from the next paint, before the first <c>ReadLine</c>.</summary>
     internal void ReserveInputBox() => _inputReserved = true;
+
+    /// <summary>
+    /// Drop the startup input-box reservation without a keyboard read: a line came from somewhere else (a seeded
+    /// first goal, a workflow), so the agent is about to work and the empty box must not stay pinned. Repaints when
+    /// the box was showing.
+    /// </summary>
+    internal void ReleaseInputBox()
+    {
+        if (!_inputReserved) return;
+        _inputReserved = false;
+        Repaint();
+    }
     private bool _shuttingDown;
 
     // True while the NAV (vim view) overlay owns the screen. NAV can be opened mid-turn (via
