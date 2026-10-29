@@ -17,6 +17,10 @@ Environment:
   MUX_BRIDGE_STATE     file that remembers paired numbers (default: signal_bridge.state.json next to this script)
   WHISPER_MODEL        tiny | base | small | medium | large | turbo (voice extra only; default base)
 
+Commands: any Mux slash command works from the chat (/agent, /resume, /status, /help, /qc, ...); its answer is posted
+back. /menu lists quick actions (reply with a number), /stop interrupts the running turn. Attachments are uploaded to
+Mux (like the web app's attachments) and handed to the agent.
+
 Access: only ALLOWED_NUMBERS, paired senders, and your own "Note to Self" are answered. To pair another number, send
 `/pair <code>` with the one-time code Mux shows when the bridge starts (also in /logs).
 """
@@ -45,6 +49,8 @@ log = logging.getLogger("signal-bridge")
 
 CHUNK_LIMIT = 1800          # Signal does not document a hard limit; stay well under the ~2000 seen in practice
 FLUSH_IDLE_SECONDS = 2.5
+REPLY_GRACE_SECONDS = 3.0   # notices right after the reply's prompt still belong to it (a session ends, then the command runs)
+MAX_UPLOAD_BYTES = 25_000_000
 
 
 # =====================================================================================================================
@@ -169,6 +175,33 @@ class PendingPrompt:
 
 
 CUSTOM_LABEL_MARK = "enter custom"
+# Console notices a command (or the main menu) answers with: shown in the chat when they reply to this bridge.
+NOTICE_TYPES = ("info", "success", "warning", "debug", "body", "markup", "panel", "table", "banner")
+# Quick menu (/menu and the main-menu hint): (label, command). "start" = /agent, then the message sent at the menu.
+QUICK_MENU = [("New agent session", "/agent"), ("Resume a session", "/resume"), ("Status", "/status"),
+              ("Commands", "/help"), ("End session", "/qc")]
+
+
+def notice_text(t: str, ev: dict[str, Any]) -> str:
+    """One console notice event as Markdown (the same events the web app renders)."""
+    msg = strip_terminal_markup(str(ev.get("message") or ""))
+    if t == "banner":
+        return f"**{ev.get('title') or ''}**"
+    if t == "body":                                   # preformatted (help text, listings): keep the columns
+        return "```\n" + msg.replace("```", "\u02cb\u02cb\u02cb").rstrip() + "\n```" if msg.strip() else ""
+    if t == "panel":
+        title = str(ev.get("title") or "")
+        return (f"**{title}**\n" if title else "") + strip_terminal_markup(str(ev.get("content") or ""))
+    if t == "table":
+        rows = [(str(r.get("key", "")), str(r.get("value", ""))) for r in (ev.get("rows") or []) if isinstance(r, dict)]
+        width = max((len(k) for k, _ in rows), default=0)
+        body = "\n".join(f"{k.ljust(width)}  {v}" for k, v in rows)
+        return (f"**{ev.get('title')}**\n" if ev.get("title") else "") + (f"```\n{body}\n```" if body else "")
+    if t == "success":
+        return "✅ " + msg
+    if t == "warning":
+        return "⚠️ " + msg
+    return msg
 
 
 class MuxSession:
@@ -180,6 +213,15 @@ class MuxSession:
         self.pending: Optional[PendingPrompt] = None
         self.turn_active = False
         self.agent_label: Optional[str] = None
+        self.notices: list[str] = []
+        self.expecting = False                  # this bridge sent a line; Mux's next `prompt` ends the reply
+        self.grace_until = 0.0                  # ...but notices until this time still belong to it
+        self.turn_seen = False                  # an agent turn ran since that line (its bookkeeping is not shown)
+        self.last_plain: Optional[str] = None   # that line, when it was a plain message (not a command or answer)
+        self.stash: Optional[str] = None        # a message sent at the main menu, kept for "Start agent with it"
+        self.after_prompt: Optional[str] = None # sent to Mux at the next `prompt` (the stash, once /agent is up)
+        self.menu: list[tuple[str, str]] = []   # quick-menu choices currently offered (answered by number)
+        self.to_mux: list[str] = []             # lines the bridge should send to Mux (drained by the glue)
 
     def take_answer(self) -> list[str]:
         text = "".join(self.buffer).strip()
@@ -187,8 +229,38 @@ class MuxSession:
         self.agent_label = None
         return chunk_signal(render_signal(text)) if text else []
 
+    def sent(self, line: str, plain: bool) -> None:
+        """Record a line this bridge sent to Mux, so the notices Mux answers with are shown in the chat."""
+        self.expecting, self.turn_seen, self.grace_until = True, False, 0.0
+        self.last_plain = line if plain else None
+        self.menu = []
+
+    def menu_message(self, prompt: str, items: list[tuple[str, str]]) -> str:
+        self.menu = list(items)
+        listing = "\n".join(f"{i + 1}. {label}" for i, (label, _) in enumerate(items))
+        return f"{prompt}\n{listing}\n\n*Reply with a number.*"
+
+    def take_notices(self) -> list[str]:
+        text = "\n".join(n for n in self.notices if n.strip())
+        self.notices.clear()
+        return chunk_signal(render_signal(text)) if text.strip() else []
+
     def idle_flush_due(self, now: float) -> bool:
-        return bool(self.buffer) and self.last_chunk > 0 and now - self.last_chunk >= FLUSH_IDLE_SECONDS
+        return bool(self.buffer or self.notices) and self.last_chunk > 0 and now - self.last_chunk >= FLUSH_IDLE_SECONDS
+
+    def take_idle(self) -> list[str]:
+        return self.take_answer() + self.take_notices()
+
+    def command_for_menu(self, index: str) -> Optional[str]:
+        """The line to send for quick-menu choice `index` (1-based), or None when it is not on offer."""
+        if not index.isdigit() or not 1 <= int(index) <= len(self.menu):
+            return None
+        command = self.menu[int(index) - 1][1]
+        self.menu = []
+        if command == "start":
+            self.after_prompt, self.stash = self.stash, None
+            return "/agent"
+        return command
 
     def on_event(self, ev: dict[str, Any], now: Optional[float] = None) -> list[str]:
         now = time.time() if now is None else now
@@ -212,8 +284,31 @@ class MuxSession:
                 self.turn_active = False
         elif t == "agent_turn_start":
             self.turn_active = True
+            self.turn_seen = True
+        elif t in NOTICE_TYPES:
+            if (self.expecting or now < self.grace_until) and not self.turn_active and not self.turn_seen:
+                self.notices.append(notice_text(t, ev))
+                self.last_chunk = now
+        elif t == "prompt":
+            out.extend(self.take_answer())
+            at_menu = self.expecting and not self.turn_seen and bool(self.last_plain)
+            if at_menu:
+                self.notices.clear()            # Mux's "this is the main menu" hint; the menu below says it for chat
+            out.extend(self.take_notices())
+            if at_menu:
+                # A plain message that reached no agent: Mux is at its main menu. Offer to start one with it.
+                self.stash = self.last_plain
+                out.append(self.menu_message("Mux is at its main menu, so that message wasn't sent to an agent.",
+                                             [("Start agent with this message", "start")] + QUICK_MENU[1:4]))
+            if self.expecting:
+                self.expecting, self.grace_until = False, now + REPLY_GRACE_SECONDS
+            if self.after_prompt is not None:
+                line, self.after_prompt = self.after_prompt, None
+                self.sent(line, plain=True)
+                self.to_mux.append(line)
         elif t in ("select_request", "multiselect_request", "confirm_request", "input_request"):
             out.extend(self.take_answer())
+            out.extend(self.take_notices())
             out.append(self._prompt(t, ev))
         elif t == "error":
             out.append("⚠️ " + str(ev.get("message") or ev.get("text") or "Unknown error")[:1700])
@@ -243,7 +338,7 @@ class MuxSession:
     def answer_for_text(self, text: str) -> Optional[str]:
         p = self.pending
         if not p:
-            return None
+            return self.command_for_menu(text.strip()) if self.menu else None
         raw = text.strip()
         if raw.lower() in ("/cancel", "cancel"):
             self.pending = None
@@ -391,7 +486,10 @@ class ReconnectingWs:
             with self._lock:
                 self._ws = ws
             started = time.time()
-            ws.run_forever(ping_interval=30, ping_timeout=10)
+            # No ping_timeout: the client's pong check misfires against the server's own keep-alive frames and drops a
+            # healthy link every minute (output sent in the reconnect gap is lost with replay=0). A dead Mux still
+            # closes the socket, which ends run_forever and reconnects.
+            ws.run_forever(ping_interval=30)
             self.connected.clear()
             if self._stop.is_set():
                 break
@@ -418,6 +516,33 @@ def mux_event_handler(on_event: Callable[[dict[str, Any]], None]) -> Callable[[s
         if isinstance(ev, dict):
             on_event(ev)
     return handle
+
+
+def http_base(ws_url: str) -> str:
+    """The Mux HTTP origin behind a /ws URL (ws://host:port/ws -> http://host:port)."""
+    parts = urlsplit(ws_url)
+    return urlunsplit(("https" if parts.scheme == "wss" else "http", parts.netloc, "", "", ""))
+
+
+def upload_to_mux(ws_url: str, token: Optional[str], name: str, data: bytes) -> str:
+    """Upload a file the way the web app does (POST /api/upload) and return the path Mux saved it at."""
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise ValueError(f"{name} is too large ({len(data) // 1_000_000} MB; the limit is {MAX_UPLOAD_BYTES // 1_000_000} MB)")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    r = requests.post(http_base(ws_url) + "/api/upload", params={"dir": "uploads"}, headers=headers,
+                      files={"file": (name, data)}, timeout=60)
+    try:
+        body = r.json()
+    except ValueError:
+        body = {}
+    if r.status_code != 200 or not body.get("filename"):
+        raise ValueError(str(body.get("error") or f"HTTP {r.status_code}"))
+    return str(body["filename"])
+
+
+def with_file_refs(paths: list[str], text: str) -> str:
+    """Prefix uploaded files the way the web app does, so the agent reads them (images go to its vision tool)."""
+    return "\n".join([f"[file: {p}]" for p in paths] + ([text] if text else [])) if paths else text
 
 
 # =====================================================================================================================
@@ -530,7 +655,15 @@ def main(argv: Optional[list[str]] = None, stop: Optional[threading.Event] = Non
     def on_mux_event(ev: dict[str, Any]) -> None:
         with lock:
             texts = session.on_event(ev)
+            lines, session.to_mux = session.to_mux, []
         send_all(texts)
+        for line in lines:
+            mux.send(line)                        # session.sent() was already recorded by MuxSession
+
+    def send_line(line: str, plain: bool) -> bool:
+        with lock:
+            session.sent(line, plain)
+        return mux.send(line)
 
     mux = ReconnectingWs(ws_url_with(args.ws, args.serve_token), mux_event_handler(on_mux_event), "Mux")
 
@@ -552,6 +685,12 @@ def main(argv: Optional[list[str]] = None, stop: Optional[threading.Event] = Non
             mux.send("__CANCEL__")
             api.send(msg.sender, "Interrupt sent.")
             return
+        if text.lower() == "/menu":
+            with lock:
+                body = session.menu_message("What would you like to do? Any Mux command (e.g. /help) also works here.",
+                                            QUICK_MENU)
+            api.send(msg.sender, body)
+            return
         for att in msg.attachments:
             if str(att.get("contentType", "")).startswith("audio/") and att.get("id"):
                 with tempfile.TemporaryDirectory() as tmp:
@@ -563,13 +702,32 @@ def main(argv: Optional[list[str]] = None, stop: Optional[threading.Event] = Non
                 if spoken:
                     api.send(msg.sender, f"🎙 {spoken}")
                     text = spoken if not text else f"{text}\n{spoken}"
-        if not text and msg.attachments:
-            text = "[Attachment received]"
+        paths: list[str] = []
+        for att in msg.attachments:
+            if str(att.get("contentType", "")).startswith("audio/") or not att.get("id"):
+                continue
+            name = att.get("filename") or att["id"]
+            try:
+                if int(att.get("size") or 0) > MAX_UPLOAD_BYTES:
+                    raise ValueError(f"{name} is too large (the limit is {MAX_UPLOAD_BYTES // 1_000_000} MB)")
+                with tempfile.TemporaryDirectory() as tmp:
+                    path = os.path.join(tmp, "file")
+                    if not api.download(att["id"], path):
+                        raise ValueError("the Signal API couldn't provide it")
+                    with open(path, "rb") as fh:
+                        data = fh.read()
+                paths.append(upload_to_mux(args.ws, args.serve_token, name, data))
+            except (ValueError, OSError, requests.RequestException) as e:
+                log.warning("attachment %s not passed to Mux: %s", name, e)
+                api.send(msg.sender, f"Couldn't pass {name} to Mux: {e}")
+        if paths and not text:
+            text = "Take a look at the attached file" + ("s." if len(paths) > 1 else ".")
         if not text:
             return
         with lock:
             answer = session.answer_for_text(text)
-        if not mux.send(answer if answer is not None else text):
+        line = answer if answer is not None else with_file_refs(paths, text)
+        if not send_line(line, plain=answer is None and not line.startswith("/")):
             api.send(msg.sender, "Mux isn't reachable right now; I'll keep retrying. Try again shortly.")
 
     signal_in = ReconnectingWs(api.receive_url(), handle_incoming, "Signal")
@@ -579,7 +737,7 @@ def main(argv: Optional[list[str]] = None, stop: Optional[threading.Event] = Non
         while True:
             time.sleep(0.5)
             with lock:
-                texts = session.take_answer() if session.idle_flush_due(time.time()) else []
+                texts = session.take_idle() if session.idle_flush_due(time.time()) else []
                 want_typing = session.turn_active and session.pending is None
             send_all(texts)
             if state["to"] and want_typing != typing_on:

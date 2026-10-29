@@ -45,6 +45,73 @@ def test_confirm_input_secret_cancel():
     assert s.answer_for_text("hello") is None
 
 
+def test_command_answer_notices_are_relayed():
+    s = sb.MuxSession()
+    s.sent("/status", plain=False)
+    assert s.on_event({"type": "table", "title": "Status", "rows": [{"key": "Agent", "value": "MuxAgent"}]}) == []
+    s.on_event({"type": "success", "message": "done"})
+    out = s.on_event({"type": "prompt", "message": "> "})
+    assert len(out) == 1 and "Agent  MuxAgent" in out[0] and "✅ done" in out[0]
+
+
+def test_notices_not_asked_for_and_turn_bookkeeping_stay_out():
+    s = sb.MuxSession()
+    s.on_event({"type": "success", "message": "Bridge started"})
+    assert s.on_event({"type": "prompt", "message": "> "}) == []
+    s.sent("hi", plain=True)
+    s.on_event({"type": "agent_turn_start", "agent": "MuxAgent"})
+    s.on_event({"type": "stream", "text": "hello"})
+    assert s.on_event({"type": "agent_turn_end"}) == ["hello"]
+    s.on_event({"type": "debug", "message": "[AGENT SESSION] Saved to /x"})
+    assert s.on_event({"type": "prompt", "message": "> "}) == []
+
+
+def test_plain_text_at_main_menu_offers_numbered_menu_and_replays_it():
+    s = sb.MuxSession()
+    s.sent("hello there", plain=True)
+    s.on_event({"type": "debug", "message": "This is the main menu - text here isn't sent to an agent."})
+    out = s.on_event({"type": "prompt", "message": "> "})
+    assert len(out) == 1 and "1. Start agent with this message" in out[0] and "Reply with a number" in out[0]
+    assert s.answer_for_text("1") == "/agent"
+    s.sent("/agent", plain=False)
+    s.on_event({"type": "banner", "title": "AGENTIC CHAT INTERFACE"})
+    out = s.on_event({"type": "prompt", "message": "> "})
+    assert "AGENTIC CHAT INTERFACE" in out[0] and s.to_mux == ["hello there"]
+
+
+def test_quick_menu_numbers_are_one_shot_and_after_session_end_relayed():
+    s = sb.MuxSession()
+    assert "5. End session" in s.menu_message("What now?", sb.QUICK_MENU)
+    assert s.answer_for_text("4") == "/help" and s.answer_for_text("4") is None
+    s.sent("y", plain=False)
+    assert s.on_event({"type": "prompt", "message": "> "}, now=5.0) == []
+    s.on_event({"type": "panel", "title": "Mux-Swarm Status", "content": "lead MuxAgent"}, now=5.5)
+    assert "lead MuxAgent" in s.on_event({"type": "prompt", "message": "> "}, now=5.6)[0]
+
+
+def test_upload_matches_the_web_app_contract(monkeypatch):
+    seen = {}
+
+    class Resp:
+        status_code = 200
+        def json(self):
+            return {"filename": "/s/uploads/x.png"}
+
+    def fake_post(url, params=None, headers=None, files=None, timeout=None):
+        seen.update(url=url, params=params, headers=headers, files=files)
+        return Resp()
+
+    monkeypatch.setattr(sb.requests, "post", fake_post)
+    assert sb.upload_to_mux("ws://127.0.0.1:6723/ws", "t", "x.png", b"p") == "/s/uploads/x.png"
+    assert seen["url"] == "http://127.0.0.1:6723/api/upload" and seen["headers"] == {"Authorization": "Bearer t"}
+    assert sb.with_file_refs(["/s/uploads/x.png"], "look") == "[file: /s/uploads/x.png]\nlook"
+    try:
+        sb.upload_to_mux("ws://h/ws", None, "big", b"x" * (sb.MAX_UPLOAD_BYTES + 1))
+        raise AssertionError("expected failure")
+    except ValueError as e:
+        assert "too large" in str(e)
+
+
 def test_link_labels_and_bracketed_words_survive():
     assert sb.strip_terminal_markup("[docs] [note] [bold]x[/] [red on black]y[/] [link=https://a]z[/]") == "[docs] [note] x y z"
 
