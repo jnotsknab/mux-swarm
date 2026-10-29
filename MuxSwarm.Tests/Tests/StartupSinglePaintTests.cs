@@ -38,6 +38,38 @@ public class StartupSinglePaintTests
     }
 
     [Fact]
+    public void SeededFirstInput_ReleasesTheStartupInputBox()
+    {
+        // /setup -> onboarding seeds its first goal through InputOverride, so no keyboard ReadLine runs before the
+        // agent works. The startup reservation must not keep the empty input box (and footer) pinned meanwhile.
+        var names = new[] { "_driver", "_tuiActive", "_interactiveRenderMode" };
+        var fields = names.Select(n => typeof(MuxConsole).GetField(n, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!).ToList();
+        var saved = fields.ToDictionary(f => f, f => f.GetValue(null));
+        bool stdio = MuxConsole.StdioMode;
+        var input = MuxConsole.InputOverride;
+        try
+        {
+            var driver = new TuiDriver(new Term(), frameEngine: true);
+            driver.ReserveInputBox();
+            fields[0].SetValue(null, driver);
+            fields[1].SetValue(null, true);
+            fields[2].SetValue(null, RenderMode.Tui);
+            MuxConsole.StdioMode = false;
+            Assert.Contains("type a message", Plain(driver.ComposeFrameRows()));   // startup: box reserved
+
+            MuxConsole.InputOverride = new FallbackReader("Begin onboarding.", input);
+            Assert.Equal("Begin onboarding.", MuxConsole.ReadInput());
+            Assert.DoesNotContain("type a message", Plain(driver.ComposeFrameRows()));   // agent working: no input box
+        }
+        finally
+        {
+            foreach (var (f, v) in saved) f.SetValue(null, v);
+            MuxConsole.StdioMode = stdio;
+            MuxConsole.InputOverride = input;
+        }
+    }
+
+    [Fact]
     public void DeferredSplash_IsHeld_ThenPrintedOnceAtEndQuietStartup()
     {
         var prior = Spectre.Console.AnsiConsole.Console;
