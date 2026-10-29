@@ -16,6 +16,10 @@ Environment:
   MUX_BRIDGE_STATE     file that remembers paired chats (default: telegram_bridge.state.json next to this script)
   WHISPER_MODEL        tiny | base | small | medium | large | turbo (voice extra only; default base)
 
+Commands: any Mux slash command works from the chat (/agent, /resume, /status, /help, /qc, ...); its answer is posted
+back. /menu shows quick actions as buttons, /stop interrupts the running turn. Photos and documents are uploaded to
+Mux (like the web app's attachments) and handed to the agent.
+
 Access: by default only chats in ALLOWED_CHAT_IDS or paired chats are answered. To pair, look for the one-time
 code Mux shows when the bridge starts (also in /logs) and send `/pair <code>` to the bot from your phone.
 """
@@ -39,6 +43,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
+import requests
 import websocket  # websocket-client
 
 log = logging.getLogger("telegram-bridge")
@@ -47,6 +52,8 @@ TELEGRAM_LIMIT = 4096
 CHUNK_LIMIT = 3900          # leave room for HTML tags added while chunking
 FLUSH_IDLE_SECONDS = 2.5    # send buffered answer text after this much stream silence
 TYPING_EVERY_SECONDS = 4.0
+REPLY_GRACE_SECONDS = 3.0   # notices right after the reply's prompt still belong to it (a session ends, then the command runs)
+MAX_UPLOAD_BYTES = 20_000_000   # Telegram bots can download files up to 20 MB
 
 
 # =====================================================================================================================
@@ -203,10 +210,38 @@ class Outgoing:
     """Something the bridge should show in the chat."""
     text: str = ""                 # rendered HTML
     buttons: list[list[tuple[str, str]]] = field(default_factory=list)   # rows of (label, callback data)
+    mux: Optional[str] = None      # a line to send to Mux instead of a chat message
 
 
 CUSTOM_LABEL_MARK = "enter custom"
 CANCEL_LABEL_MARK = "cancel"
+# Console notices a command (or the main menu) answers with: shown in the chat when they reply to this bridge.
+NOTICE_TYPES = ("info", "success", "warning", "debug", "body", "markup", "panel", "table", "banner")
+# Quick menu (/menu and the main-menu hint): (label, command). "start" = /agent, then the message sent at the menu.
+QUICK_MENU = [("New agent session", "/agent"), ("Resume a session", "/resume"), ("Status", "/status"),
+              ("Commands", "/help"), ("End session", "/qc")]
+
+
+def notice_text(t: str, ev: dict[str, Any]) -> str:
+    """One console notice event as Markdown (the same events the web app renders)."""
+    msg = strip_terminal_markup(str(ev.get("message") or ""))
+    if t == "banner":
+        return f"**{ev.get('title') or ''}**"
+    if t == "body":                                   # preformatted (help text, listings): keep the columns
+        return "```\n" + msg.replace("```", "\u02cb\u02cb\u02cb").rstrip() + "\n```" if msg.strip() else ""
+    if t == "panel":
+        title = str(ev.get("title") or "")
+        return (f"**{title}**\n" if title else "") + strip_terminal_markup(str(ev.get("content") or ""))
+    if t == "table":
+        rows = [(str(r.get("key", "")), str(r.get("value", ""))) for r in (ev.get("rows") or []) if isinstance(r, dict)]
+        width = max((len(k) for k, _ in rows), default=0)
+        body = "\n".join(f"{k.ljust(width)}  {v}" for k, v in rows)
+        return (f"**{ev.get('title')}**\n" if ev.get("title") else "") + (f"```\n{body}\n```" if body else "")
+    if t == "success":
+        return "✅ " + msg
+    if t == "warning":
+        return "⚠️ " + msg
+    return msg
 
 
 class MuxSession:
@@ -221,6 +256,14 @@ class MuxSession:
         self.pending: Optional[PendingPrompt] = None
         self.turn_active = False
         self.agent_label: Optional[str] = None   # sub-agent currently streaming (prefix once)
+        self.notices: list[str] = []
+        self.expecting = False                  # this bridge sent a line; Mux's next `prompt` ends the reply
+        self.grace_until = 0.0                  # ...but notices until this time still belong to it
+        self.turn_seen = False                  # an agent turn ran since that line (its bookkeeping is not shown)
+        self.last_plain: Optional[str] = None   # that line, when it was a plain message (not a command or answer)
+        self.stash: Optional[str] = None        # a message sent at the main menu, kept for "Start agent with it"
+        self.after_prompt: Optional[str] = None # sent to Mux at the next `prompt` (the stash, once /agent is up)
+        self.menu: list[tuple[str, str]] = []   # quick-menu choices currently offered (also answerable by number)
 
     def take_answer(self) -> list[Outgoing]:
         text = "".join(self.buffer).strip()
@@ -230,8 +273,27 @@ class MuxSession:
             return []
         return [Outgoing(text=c) for c in chunk_html(render_html(text))]
 
+    def sent(self, line: str, plain: bool) -> None:
+        """Record a line this bridge sent to Mux, so the notices Mux answers with are shown in the chat."""
+        self.expecting, self.turn_seen, self.grace_until = True, False, 0.0
+        self.last_plain = line if plain else None
+        self.menu = []
+
+    def menu_message(self, prompt: str, items: list[tuple[str, str]]) -> Outgoing:
+        self.menu = list(items)
+        rows = [[(label, "cmd:" + str(i + 1))] for i, (label, _) in enumerate(items)]
+        return Outgoing(text=html.escape(prompt, quote=False), buttons=rows)
+
+    def take_notices(self) -> list[Outgoing]:
+        text = "\n".join(n for n in self.notices if n.strip())
+        self.notices.clear()
+        return [Outgoing(text=c) for c in chunk_html(render_html(text))] if text.strip() else []
+
     def idle_flush_due(self, now: float) -> bool:
-        return bool(self.buffer) and self.last_chunk > 0 and now - self.last_chunk >= FLUSH_IDLE_SECONDS
+        return bool(self.buffer or self.notices) and self.last_chunk > 0 and now - self.last_chunk >= FLUSH_IDLE_SECONDS
+
+    def take_idle(self) -> list[Outgoing]:
+        return self.take_answer() + self.take_notices()
 
     def on_event(self, ev: dict[str, Any], now: Optional[float] = None) -> list[Outgoing]:
         now = time.time() if now is None else now
@@ -256,8 +318,31 @@ class MuxSession:
                 self.turn_active = False
         elif t == "agent_turn_start":
             self.turn_active = True
+            self.turn_seen = True
+        elif t in NOTICE_TYPES:
+            if (self.expecting or now < self.grace_until) and not self.turn_active and not self.turn_seen:
+                self.notices.append(notice_text(t, ev))
+                self.last_chunk = now
+        elif t == "prompt":
+            out.extend(self.take_answer())
+            at_menu = self.expecting and not self.turn_seen and bool(self.last_plain)
+            if at_menu:
+                self.notices.clear()            # Mux's "this is the main menu" hint; the menu below says it for chat
+            out.extend(self.take_notices())
+            if at_menu:
+                # A plain message that reached no agent: Mux is at its main menu. Offer to start one with it.
+                self.stash = self.last_plain
+                out.append(self.menu_message("Mux is at its main menu, so that message wasn't sent to an agent.",
+                                             [("Start agent with this message", "start")] + QUICK_MENU[1:4]))
+            if self.expecting:
+                self.expecting, self.grace_until = False, now + REPLY_GRACE_SECONDS
+            if self.after_prompt is not None:
+                line, self.after_prompt = self.after_prompt, None
+                self.sent(line, plain=True)
+                out.append(Outgoing(mux=line))
         elif t in ("select_request", "multiselect_request", "confirm_request", "input_request"):
             out.extend(self.take_answer())       # show what the agent said before asking
+            out.extend(self.take_notices())
             out.append(self._prompt(t, ev))
         elif t == "error":
             msg = ev.get("message") or ev.get("text") or "Unknown error"
@@ -291,8 +376,21 @@ class MuxSession:
         body = "❓ " + render_html(prompt) + ("\n" + listing if listing else "") + note
         return Outgoing(text=body, buttons=[] if kind == "multiselect" else rows)
 
+    def command_for_menu(self, index: str) -> Optional[str]:
+        """The line to send for quick-menu choice `index` (1-based), or None when it is not on offer."""
+        if not index.isdigit() or not 1 <= int(index) <= len(self.menu):
+            return None
+        command = self.menu[int(index) - 1][1]
+        self.menu = []
+        if command == "start":
+            self.after_prompt, self.stash = self.stash, None
+            return "/agent"
+        return command
+
     def answer_for_button(self, data: str) -> Optional[str]:
         """The line to send to Mux for a pressed button (None = ignore, e.g. a stale prompt)."""
+        if data.startswith("cmd:"):
+            return self.command_for_menu(data[4:])
         if not self.pending or not data.startswith("a:"):
             return None
         v = data[2:]
@@ -314,7 +412,7 @@ class MuxSession:
         """If a prompt is waiting, the line to send for this typed message; None = it is a normal message."""
         p = self.pending
         if not p:
-            return None
+            return self.command_for_menu(text.strip()) if self.menu else None
         if text.strip().lower() in ("/cancel", "cancel"):
             self.pending = None
             return "cancel" if p.bailout else ("n" if p.kind == "confirm" else "")
@@ -445,7 +543,10 @@ class MuxLink:
             with self._lock:
                 self._ws = ws
             started = time.time()
-            ws.run_forever(ping_interval=30, ping_timeout=10)
+            # No ping_timeout: the client's pong check misfires against the server's own keep-alive frames and drops a
+            # healthy link every minute (output sent in the reconnect gap is lost with replay=0). A dead Mux still
+            # closes the socket, which ends run_forever and reconnects.
+            ws.run_forever(ping_interval=30)
             self.connected.clear()
             if self._stop.is_set():
                 break
@@ -461,6 +562,33 @@ class MuxLink:
         with self._lock:
             if self._ws:
                 self._ws.close()
+
+
+def http_base(ws_url: str) -> str:
+    """The Mux HTTP origin behind a /ws URL (ws://host:port/ws -> http://host:port)."""
+    parts = urlsplit(ws_url)
+    return urlunsplit(("https" if parts.scheme == "wss" else "http", parts.netloc, "", "", ""))
+
+
+def upload_to_mux(ws_url: str, token: Optional[str], name: str, data: bytes) -> str:
+    """Upload a file the way the web app does (POST /api/upload) and return the path Mux saved it at."""
+    if len(data) > MAX_UPLOAD_BYTES:
+        raise ValueError(f"{name} is too large ({len(data) // 1_000_000} MB; the limit is {MAX_UPLOAD_BYTES // 1_000_000} MB)")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    r = requests.post(http_base(ws_url) + "/api/upload", params={"dir": "uploads"}, headers=headers,
+                      files={"file": (name, data)}, timeout=60)
+    try:
+        body = r.json()
+    except ValueError:
+        body = {}
+    if r.status_code != 200 or not body.get("filename"):
+        raise ValueError(str(body.get("error") or f"HTTP {r.status_code}"))
+    return str(body["filename"])
+
+
+def with_file_refs(paths: list[str], text: str) -> str:
+    """Prefix uploaded files the way the web app does, so the agent reads them (images go to its vision tool)."""
+    return "\n".join([f"[file: {p}]" for p in paths] + ([text] if text else [])) if paths else text
 
 
 # =====================================================================================================================
@@ -545,12 +673,21 @@ def main(argv: Optional[list[str]] = None) -> int:
                 for part in [plain[i:i + CHUNK_LIMIT] for i in range(0, len(plain), CHUNK_LIMIT)] or [""]:
                     await app.bot.send_message(chat_id, part or "(empty)", reply_markup=markup)
 
-    def emit(items: list[Outgoing]) -> None:
-        chat_id = state["chat_id"]
-        if items and chat_id is not None and "loop" in loop_holder:
-            asyncio.run_coroutine_threadsafe(deliver(chat_id, items), loop_holder["loop"])
-
     lock = threading.Lock()
+
+    def send_line(line: str, plain: bool) -> bool:
+        with lock:
+            session.sent(line, plain)
+        return link.send(line)
+
+    def emit(items: list[Outgoing]) -> None:
+        for item in items:
+            if item.mux is not None:
+                link.send(item.mux)               # session.sent() was already recorded by MuxSession
+        chat = [i for i in items if i.mux is None]
+        chat_id = state["chat_id"]
+        if chat and chat_id is not None and "loop" in loop_holder:
+            asyncio.run_coroutine_threadsafe(deliver(chat_id, chat), loop_holder["loop"])
 
     def on_mux_event(ev: dict[str, Any]) -> None:
         with lock:
@@ -565,7 +702,7 @@ def main(argv: Optional[list[str]] = None) -> int:
             time.sleep(0.5)
             now = time.time()
             with lock:
-                items = session.take_answer() if session.idle_flush_due(now) else []
+                items = session.take_idle() if session.idle_flush_due(now) else []
                 typing = session.turn_active and session.pending is None
             emit(items)
             if typing and state["chat_id"] is not None and now - last_typing >= TYPING_EVERY_SECONDS and "loop" in loop_holder:
@@ -590,7 +727,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         with lock:
             answer = session.answer_for_text(text)
         line = answer if answer is not None else text
-        if not link.send(line):
+        if not send_line(line, plain=answer is None and not line.startswith("/")):
             await update.message.reply_text("Mux isn't reachable right now; I'll keep retrying. Try again shortly.")
 
     async def on_pair(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
@@ -604,7 +741,8 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     async def on_start(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if await guard(update):
-            await update.message.reply_text("Connected to Mux. Send a message to talk to your agent; /stop interrupts it.")
+            await update.message.reply_text("Connected to Mux. Send a message to talk to your agent, /menu for quick "
+                                            "actions, or any Mux command (/agent, /help); /stop interrupts it.")
 
     async def on_stop(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if await guard(update):
@@ -618,6 +756,20 @@ def main(argv: Optional[list[str]] = None) -> int:
     async def on_text(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message and update.message.text and await guard(update):
             await forward(update, update.message.text)
+
+    async def on_menu(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if await guard(update):
+            state["chat_id"] = update.effective_chat.id
+            with lock:
+                item = session.menu_message("What would you like to do? Any Mux command (e.g. /help) also works here.",
+                                            QUICK_MENU)
+            await deliver(update.effective_chat.id, [item])
+
+    async def on_command(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        """Any other /command is a Mux command: pass it through (minus Telegram's @botname suffix)."""
+        if update.message and update.message.text and await guard(update):
+            head, _, rest = update.message.text.strip().partition(" ")
+            await forward(update, (head.split("@", 1)[0] + (" " + rest if rest else "")).strip())
 
     async def on_media(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.message or not await guard(update):
@@ -639,11 +791,23 @@ def main(argv: Optional[list[str]] = None) -> int:
             await msg.reply_text(f"🎙 {text}")
             await forward(update, text)
             return
-        caption = msg.caption or ""
+        caption = (msg.caption or "").strip()
         if msg.photo:
-            await forward(update, f"[Photo received] {caption}".strip())
+            item, name = msg.photo[-1], f"photo_{msg.message_id}.jpg"          # largest size
         elif msg.document:
-            await forward(update, f"[Document: {msg.document.file_name}] {caption}".strip())
+            item, name = msg.document, msg.document.file_name or f"file_{msg.message_id}"
+        else:
+            return
+        try:
+            if (item.file_size or 0) > MAX_UPLOAD_BYTES:
+                raise ValueError(f"{name} is too large (Telegram bots can download up to {MAX_UPLOAD_BYTES // 1_000_000} MB)")
+            data = bytes(await (await item.get_file()).download_as_bytearray())
+            path = await asyncio.to_thread(upload_to_mux, args.ws, args.serve_token, name, data)
+        except Exception as e:  # noqa: BLE001
+            log.warning("attachment %s not passed to Mux: %s", name, e)
+            await msg.reply_text(f"Couldn't pass {name} to Mux: {e}")
+            return
+        await forward(update, with_file_refs([path], caption or "Take a look at the attached file."))
 
     async def on_button(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         q = update.callback_query
@@ -668,6 +832,8 @@ def main(argv: Optional[list[str]] = None) -> int:
     async def post_init(application: Any) -> None:
         loop_holder["loop"] = asyncio.get_running_loop()
         await application.bot.set_my_commands([
+            ("menu", "Quick actions"), ("agent", "Start an agent session"), ("resume", "Resume a session"),
+            ("status", "Mux status"), ("help", "Mux commands"), ("qc", "End the agent session"),
             ("stop", "Interrupt the running agent"), ("cancel", "Cancel a pending question"),
             ("pair", "Pair this chat: /pair <code>")])
 
@@ -676,9 +842,11 @@ def main(argv: Optional[list[str]] = None) -> int:
     app.add_handler(CommandHandler("start", on_start))
     app.add_handler(CommandHandler("stop", on_stop))
     app.add_handler(CommandHandler("cancel", on_cancel))
+    app.add_handler(CommandHandler("menu", on_menu))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO | filters.VIDEO_NOTE | filters.PHOTO | filters.Document.ALL, on_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
+    app.add_handler(MessageHandler(filters.COMMAND, on_command))      # every other /command goes to Mux
 
     link.start()
     threading.Thread(target=background, name="flush", daemon=True).start()

@@ -119,6 +119,98 @@ def test_secret_input_is_never_relayed():
     assert s.answer_for_text("sk-123") == ""
 
 
+# --- command surface: console notices, main menu, quick menu ----------------------------------------------------------
+
+def test_command_answer_notices_are_relayed():
+    s = tb.MuxSession()
+    s.sent("/status", plain=False)
+    assert s.on_event({"type": "table", "title": "Status", "rows": [{"key": "Agent", "value": "MuxAgent"}]}) == []
+    s.on_event({"type": "warning", "message": "[bold]a < b[/]"})
+    out = s.on_event({"type": "prompt", "message": "> "})
+    assert len(out) == 1 and "<b>Status</b>" in out[0].text and "<pre>Agent  MuxAgent</pre>" in out[0].text
+    assert "⚠️ a &lt; b" in out[0].text
+
+
+def test_notices_not_asked_for_are_not_relayed():
+    s = tb.MuxSession()
+    s.on_event({"type": "success", "message": "Bridge started"})
+    assert s.on_event({"type": "prompt", "message": "> "}) == []
+    s.sent("hi", plain=True)
+    s.on_event({"type": "agent_turn_start", "agent": "MuxAgent"})
+    s.on_event({"type": "stream", "text": "hello"})
+    assert [o.text for o in s.on_event({"type": "agent_turn_end"})] == ["hello"]
+    s.on_event({"type": "debug", "message": "[AGENT SESSION] Saved to C:/x"})
+    assert s.on_event({"type": "prompt", "message": "> "}) == []
+
+
+def test_plain_text_at_main_menu_offers_to_start_an_agent_with_it():
+    s = tb.MuxSession()
+    s.sent("hello there", plain=True)
+    s.on_event({"type": "debug", "message": "This is the main menu - text here isn't sent to an agent."})
+    out = s.on_event({"type": "prompt", "message": "> "})
+    assert len(out) == 1 and "main menu" in out[0].text
+    assert out[0].buttons[0] == [("Start agent with this message", "cmd:1")]
+    assert s.answer_for_button("cmd:1") == "/agent"
+    s.sent("/agent", plain=False)
+    s.on_event({"type": "banner", "title": "AGENTIC CHAT INTERFACE"})
+    out = s.on_event({"type": "prompt", "message": "> "})
+    assert out[-1].mux == "hello there" and "AGENTIC CHAT INTERFACE" in out[0].text
+
+
+def test_quick_menu_by_button_or_number():
+    s = tb.MuxSession()
+    item = s.menu_message("What now?", tb.QUICK_MENU)
+    assert [row[0][1] for row in item.buttons] == ["cmd:1", "cmd:2", "cmd:3", "cmd:4", "cmd:5"]
+    assert s.answer_for_text("3") == "/status" and s.answer_for_text("3") is None
+    s.menu_message("What now?", tb.QUICK_MENU)
+    assert s.answer_for_button("cmd:9") is None and s.answer_for_button("cmd:2") == "/resume"
+
+
+def test_command_run_after_ending_the_session_is_relayed():
+    s = tb.MuxSession()
+    s.sent("y", plain=False)
+    assert s.on_event({"type": "prompt", "message": "> "}, now=10.0) == []
+    s.on_event({"type": "panel", "title": "Mux-Swarm Status", "content": "Selected lead MuxAgent"}, now=10.2)
+    out = s.on_event({"type": "prompt", "message": "> "}, now=10.3)
+    assert len(out) == 1 and "Selected lead MuxAgent" in out[0].text
+    s.on_event({"type": "info", "message": "later, unrelated"}, now=20.0)
+    assert s.take_idle() == []
+
+
+# --- attachments ----------------------------------------------------------------------------------------------------
+
+def test_upload_matches_the_web_app_contract(monkeypatch):
+    seen = {}
+
+    class Resp:
+        status_code = 200
+        def json(self):
+            return {"filename": "/srv/sandbox/uploads/x.jpg"}
+
+    def fake_post(url, params=None, headers=None, files=None, timeout=None):
+        seen.update(url=url, params=params, headers=headers, files=files)
+        return Resp()
+
+    monkeypatch.setattr(tb.requests, "post", fake_post)
+    assert tb.upload_to_mux("ws://10.0.0.5:6723/ws", None, "photo_1.jpg", b"jpg") == "/srv/sandbox/uploads/x.jpg"
+    assert seen["url"] == "http://10.0.0.5:6723/api/upload" and seen["params"] == {"dir": "uploads"}
+    assert seen["headers"] == {} and seen["files"] == {"file": ("photo_1.jpg", b"jpg")}
+    assert tb.with_file_refs(["/a.jpg", "/b.pdf"], "") == "[file: /a.jpg]\n[file: /b.pdf]"
+
+
+def test_upload_errors_and_size_limit(monkeypatch):
+    class Resp:
+        status_code = 401
+        def json(self):
+            raise ValueError("not json")
+
+    monkeypatch.setattr(tb.requests, "post", lambda *a, **k: Resp())
+    with pytest.raises(ValueError, match="HTTP 401"):
+        tb.upload_to_mux("ws://h/ws", "bad", "a.png", b"x")
+    with pytest.raises(ValueError, match="too large"):
+        tb.upload_to_mux("ws://h/ws", None, "b.bin", b"x" * (tb.MAX_UPLOAD_BYTES + 1))
+
+
 # --- rendering ------------------------------------------------------------------------------------------------------
 
 def test_render_escapes_and_formats():
