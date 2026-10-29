@@ -70,6 +70,14 @@ public sealed class OnboardSnapshotTests : IDisposable
         Assert.Null(OnboardSnapshot.Latest(Path.Combine(_root, "missing")));
     }
 
+    [Theory]
+    [InlineData(null, 200_000)]
+    [InlineData(0, 200_000)]
+    [InlineData(1_000_000, 1_000_000)]
+    [InlineData(64_000, 64_000)]
+    public void OnboardSession_CompactsAt200k_UnlessTheUserSetAThreshold(int? configured, int expected) =>
+        Assert.Equal(expected, CliCmdUtils.OnboardCompactThreshold(configured));   // the general fallback is 80k
+
     [Fact]
     public void OnboardSession_HasTheNormalTurnBudget() =>
         Assert.True(CliCmdUtils.OnboardMaxIterations >= 15);   // 3 ended onboarding mid-setup
