@@ -485,6 +485,11 @@ Optional: `ALLOWED_CHAT_IDS` (comma-separated), `MUX_BRIDGE_ALLOW_ALL=1` (let an
 - **Clean rendering:** answers are converted to Telegram HTML (bold, italics, code, links); tables and code blocks
   become monospace blocks; long answers split without breaking a code block. Thinking text is not sent; sub-agent
   output is labelled with the agent's name.
+- **Mux commands and menus work from the chat:** any slash command (`/agent`, `/resume`, `/status`, `/help`, `/qc`, ...)
+  is passed to Mux and its answer is posted back. A message sent while Mux is at its main menu gets a menu offering
+  to start an agent with that message. `/menu` shows quick actions as buttons; common commands are registered in Telegram's command menu.
+- **Attachments:** Photos and documents are uploaded to Mux like the web app's attachments (`/api/upload` into the sandbox
+  `uploads` folder) and handed to the agent as `[file: <path>]`; images go to its vision tool. Over 20 MB is refused with a reply.
 - Commands: `/stop` interrupts the running agent, `/cancel` dismisses a pending question, `/pair <code>`.
 
 ### Discord
