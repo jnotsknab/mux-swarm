@@ -5537,7 +5537,13 @@ const icons = {
         inp.rows = 1; inp.placeholder = 'Type your answer';
         inp.style.cssText = 'width:100%;background:var(--bg-input);color:var(--text);border:1px solid var(--border);border-radius:3px;padding:6px 8px;font-family:var(--font-mono);font-size:12px;outline:none;resize:none;';
         const go = document.createElement('button'); go.textContent = 'Submit'; go.style.marginTop = '6px';
-        const submit = () => { const v = inp.value.trim(); if (!v) return; sendRaw('=' + v); done(v); };
+        const submit = () => {
+          const v = inp.value.trim(); if (!v) return;
+          // Multi-select: keep the options already checked; the engine reads "1,3,=text" as both.
+          const picked = multi ? Array.from(selected).sort((a, b) => a - b) : [];
+          sendRaw(picked.length ? picked.join(',') + ',=' + v : '=' + v);
+          done(picked.length ? picked.map(i => choices[i-1]).concat([v]).join(', ') : v);
+        };
         inp.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); } });
         go.addEventListener('click', submit);
         row.appendChild(inp); row.appendChild(go); inp.focus();
