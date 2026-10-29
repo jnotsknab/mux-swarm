@@ -341,3 +341,17 @@ def test_prompt_answer_round_trip_through_mux():
         assert link.send(line)
         assert mux.next_line() == "1"
         link.stop()
+
+
+def test_multiselect_numbers_plus_text_keep_both():
+    s = tb.MuxSession()
+    s.on_event({"type": "multiselect_request", "prompt": "Which", "choices": ["a", "b", "c", CUSTOM, CANCEL], "bailout": True})
+    assert s.answer_for_text("1,3 and also d") == "1,3,=and also d"
+    s.on_event({"type": "multiselect_request", "prompt": "Which", "choices": ["a", "b", CUSTOM, CANCEL], "bailout": True})
+    assert s.answer_for_text("2") == "2"                        # plain numbers unchanged
+    s.on_event({"type": "multiselect_request", "prompt": "Which", "choices": ["a", "b", CUSTOM, CANCEL], "bailout": True})
+    assert s.answer_for_text("just text") == "=just text"       # plain text unchanged
+    s.on_event({"type": "multiselect_request", "prompt": "Which", "choices": ["a", "b"]})
+    assert s.answer_for_text("1 extra") == "1"                  # no bailout: no custom form (as before)
+    s.on_event({"type": "multiselect_request", "prompt": "Which", "choices": ["a", "b", "c", CUSTOM, CANCEL], "bailout": True})
+    assert s.answer_for_text("1, 3") == "1,3"                   # spaced numbers are still just numbers
