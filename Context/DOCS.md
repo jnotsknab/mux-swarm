@@ -545,6 +545,11 @@ Optional: `DISCORD_CHANNEL_ID` (also listen in that server channel; DMs to the b
 - **Rendering:** tables become code blocks, `####`+ headings become `###`, console markup is stripped, messages split
   under 2000 characters without breaking a code block. No @mentions are ever pinged. Thinking text is not sent;
   sub-agent output is labelled.
+- **Mux commands and menus work from the chat:** any slash command (`/agent`, `/resume`, `/status`, `/help`, `/qc`, ...)
+  is passed to Mux and its answer is posted back. A message sent while Mux is at its main menu gets a menu offering
+  to start an agent with that message. `/menu` shows quick actions as buttons.
+- **Attachments:** Images and files are uploaded to Mux like the web app's attachments (`/api/upload` into the sandbox
+  `uploads` folder) and handed to the agent as `[file: <path>]`; images go to its vision tool. Over 25 MB is refused with a reply.
 - `/stop` interrupts the running agent; `/cancel` dismisses a pending question.
 
 ### Signal
