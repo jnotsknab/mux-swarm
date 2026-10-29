@@ -178,9 +178,46 @@ CUSTOM_LABEL_MARK = "enter custom"
 # Console notices a command (or the main menu) answers with: shown in the chat when they reply to this bridge.
 NOTICE_TYPES = ("info", "success", "warning", "debug", "body", "markup", "panel", "table", "banner")
 # Quick menu (/menu and the main-menu hint): (label, command). "start" = /agent, then the message sent at the menu.
+SETTINGS_TEXT = ("Chat output is {mode}. Quiet hides Mux's terminal session chrome (banners, hints, tool counts, "
+                 "saved-session paths, token totals); verbose shows everything.")
 QUICK_MENU = [("New agent session", "/agent"), ("Resume a session", "/resume"), ("Status", "/status"),
               ("Commands", "/help"), ("End session", "/qc")]
 
+
+# Session chrome Mux emits for terminals (banner, hints, tool counts, save paths, token totals): hidden in chat unless
+# /settings is verbose. Same lines the web app's activity lanes treat as noise.
+NOISE_PATTERNS = [re.compile(p, re.I) for p in (
+    r"^Type /qc to exit", r"^Loaded session:", r"has \d+ (?:MCP )?tools available", r"^Loaded \d+ agents? from swarm\.json", r"^\[GOAL\]",
+    r"^\[AGENT SESSION\]", r"^\[Hook:[^\]]+\]", r"^Total Tokens:", r"tokens used this goal", r"^Press \[Esc", r"Press \[Escape\]",
+    r"^\[Daemon(?::[^\]]+)?\]\s*(?:Next fire|Cron|Watching|Goal completed|Starting|Running)")]
+
+
+def is_noise(t: str, ev: dict[str, Any]) -> bool:
+    """True for terminal session chrome that would only clutter a chat."""
+    if t in ("banner", "rule", "splash"):
+        return True
+    msg = strip_terminal_markup(str(ev.get("message") or "")).strip()
+    return any(p.search(msg) for p in NOISE_PATTERNS)
+
+
+def read_state(path: str) -> dict[str, Any]:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def update_state(path: str, **fields: Any) -> None:
+    """Merge fields into the bridge state file (paired ids, settings), keeping the rest."""
+    data = read_state(path)
+    data.update(fields)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except OSError as e:
+        log.warning("could not save bridge state: %s", e)
 
 def notice_text(t: str, ev: dict[str, Any]) -> str:
     """One console notice event as Markdown (the same events the web app renders)."""
@@ -221,6 +258,7 @@ class MuxSession:
         self.stash: Optional[str] = None        # a message sent at the main menu, kept for "Start agent with it"
         self.after_prompt: Optional[str] = None # sent to Mux at the next `prompt` (the stash, once /agent is up)
         self.menu: list[tuple[str, str]] = []   # quick-menu choices currently offered (answered by number)
+        self.verbose = False                    # /settings: show session chrome too
         self.to_mux: list[str] = []             # lines the bridge should send to Mux (drained by the glue)
 
     def take_answer(self) -> list[str]:
@@ -231,9 +269,11 @@ class MuxSession:
 
     def sent(self, line: str, plain: bool) -> None:
         """Record a line this bridge sent to Mux, so the notices Mux answers with are shown in the chat."""
+        self.menu = []
+        if self.turn_active:
+            return                              # answering a question mid-turn: the turn's own bookkeeping stays out
         self.expecting, self.turn_seen, self.grace_until = True, False, 0.0
         self.last_plain = line if plain else None
-        self.menu = []
 
     def menu_message(self, prompt: str, items: list[tuple[str, str]]) -> str:
         self.menu = list(items)
@@ -250,6 +290,18 @@ class MuxSession:
 
     def take_idle(self) -> list[str]:
         return self.take_answer() + self.take_notices()
+
+    def settings_message(self) -> str:
+        return (SETTINGS_TEXT.format(mode="*verbose*" if self.verbose else "*quiet*")
+                + "\n\n*Reply /settings quiet or /settings verbose.*")
+
+    def apply_setting(self, value: str) -> Optional[str]:
+        """Apply a /settings choice ("quiet" / "verbose", or "set:<choice>"); the confirmation, or None if unknown."""
+        value = value.strip().lower().removeprefix("set:")
+        if value not in ("quiet", "verbose"):
+            return None
+        self.verbose = value == "verbose"
+        return "Chat output is now " + value + "."
 
     def command_for_menu(self, index: str) -> Optional[str]:
         """The line to send for quick-menu choice `index` (1-based), or None when it is not on offer."""
@@ -286,7 +338,8 @@ class MuxSession:
             self.turn_active = True
             self.turn_seen = True
         elif t in NOTICE_TYPES:
-            if (self.expecting or now < self.grace_until) and not self.turn_active and not self.turn_seen:
+            if (self.expecting or now < self.grace_until) and not self.turn_active and not self.turn_seen \
+                    and (self.verbose or not is_noise(t, ev)):
                 self.notices.append(notice_text(t, ev))
                 self.last_chunk = now
         elif t == "prompt":
@@ -386,8 +439,7 @@ class Access:
             return False
         self.allowed.add(sender)
         try:
-            with open(self.state_path, "w", encoding="utf-8") as fh:
-                json.dump({"paired": sorted(self._read() | {sender})}, fh)
+            update_state(self.state_path, paired=sorted(self._read() | {sender}))
         except OSError as e:
             log.warning("could not save paired numbers: %s", e)
         self.pair_code = secrets.token_hex(3).upper()
@@ -648,6 +700,7 @@ def main(argv: Optional[list[str]] = None, stop: Optional[threading.Event] = Non
                  access.pair_code, access.pair_code)
 
     session = MuxSession()
+    session.verbose = bool(read_state(args.state).get("verbose"))
     lock = threading.Lock()
     state: dict[str, Optional[str]] = {"to": None}
 
@@ -689,6 +742,14 @@ def main(argv: Optional[list[str]] = None, stop: Optional[threading.Event] = Non
         if text.lower() == "/stop":
             mux.send("__CANCEL__")
             api.send(msg.sender, "Interrupt sent.")
+            return
+        if text.lower().startswith("/settings"):
+            with lock:
+                done = session.apply_setting(text[9:]) if text[9:].strip() else None
+                if done:
+                    update_state(args.state, verbose=session.verbose)
+                body = done or session.settings_message()
+            api.send(msg.sender, body)
             return
         if text.lower() == "/menu":
             with lock:
