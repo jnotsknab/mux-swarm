@@ -469,7 +469,8 @@ setup they confirm**, instead of only writing notes. `/setup` offers it at the e
 - **Rules it follows:** nothing the user didn't choose is imposed (no forced sandbox); config keys come from this
   file; secrets go to user env vars referenced as `${NAME}`; it uses only the tools the onboarding agent (the
   `singleAgent`) actually has and lists the rest as steps for the user.
-- The session uses the normal agent turn budget (15 rounds). Prompt token `{{paths.docs}}` resolves to this file.
+- The session uses the normal agent turn budget (15 rounds) and auto-compacts at 200k tokens unless you set
+  `compactionAgent.autoCompactTokenThreshold` (then yours applies). Prompt token `{{paths.docs}}` resolves to this file.
 
 ## Bridge Setup
 
