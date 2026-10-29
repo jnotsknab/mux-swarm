@@ -324,6 +324,9 @@ public static partial class MuxConsole
                 InputOverride = Console.In;
                 return Console.ReadLine();
             }
+            // Not typed: the startup input box (drawn before the first keyboard read) must not stay up while the
+            // agent works on this line (e.g. /setup's seeded onboarding goal).
+            if (ViaDriver) lock (ConsoleLock) _driver!.ReleaseInputBox();
             return line;
         }
 
