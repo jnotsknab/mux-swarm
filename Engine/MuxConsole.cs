@@ -373,6 +373,8 @@ public static partial class MuxConsole
 
         var c = MuxConsole.MultiSelectChoice(question, choices);
         if (c.Cancelled) return "User cancelled the prompt without choosing (no option selected).";
+        if (c.Custom && c.AlsoSelected is { Length: > 0 } also)
+            return $"User selected: {also}; and entered a custom response (outside the offered options): {c.Value}";
         if (c.Custom) return $"User entered a custom response (outside the offered options): {c.Value}";
         return $"User selected: {c.Value}";
     }
@@ -394,9 +396,19 @@ public static partial class MuxConsole
     /// typed free text (Custom), or empty (Cancelled).</summary>
     public readonly record struct PromptChoice(bool Cancelled, bool Custom, string Value)
     {
+        /// <summary>Multi-select only: the options checked alongside "enter custom" (joined by ", "), else null.</summary>
+        public string? AlsoSelected { get; init; }
+
         public static PromptChoice Cancel() => new(true, false, string.Empty);
         public static PromptChoice CustomText(string v) => new(false, true, v);
         public static PromptChoice Picked(string v) => new(false, false, v);
+
+        /// <summary>Custom text plus the options checked with it (none checked = plain custom text).</summary>
+        public static PromptChoice CustomWith(string v, IEnumerable<string> alsoSelected)
+        {
+            var also = string.Join(", ", alsoSelected);
+            return new(false, true, v) { AlsoSelected = also.Length > 0 ? also : null };
+        }
     }
 
     // Shared resolver for the scripted (StdioMode / InputOverride) path: a leading '=' means a
@@ -536,12 +548,7 @@ public static partial class MuxConsole
             if (TuiPromptModal(PromptModalView.Kind.MultiSelect, title, modalRows) is { } pm)
             {
                 if (pm.Cancelled || pm.Checked is not { Count: > 0 } ck) return PromptChoice.Cancel();
-                if (ck.Contains(list.Count))
-                {
-                    var typedC = Prompt($"{title} (custom)", null);
-                    return string.IsNullOrWhiteSpace(typedC) ? PromptChoice.Cancel() : PromptChoice.CustomText(typedC);
-                }
-                return PromptChoice.Picked(string.Join(", ", ck.Where(i => i < list.Count).Select(i => list[i])));
+                return MultiFromChecked(ck, list, () => Prompt($"{title} (custom)", null));
             }
         }
 
@@ -578,11 +585,32 @@ public static partial class MuxConsole
         if (picked.Contains(CustomAffordanceLabel))
         {
             var typed = Prompt($"{title} (custom)", null);
-            return string.IsNullOrWhiteSpace(typed) ? PromptChoice.Cancel() : PromptChoice.CustomText(typed);
+            return string.IsNullOrWhiteSpace(typed)
+                ? PromptChoice.Cancel()
+                : PromptChoice.CustomWith(typed, picked.Where(p => p != CustomAffordanceLabel));
         }
         return PromptChoice.Picked(string.Join(", ", picked));
     }
 
+    /// <summary>
+    /// Checked modal rows -> the answer. Row <c>list.Count</c> is the "enter custom" affordance: when it is checked the
+    /// other checked options are kept and the typed text (<paramref name="readCustom"/>) is added to them.
+    /// </summary>
+    internal static PromptChoice MultiFromChecked(IReadOnlyCollection<int> checkedRows, List<string> list, Func<string?> readCustom)
+    {
+        var checkedOpts = checkedRows.Where(i => i >= 0 && i < list.Count).OrderBy(i => i).Select(i => list[i]).ToList();
+        if (checkedRows.Contains(list.Count))
+        {
+            var typed = readCustom();
+            return string.IsNullOrWhiteSpace(typed) ? PromptChoice.Cancel() : PromptChoice.CustomWith(typed, checkedOpts);
+        }
+        return checkedOpts.Count > 0 ? PromptChoice.Picked(string.Join(", ", checkedOpts)) : PromptChoice.Cancel();
+    }
+
+    /// <summary>
+    /// A scripted / client multi-select answer: <c>1,3</c> (options), <c>=text</c> (custom only), <c>cancel</c>,
+    /// or <c>1,3,=text</c> (options checked alongside a custom answer; everything after the first <c>=</c> is the text).
+    /// </summary>
     private static PromptChoice ResolveScriptedMulti(string? raw, List<string> list)
     {
         var input = (raw ?? string.Empty).Trim();
@@ -591,10 +619,18 @@ public static partial class MuxConsole
         if (input.Equals("cancel", StringComparison.OrdinalIgnoreCase)
             || input.Equals("esc", StringComparison.OrdinalIgnoreCase))
             return PromptChoice.Cancel();
+        string? custom = null;
+        int eq = input.IndexOf('=');
+        if (eq > 0 && input[..eq].All(ch => char.IsDigit(ch) || ch == ',' || ch == ' '))
+        {
+            custom = input[(eq + 1)..].Trim();
+            input = input[..eq];
+        }
         var selected = new List<string>();
         foreach (var part in input.Split(',', StringSplitOptions.RemoveEmptyEntries))
             if (int.TryParse(part.Trim(), out int idx) && idx >= 1 && idx <= list.Count)
                 selected.Add(list[idx - 1]);
+        if (!string.IsNullOrEmpty(custom)) return PromptChoice.CustomWith(custom, selected);
         return selected.Count > 0 ? PromptChoice.Picked(string.Join(", ", selected)) : PromptChoice.Cancel();
     }
 

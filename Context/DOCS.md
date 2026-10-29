@@ -1295,6 +1295,12 @@ options. Each choice prompt carries two bailout affordances:
 - **Cancel** - back out entirely; the tool returns a "cancelled" result the model handles gracefully
   (no forced choice, no wasted extra turn).
 - **Enter custom** - type a free-text value outside the option set; returned as a custom response.
+  In a multi-select the options checked alongside "enter custom" are kept: the tool returns
+  `User selected: <options>; and entered a custom response ...: <text>`.
+
+Client answers to a bailout `select_request` / `multiselect_request` over `/ws` or stdio: a 1-based
+index (`2`) or indices (`1,3`), `=text` for a custom answer, `cancel` to back out. Multi-select also
+accepts `1,3,=text` (checked options plus a custom answer; everything after the first `=` is the text).
 
 Implemented additively on the `MuxConsole` prompt primitives (`SelectChoice` / `ConfirmChoice` /
 `MultiSelectChoice` + the `PromptChoice` result); the base `Select`/`Confirm`/`MultiSelect` are

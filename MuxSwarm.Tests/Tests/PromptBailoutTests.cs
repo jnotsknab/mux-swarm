@@ -162,6 +162,66 @@ public class PromptBailoutTests
     }
 
     [Fact]
+    public void MultiSelectChoice_OptionsAndCustom_KeepsBoth()
+    {
+        try
+        {
+            Script("1,3,=also this");
+            var c = MuxConsole.MultiSelectChoice("pick", new[] { "a", "b", "c" });
+            Assert.True(c.Custom);
+            Assert.False(c.Cancelled);
+            Assert.Equal("also this", c.Value);
+            Assert.Equal("a, c", c.AlsoSelected);
+        }
+        finally { Reset(); }
+    }
+
+    [Fact]
+    public void MultiSelectChoice_ExistingAnswerForms_Unchanged()
+    {
+        try
+        {
+            Script("=only custom");
+            var c = MuxConsole.MultiSelectChoice("pick", new[] { "a", "b" });
+            Assert.True(c.Custom);
+            Assert.Null(c.AlsoSelected);
+            Script("2");
+            Assert.Equal(MuxConsole.PromptChoice.Picked("b"), MuxConsole.MultiSelectChoice("pick", new[] { "a", "b" }));
+            Script("a=b");                                   // free text is not the combined form
+            Assert.True(MuxConsole.MultiSelectChoice("pick", new[] { "a", "b" }).Cancelled);
+        }
+        finally { Reset(); }
+    }
+
+    [Fact]
+    public void FrameModal_CheckedOptionsPlusCustom_KeepsBoth()
+    {
+        var list = new System.Collections.Generic.List<string> { "a", "b", "c" };
+        var c = MuxConsole.MultiFromChecked(new[] { 2, 3, 0 }, list, () => "typed");   // row 3 = "enter custom"
+        Assert.True(c.Custom);
+        Assert.Equal("typed", c.Value);
+        Assert.Equal("a, c", c.AlsoSelected);
+        Assert.Null(MuxConsole.MultiFromChecked(new[] { 3 }, list, () => "only").AlsoSelected);
+        Assert.True(MuxConsole.MultiFromChecked(new[] { 1, 3 }, list, () => "  ").Cancelled);
+        Assert.Equal(MuxConsole.PromptChoice.Picked("a, b"), MuxConsole.MultiFromChecked(new[] { 0, 1 }, list, () => null));
+    }
+
+    [Fact]
+    public void AskMultiSelect_OptionsAndCustom_ReportsBoth()
+    {
+        try
+        {
+            Script("2,=my own");
+            var r = MuxConsole.AskMultiSelect("pick", "alpha|beta|gamma");
+            Assert.Equal("User selected: beta; and entered a custom response (outside the offered options): my own", r);
+            Script("=just mine");
+            Assert.Equal("User entered a custom response (outside the offered options): just mine",
+                MuxConsole.AskMultiSelect("pick", "alpha|beta"));
+        }
+        finally { Reset(); }
+    }
+
+    [Fact]
     public void AskSelect_Cancel_ReturnsCancelledMessage()
     {
         try
