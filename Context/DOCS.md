@@ -596,6 +596,7 @@ Link via QR code at `http://localhost:8080/v1/qrcodelink?device_name=mux-swarm`.
   to start an agent with that message. `/menu` shows quick actions as a numbered list.
 - **Attachments:** Attachments are uploaded to Mux like the web app's attachments (`/api/upload` into the sandbox
   `uploads` folder) and handed to the agent as `[file: <path>]`; images go to its vision tool. Over 25 MB is refused with a reply.
+- **Quiet by default:** Mux's terminal session chrome (banners, `Type /qc` hints, tool counts, `Loaded session`, `[AGENT SESSION] Saved to`, `Total Tokens`, `[Hook:...]` lines) is not posted to the chat. `/settings` switches between quiet and verbose (saved in the bridge state file).
 - `/stop` interrupts the running agent.
 
 ## Swarm.json Structure

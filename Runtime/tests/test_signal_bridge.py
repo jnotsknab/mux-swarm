@@ -76,7 +76,7 @@ def test_plain_text_at_main_menu_offers_numbered_menu_and_replays_it():
     s.sent("/agent", plain=False)
     s.on_event({"type": "banner", "title": "AGENTIC CHAT INTERFACE"})
     out = s.on_event({"type": "prompt", "message": "> "})
-    assert "AGENTIC CHAT INTERFACE" in out[0] and s.to_mux == ["hello there"]
+    assert out == [] and s.to_mux == ["hello there"]                      # the banner is session chrome
 
 
 def test_quick_menu_numbers_are_one_shot_and_after_session_end_relayed():
@@ -195,3 +195,48 @@ def test_multiselect_numbers_plus_text_keep_both():
     assert s.answer_for_text("1 extra") == "1"                  # no bailout: no custom form (as before)
     s.on_event({"type": "multiselect_request", "prompt": "Which", "choices": ["a", "b", "c", CUSTOM, CANCEL], "bailout": True})
     assert s.answer_for_text("1, 3") == "1,3"                   # spaced numbers are still just numbers
+
+
+# --- session chrome / settings --------------------------------------------------------------------------------------
+
+def test_session_chrome_is_hidden_and_verbose_shows_it():
+    chrome = [{"type": "success", "message": "Loaded session: 2026-10-29_01-26-07"},
+              {"type": "banner", "title": "AGENTIC CHAT INTERFACE"},
+              {"type": "debug", "message": "Type /qc to exit, /compact to compress context. Press [Esc] to cancel the current turn."},
+              {"type": "success", "message": "MuxAgent has 50 tools available"},
+              {"type": "debug", "message": "[Hook:phone-notify:stderr] DISCORD_WEBHOOK_URL is not set; notifications disabled"}]
+    s = sb.MuxSession()
+    s.sent("/resume", plain=False)
+    for ev in chrome:
+        s.on_event(ev)
+    assert s.on_event({"type": "prompt", "message": "> "}) == []
+    assert s.apply_setting("set:verbose") == "Chat output is now verbose." and s.verbose
+    s.sent("/resume", plain=False)
+    for ev in chrome:
+        s.on_event(ev)
+    out = s.on_event({"type": "prompt", "message": "> "})
+    assert len(out) == 1 and "50 tools" in out[0]
+    assert s.apply_setting("nonsense") is None and s.verbose
+
+
+def test_answering_a_question_mid_turn_keeps_turn_bookkeeping_out():
+    s = sb.MuxSession()
+    s.sent("try ask user", plain=True)
+    s.on_event({"type": "agent_turn_start", "agent": "MuxAgent"})
+    s.on_event({"type": "confirm_request", "prompt": "Ok?", "default": False})
+    s.sent("y", plain=False)                                     # the answer goes out while the turn runs
+    s.on_event({"type": "stream", "text": "done"})
+    s.on_event({"type": "agent_turn_end"})
+    s.on_event({"type": "debug", "message": "[AGENT SESSION] Saved to C:/x/Sessions/1"})
+    s.on_event({"type": "debug", "message": "Total Tokens: 123,070 - Cached Tokens: 122,384"})
+    assert s.on_event({"type": "prompt", "message": "> "}) == [] and s.take_idle() == []
+    s.sent("/status", plain=False)                                 # a real command still answers
+    s.on_event({"type": "panel", "title": "Mux-Swarm Status", "content": "lead MuxAgent"})
+    assert "lead MuxAgent" in s.on_event({"type": "prompt", "message": "> "})[0]
+
+
+def test_state_file_keeps_pairing_and_settings(tmp_path):
+    path = str(tmp_path / "state.json")
+    sb.update_state(path, verbose=True)
+    sb.update_state(path, paired=[1])
+    assert sb.read_state(path) == {"verbose": True, "paired": [1]}
