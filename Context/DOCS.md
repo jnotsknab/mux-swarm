@@ -589,6 +589,11 @@ Link via QR code at `http://localhost:8080/v1/qrcodelink?device_name=mux-swarm`.
   for confirms, your own text when the prompt allows it, or `/cancel`. Secret prompts are refused.
 - **Rendering:** styled text (bold, italic, strikethrough, monospace); code and tables as monospace lines; links as
   `label (url)`; messages split under 1800 characters without leaving a style open.
+- **Mux commands and menus work from the chat:** any slash command (`/agent`, `/resume`, `/status`, `/help`, `/qc`, ...)
+  is passed to Mux and its answer is posted back. A message sent while Mux is at its main menu gets a menu offering
+  to start an agent with that message. `/menu` shows quick actions as a numbered list.
+- **Attachments:** Attachments are uploaded to Mux like the web app's attachments (`/api/upload` into the sandbox
+  `uploads` folder) and handed to the agent as `[file: <path>]`; images go to its vision tool. Over 25 MB is refused with a reply.
 - `/stop` interrupts the running agent.
 
 ## Swarm.json Structure
