@@ -71,6 +71,110 @@ def test_many_choices_and_multiselect_become_numbered_lists():
     assert "2. b" in out[0].text and s.answer_for_text("1, 3") == "1,3"
 
 
+# --- command surface: console notices, main menu, quick menu ----------------------------------------------------------
+
+def test_command_answer_notices_are_relayed():
+    s = db.MuxSession()
+    s.sent("/status", plain=False)
+    assert s.on_event({"type": "table", "title": "Status", "rows": [{"key": "Agent", "value": "MuxAgent"}]}) == []
+    s.on_event({"type": "warning", "message": "[bold]careful[/]"})
+    out = s.on_event({"type": "prompt", "message": "> "})
+    assert [o.text for o in out] == ["**Status**\n```\nAgent  MuxAgent\n```\n⚠️ careful"]
+
+
+def test_notices_not_asked_for_are_not_relayed():
+    s = db.MuxSession()
+    s.on_event({"type": "success", "message": "Bridge started"})            # nobody here sent anything
+    assert s.on_event({"type": "prompt", "message": "> "}) == []
+    s.sent("hi", plain=True)
+    s.on_event({"type": "agent_turn_start", "agent": "MuxAgent"})
+    s.on_event({"type": "stream", "text": "hello"})
+    assert [o.text for o in s.on_event({"type": "agent_turn_end"})] == ["hello"]
+    s.on_event({"type": "debug", "message": "[AGENT SESSION] Saved to C:/x"})  # turn bookkeeping stays out of chat
+    assert s.on_event({"type": "prompt", "message": "> "}) == []
+
+
+def test_plain_text_at_main_menu_offers_to_start_an_agent_with_it():
+    s = db.MuxSession()
+    s.sent("hello there", plain=True)
+    s.on_event({"type": "debug", "message": "This is the main menu - text here isn't sent to an agent."})
+    out = s.on_event({"type": "prompt", "message": "> "})
+    assert len(out) == 1 and "main menu" in out[0].text
+    assert out[0].buttons[0] == ("Start agent with this message", "cmd:1")
+    assert s.answer_for_button("cmd:1") == "/agent"
+    s.sent("/agent", plain=False)
+    s.on_event({"type": "banner", "title": "AGENTIC CHAT INTERFACE"})
+    out = s.on_event({"type": "prompt", "message": "> "})
+    assert out[-1].mux == "hello there"                                   # the stashed message follows /agent
+    assert "AGENTIC CHAT INTERFACE" in out[0].text
+
+
+def test_quick_menu_by_button_or_number():
+    s = db.MuxSession()
+    item = s.menu_message("What now?", db.QUICK_MENU)
+    assert [b[1] for b in item.buttons] == ["cmd:1", "cmd:2", "cmd:3", "cmd:4", "cmd:5"]
+    assert s.answer_for_text("3") == "/status" and s.menu == []
+    assert s.answer_for_text("3") is None                                 # the menu is one-shot
+    s.menu_message("What now?", db.QUICK_MENU)
+    assert s.answer_for_button("cmd:9") is None and s.answer_for_button("cmd:2") == "/resume"
+
+
+def test_command_run_after_ending_the_session_is_relayed():
+    s = db.MuxSession()
+    s.sent("y", plain=False)                                   # "/status only runs at the main menu. End session?"
+    assert s.on_event({"type": "prompt", "message": "> "}, now=10.0) == []      # the session ended
+    s.on_event({"type": "panel", "title": "Mux-Swarm Status", "content": "Selected lead MuxAgent"}, now=10.2)
+    assert [o.text for o in s.on_event({"type": "prompt", "message": "> "}, now=10.3)] == \
+        ["**Mux-Swarm Status**\nSelected lead MuxAgent"]
+    s.on_event({"type": "info", "message": "later, unrelated"}, now=20.0)
+    assert s.take_idle() == []
+
+
+def test_help_body_keeps_its_columns():
+    s = db.MuxSession()
+    s.sent("/help", plain=False)
+    s.on_event({"type": "body", "message": "Slash Commands\r\n  /agent   Start"})
+    assert s.on_event({"type": "prompt", "message": "> "})[0].text.startswith("```\nSlash Commands")
+
+
+# --- attachments ----------------------------------------------------------------------------------------------------
+
+def test_upload_matches_the_web_app_contract(monkeypatch):
+    seen = {}
+
+    class Resp:
+        status_code = 200
+        def json(self):
+            return {"filename": "C:/sandbox/uploads/20261029_x.png", "name": "20261029_x.png"}
+
+    def fake_post(url, params=None, headers=None, files=None, timeout=None):
+        seen.update(url=url, params=params, headers=headers, files=files)
+        return Resp()
+
+    monkeypatch.setattr(db.requests, "post", fake_post)
+    path = db.upload_to_mux("ws://127.0.0.1:6723/ws?replay=0", "t0k", "shot.png", b"\x89PNG")
+    assert path == "C:/sandbox/uploads/20261029_x.png"
+    assert seen["url"] == "http://127.0.0.1:6723/api/upload" and seen["params"] == {"dir": "uploads"}
+    assert seen["headers"] == {"Authorization": "Bearer t0k"} and seen["files"] == {"file": ("shot.png", b"\x89PNG")}
+    assert db.with_file_refs([path], "what is this?") == "[file: C:/sandbox/uploads/20261029_x.png]\nwhat is this?"
+
+
+def test_upload_errors_and_size_limit(monkeypatch):
+    class Resp:
+        status_code = 500
+        def json(self):
+            return {"error": "Sandbox not configured"}
+
+    monkeypatch.setattr(db.requests, "post", lambda *a, **k: Resp())
+    for name, data, msg in (("a.png", b"x", "Sandbox not configured"), ("b.bin", b"x" * (db.MAX_UPLOAD_BYTES + 1), "too large")):
+        try:
+            db.upload_to_mux("wss://h/ws", None, name, data)
+            raise AssertionError("expected failure")
+        except ValueError as e:
+            assert msg in str(e)
+    assert db.http_base("wss://h:1/ws") == "https://h:1"
+
+
 # --- rendering ------------------------------------------------------------------------------------------------------
 
 def test_link_labels_and_bracketed_words_survive():
