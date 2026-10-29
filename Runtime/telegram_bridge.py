@@ -371,7 +371,8 @@ class MuxSession:
         rows = [[(c[:60], f"a:{i + 1}")] for i, c in enumerate(real[:40])]
         if bailout:
             rows.append([("Type my own", "a:custom"), ("Cancel", "a:cancel")])
-        note = "\n\n<i>Reply with the numbers, comma-separated (e.g. 1,3).</i>" if kind == "multiselect" else ""
+        note = ("\n\n<i>Reply with the numbers, comma-separated (e.g. 1,3" + (", or 1,3 plus your own text" if bailout else "")
+                + ").</i>") if kind == "multiselect" else ""
         listing = "\n".join(f"{i + 1}. {html.escape(c, quote=False)}" for i, c in enumerate(real)) if kind == "multiselect" else ""
         body = "❓ " + render_html(prompt) + ("\n" + listing if listing else "") + note
         return Outgoing(text=body, buttons=[] if kind == "multiselect" else rows)
@@ -427,6 +428,10 @@ class MuxSession:
         if p.kind in ("select", "multiselect"):
             self.pending = None
             raw = text.strip()
+            if p.kind == "multiselect" and p.bailout:
+                m = re.fullmatch(r"(\d+(?:\s*,\s*\d+)*)\s*[,;:]?\s+([^\d\s,].*)", raw, re.S)
+                if m:                                   # "1,3 my own text": the checked options plus a custom answer
+                    return m.group(1).replace(" ", "") + ",=" + m.group(2)
             if re.fullmatch(r"\d+(\s*,\s*\d+)*", raw):
                 return raw.replace(" ", "")
             return ("=" + raw) if p.bailout else "1"
