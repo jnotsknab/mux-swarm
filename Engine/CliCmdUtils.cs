@@ -1161,9 +1161,20 @@ public static class CliCmdUtils
             maxIterations: OnboardMaxIterations,
             mcpTools: mcpTools,
             continuous: false,
-            systemPromptOverride: resolvedPrompt
+            systemPromptOverride: resolvedPrompt,
+            autoCompactTokenThreshold: OnboardCompactThreshold(App.SwarmConfig?.CompactionAgent?.AutoCompactTokenThreshold)
         );
     }
+
+    /// <summary>
+    /// Context size at which the onboarding session auto-compacts: the user's
+    /// <c>compactionAgent.autoCompactTokenThreshold</c> when set, else 200k. Onboarding reads DOCS.md sections
+    /// and several config files in one session, so the general 80k fallback would compact it mid-setup.
+    /// </summary>
+    internal static int OnboardCompactThreshold(int? configured) => configured is > 0 ? configured.Value : OnboardDefaultCompactThreshold;
+
+    /// <summary>Onboarding's auto-compact threshold when the user has not set one.</summary>
+    internal const int OnboardDefaultCompactThreshold = 200_000;
 
     /// <summary>
     /// Per-turn round cap for the onboarding session. Onboarding detects tools, writes several files and verifies
