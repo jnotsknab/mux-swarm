@@ -334,7 +334,8 @@ class MuxSession:
         self.pending = PendingPrompt(kind, prompt, choices=real, bailout=bailout)
         if kind == "multiselect" or len(real) > MAX_BUTTONS:
             listing = "\n".join(f"{i + 1}. {c}" for i, c in enumerate(real))
-            how = "the numbers, comma-separated (e.g. 1,3)" if kind == "multiselect" else "a number"
+            how = ("the numbers, comma-separated (e.g. 1,3" + (", or 1,3 plus your own text" if bailout else "") + ")"
+                   if kind == "multiselect" else "a number")
             return Outgoing(text=f"❓ {prompt}\n{listing}\n\n*Reply with {how}.*")
         buttons = [(c[:80], str(i + 1)) for i, c in enumerate(real)]
         if bailout:
@@ -371,6 +372,10 @@ class MuxSession:
             return "" if p.secret else text
         if p.kind == "confirm":
             return "y" if raw.lower().startswith("y") else "n"
+        if p.kind == "multiselect" and p.bailout:
+            m = re.fullmatch(r"(\d+(?:\s*,\s*\d+)*)\s*[,;:]?\s+([^\d\s,].*)", raw, re.S)
+            if m:                                   # "1,3 my own text": the checked options plus a custom answer
+                return m.group(1).replace(" ", "") + ",=" + m.group(2)
         if re.fullmatch(r"\d+(\s*,\s*\d+)*", raw):
             return raw.replace(" ", "")
         return ("=" + raw) if p.bailout else "1"
