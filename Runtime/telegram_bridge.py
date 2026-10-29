@@ -218,9 +218,46 @@ CANCEL_LABEL_MARK = "cancel"
 # Console notices a command (or the main menu) answers with: shown in the chat when they reply to this bridge.
 NOTICE_TYPES = ("info", "success", "warning", "debug", "body", "markup", "panel", "table", "banner")
 # Quick menu (/menu and the main-menu hint): (label, command). "start" = /agent, then the message sent at the menu.
+SETTINGS_TEXT = ("Chat output is {mode}. Quiet hides Mux's terminal session chrome (banners, hints, tool counts, "
+                 "saved-session paths, token totals); verbose shows everything.")
 QUICK_MENU = [("New agent session", "/agent"), ("Resume a session", "/resume"), ("Status", "/status"),
               ("Commands", "/help"), ("End session", "/qc")]
 
+
+# Session chrome Mux emits for terminals (banner, hints, tool counts, save paths, token totals): hidden in chat unless
+# /settings is verbose. Same lines the web app's activity lanes treat as noise.
+NOISE_PATTERNS = [re.compile(p, re.I) for p in (
+    r"^Type /qc to exit", r"^Loaded session:", r"has \d+ (?:MCP )?tools available", r"^Loaded \d+ agents? from swarm\.json", r"^\[GOAL\]",
+    r"^\[AGENT SESSION\]", r"^\[Hook:[^\]]+\]", r"^Total Tokens:", r"tokens used this goal", r"^Press \[Esc", r"Press \[Escape\]",
+    r"^\[Daemon(?::[^\]]+)?\]\s*(?:Next fire|Cron|Watching|Goal completed|Starting|Running)")]
+
+
+def is_noise(t: str, ev: dict[str, Any]) -> bool:
+    """True for terminal session chrome that would only clutter a chat."""
+    if t in ("banner", "rule", "splash"):
+        return True
+    msg = strip_terminal_markup(str(ev.get("message") or "")).strip()
+    return any(p.search(msg) for p in NOISE_PATTERNS)
+
+
+def read_state(path: str) -> dict[str, Any]:
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def update_state(path: str, **fields: Any) -> None:
+    """Merge fields into the bridge state file (paired ids, settings), keeping the rest."""
+    data = read_state(path)
+    data.update(fields)
+    try:
+        with open(path, "w", encoding="utf-8") as fh:
+            json.dump(data, fh)
+    except OSError as e:
+        log.warning("could not save bridge state: %s", e)
 
 def notice_text(t: str, ev: dict[str, Any]) -> str:
     """One console notice event as Markdown (the same events the web app renders)."""
@@ -264,6 +301,7 @@ class MuxSession:
         self.stash: Optional[str] = None        # a message sent at the main menu, kept for "Start agent with it"
         self.after_prompt: Optional[str] = None # sent to Mux at the next `prompt` (the stash, once /agent is up)
         self.menu: list[tuple[str, str]] = []   # quick-menu choices currently offered (also answerable by number)
+        self.verbose = False                    # /settings: show session chrome too
 
     def take_answer(self) -> list[Outgoing]:
         text = "".join(self.buffer).strip()
@@ -275,9 +313,11 @@ class MuxSession:
 
     def sent(self, line: str, plain: bool) -> None:
         """Record a line this bridge sent to Mux, so the notices Mux answers with are shown in the chat."""
+        self.menu = []
+        if self.turn_active:
+            return                              # answering a question mid-turn: the turn's own bookkeeping stays out
         self.expecting, self.turn_seen, self.grace_until = True, False, 0.0
         self.last_plain = line if plain else None
-        self.menu = []
 
     def menu_message(self, prompt: str, items: list[tuple[str, str]]) -> Outgoing:
         self.menu = list(items)
@@ -320,7 +360,8 @@ class MuxSession:
             self.turn_active = True
             self.turn_seen = True
         elif t in NOTICE_TYPES:
-            if (self.expecting or now < self.grace_until) and not self.turn_active and not self.turn_seen:
+            if (self.expecting or now < self.grace_until) and not self.turn_active and not self.turn_seen \
+                    and (self.verbose or not is_noise(t, ev)):
                 self.notices.append(notice_text(t, ev))
                 self.last_chunk = now
         elif t == "prompt":
@@ -376,6 +417,18 @@ class MuxSession:
         listing = "\n".join(f"{i + 1}. {html.escape(c, quote=False)}" for i, c in enumerate(real)) if kind == "multiselect" else ""
         body = "❓ " + render_html(prompt) + ("\n" + listing if listing else "") + note
         return Outgoing(text=body, buttons=[] if kind == "multiselect" else rows)
+
+    def settings_message(self) -> Outgoing:
+        return Outgoing(text=html.escape(SETTINGS_TEXT.format(mode="verbose" if self.verbose else "quiet"), quote=False),
+                        buttons=[[("Quiet", "set:quiet"), ("Verbose", "set:verbose")]])
+
+    def apply_setting(self, value: str) -> Optional[str]:
+        """Apply a /settings choice ("quiet" / "verbose", or "set:<choice>"); the confirmation, or None if unknown."""
+        value = value.strip().lower().removeprefix("set:")
+        if value not in ("quiet", "verbose"):
+            return None
+        self.verbose = value == "verbose"
+        return "Chat output is now " + value + "."
 
     def command_for_menu(self, index: str) -> Optional[str]:
         """The line to send for quick-menu choice `index` (1-based), or None when it is not on offer."""
@@ -458,11 +511,7 @@ class Access:
             pass
 
     def _save(self, paired: set[int]) -> None:
-        try:
-            with open(self.state_path, "w", encoding="utf-8") as fh:
-                json.dump({"paired": sorted(paired)}, fh)
-        except OSError as e:
-            log.warning("could not save paired chats: %s", e)
+        update_state(self.state_path, paired=sorted(paired))
 
     def is_allowed(self, chat_id: int) -> bool:
         return self.allow_all or chat_id in self.allowed
@@ -659,6 +708,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         log.info("Pairing code: %s  (send '/pair %s' to the bot from your phone)", access.pair_code, access.pair_code)
 
     session = MuxSession()
+    session.verbose = bool(read_state(args.state).get("verbose"))
     state: dict[str, Any] = {"chat_id": None}
     loop_holder: dict[str, asyncio.AbstractEventLoop] = {}
     app = ApplicationBuilder().token(args.token).build()
@@ -770,6 +820,16 @@ def main(argv: Optional[list[str]] = None) -> int:
                                             QUICK_MENU)
             await deliver(update.effective_chat.id, [item])
 
+    async def on_settings(update: Update, ctx: ContextTypes.DEFAULT_TYPE) -> None:
+        if await guard(update):
+            state["chat_id"] = update.effective_chat.id
+            with lock:
+                done = session.apply_setting(" ".join(ctx.args or [])) if ctx.args else None
+                if done:
+                    update_state(args.state, verbose=session.verbose)
+                item = Outgoing(text=html.escape(done, quote=False)) if done else session.settings_message()
+            await deliver(update.effective_chat.id, [item])
+
     async def on_command(update: Update, _ctx: ContextTypes.DEFAULT_TYPE) -> None:
         """Any other /command is a Mux command: pass it through (minus Telegram's @botname suffix)."""
         if update.message and update.message.text and await guard(update):
@@ -820,6 +880,15 @@ def main(argv: Optional[list[str]] = None) -> int:
             return
         await q.answer()
         state["chat_id"] = q.message.chat.id
+        if (q.data or "").startswith("set:"):
+            with lock:
+                done = session.apply_setting(q.data or "")
+                update_state(args.state, verbose=session.verbose)
+            try:
+                await q.edit_message_text(done or "")
+            except BadRequest:
+                pass
+            return
         with lock:
             line = session.answer_for_button(q.data or "")
             asking_custom = session.pending is not None and session.pending.prompt == "custom"
@@ -837,7 +906,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     async def post_init(application: Any) -> None:
         loop_holder["loop"] = asyncio.get_running_loop()
         await application.bot.set_my_commands([
-            ("menu", "Quick actions"), ("agent", "Start an agent session"), ("resume", "Resume a session"),
+            ("menu", "Quick actions"), ("settings", "Quiet or verbose chat output"), ("agent", "Start an agent session"), ("resume", "Resume a session"),
             ("status", "Mux status"), ("help", "Mux commands"), ("qc", "End the agent session"),
             ("stop", "Interrupt the running agent"), ("cancel", "Cancel a pending question"),
             ("pair", "Pair this chat: /pair <code>")])
@@ -848,6 +917,7 @@ def main(argv: Optional[list[str]] = None) -> int:
     app.add_handler(CommandHandler("stop", on_stop))
     app.add_handler(CommandHandler("cancel", on_cancel))
     app.add_handler(CommandHandler("menu", on_menu))
+    app.add_handler(CommandHandler("settings", on_settings))
     app.add_handler(CallbackQueryHandler(on_button))
     app.add_handler(MessageHandler(filters.VOICE | filters.AUDIO | filters.VIDEO_NOTE | filters.PHOTO | filters.Document.ALL, on_media))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_text))
