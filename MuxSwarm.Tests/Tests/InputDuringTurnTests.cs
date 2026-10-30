@@ -52,6 +52,20 @@ public class InputDuringTurnTests
     }
 
     [Fact]
+    public void SteerBox_AfterAPromptSubmit_ShowsNoStalePasteNotice()
+    {
+        // ReadLine's exit runs the paste cleanup on every submit; with nothing pending it must not leave
+        // "Paste cancelled; draft retained." for the mid-turn box to render.
+        var driver = new TuiDriver(new Term(), frameEngine: true);
+        typeof(TuiDriver).GetMethod("CancelPendingPaste", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!
+            .Invoke(driver, new object[] { true });
+        driver.SetTurnInput(true);
+        Assert.DoesNotContain("Paste cancelled", Plain(driver.ComposeFrameRows()));
+        driver.TurnInputKey(K('a'));
+        Assert.DoesNotContain("Paste cancelled", Plain(driver.ComposeFrameRows()));
+    }
+
+    [Fact]
     public void UnsentText_IsKeptForTheNextPrompt()
     {
         var driver = new TuiDriver(new Term(), frameEngine: true);
