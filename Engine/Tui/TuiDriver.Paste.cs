@@ -112,6 +112,9 @@ internal sealed partial class TuiDriver
 
     private void CancelPendingPaste(bool discardQueued = false)
     {
+        // Only a paste that was actually in flight earns the notice: ReadLine's exit calls this on every submit, and
+        // a stale "cancelled" line would show in the mid-turn input box (console.inputDuringTurn = "steer").
+        bool wasPending = PastePending;
         _pasteCancellation?.Cancel();
         // Observe failures on an abandoned operation; it can never mutate an editor or save a file.
         var cancellation = _pasteCancellation;
@@ -122,7 +125,7 @@ internal sealed partial class TuiDriver
         _pasteTask = null;
         _terminalPaste?.Cancel();
         if (discardQueued) _pasteDeferred.Clear();
-        _pasteStatus = "Paste cancelled; draft retained.";
+        if (wasPending) _pasteStatus = "Paste cancelled; draft retained.";
     }
 
     private void HandleTerminalPaste(string packet) => _terminalPaste?.Handle(packet);

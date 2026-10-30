@@ -582,6 +582,7 @@ internal sealed partial class TuiDriver
     {
         if (_turnInput == on) return;
         _turnInput = on;
+        _pasteStatus = null;
         // Text typed but not sent when the turn ends is kept for the next prompt instead of being lost.
         _turnDraft = on ? null : (_editor.IsEmpty ? null : _editor.Buffer);
         _editor.Reset();
