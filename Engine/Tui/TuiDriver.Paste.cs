@@ -140,7 +140,7 @@ internal sealed partial class TuiDriver
         string shape = ComposeShape.Active;
         // Shaped boxes draw their own field; the highlight band is for the classic look only.
         var input = TuiComponents.InputRowsWithCursor(display.Text, display.Cursor, ComposeShape.InnerWidth(shape, width),
-            _inputHighlight && shape == "classic", _composeMeta);
+            _inputHighlight && shape == "classic", _composeMeta, _turnInput ? TurnInputPlaceholder : null);
         // Keep the cursor neighborhood visible when ordinary composed text itself spans many rows.
         int statusRows = _pasteStatus is null ? 0 : 1;
         int minCardRows = _editor.Attachments.Items.Count == 0 ? 0 : _editor.Attachments.Expanded ? 3 : 2;

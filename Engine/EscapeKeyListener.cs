@@ -140,6 +140,13 @@ public sealed class EscapeKeyListener : IDisposable
     /// agent keeps working. Runs synchronously on the listener thread (same no-second-reader contract
     /// as <paramref name="onView"/>/onExpand). No-op when null.</summary>
     public static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken, Action? onExpand, Action? onView, Action? onAgents, Action? onSteer)
+        => Start(targetCts, outerToken, onExpand, onView, onAgents, onSteer, onTurnInput: null);
+
+    /// <summary>Overload adding <paramref name="onTurnInput"/>: when set (console.inputDuringTurn = "steer"), keys
+    /// and pastes the listener does not act on go to the docked mid-turn input box instead of being replayed into
+    /// the next prompt. Runs on the listener thread (frame engine only). No-op when null.</summary>
+    internal static EscapeKeyListener Start(CancellationTokenSource targetCts, CancellationToken outerToken, Action? onExpand, Action? onView, Action? onAgents, Action? onSteer,
+        Action<Tui.ConsoleInputPump.InputEvent>? onTurnInput)
     {
         var listenerCts = CancellationTokenSource.CreateLinkedTokenSource(outerToken);
 
@@ -198,9 +205,10 @@ public sealed class EscapeKeyListener : IDisposable
                         }
                         if (pev.Kind is Tui.ConsoleInputPump.EventKind.Paste or Tui.ConsoleInputPump.EventKind.InferredPaste)
                         {
-                            // Mid-turn paste: replay the text as keys so it lands at the next
-                            // prompt, exactly like mid-turn typing.
-                            ReplayEvent(pev);
+                            // Mid-turn paste: into the steer input box when it is up, else replayed as keys so it
+                            // lands at the next prompt, exactly like mid-turn typing.
+                            if (onTurnInput is not null) { try { onTurnInput(pev); } catch { /* best-effort */ } }
+                            else ReplayEvent(pev);
                             continue;
                         }
                         if (pev.Kind == Tui.ConsoleInputPump.EventKind.Terminal) continue;
@@ -247,8 +255,11 @@ public sealed class EscapeKeyListener : IDisposable
                             try { used = dock(key); } catch { /* panels are best-effort */ }
                             if (used) continue;
                         }
+                        // Steer input box up: printable keys are typing, so the bare-Q cancel alias and the
+                        // backslash agent-view shortcut stand down (Esc and Ctrl+Q still cancel).
+                        bool typing = onTurnInput is not null && pump is not null && !Tui.ConsoleInputPump.ModalActive;
                         bool cancelKey = Tui.KeyBinds.Matches(Tui.KeyAction.TurnCancel, key)
-                            || (key.Key == ConsoleKey.Q && (key.Modifiers & ~ConsoleModifiers.Shift) == 0);
+                            || (!typing && key.Key == ConsoleKey.Q && (key.Modifiers & ~ConsoleModifiers.Shift) == 0);
                         if (cancelKey)
                         {
                             targetCts.Cancel();
@@ -268,7 +279,7 @@ public sealed class EscapeKeyListener : IDisposable
                         // a keyboard-navigable session list over the running sub-agents - WITHOUT
                         // cancelling. Runs the dashboard loop synchronously on this thread, so there
                         // is never a second concurrent key reader (same contract as the Ctrl+G view).
-                        if (key.KeyChar == '\\' && onAgents is not null)
+                        if (key.KeyChar == '\\' && onAgents is not null && !typing)
                         {
                             try { onAgents(); } catch { /* dashboard is best-effort */ }
                             continue;
@@ -301,9 +312,16 @@ public sealed class EscapeKeyListener : IDisposable
                         // while another modal owns the pump (an ask_user prompt is up) so two modal
                         // loops never contend for the single input plane.
                         if (Tui.KeyBinds.Matches(Tui.KeyAction.TurnSteer, key) && onSteer is not null
-                            && !Tui.ConsoleInputPump.ModalActive)
+                            && !Tui.ConsoleInputPump.ModalActive && !typing)   // steer box already up: no second box
                         {
                             try { onSteer(); } catch { /* steer compose is best-effort */ }
+                            continue;
+                        }
+                        // console.inputDuringTurn = "steer": the docked input box is up, so typing edits it and
+                        // Enter sends a steer. Suppressed while a modal (ask_user) owns the pump.
+                        if (typing && onTurnInput is { } turnInput)
+                        {
+                            try { turnInput(Tui.ConsoleInputPump.InputEvent.OfKey(key)); } catch { /* best-effort */ }
                             continue;
                         }
                         // Any OTHER key the listener read but does not act on (a typed char the user

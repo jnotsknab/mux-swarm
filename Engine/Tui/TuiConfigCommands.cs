@@ -178,6 +178,18 @@ internal static partial class TuiConfigCommands
         },
         new Key
         {
+            Name = "inputDuringTurn", Aliases = new[] { "turninput", "input_during_turn" }, ValueHint = "hide|steer",
+            Get = () => Cfg.Console.InputDuringTurn,
+            Set = v =>
+            {
+                var c = (v ?? "").Trim().ToLowerInvariant();
+                if (c is not ("hide" or "steer")) return Bad($"inputDuringTurn expects hide|steer (got '{v}').");
+                Cfg.Console.InputDuringTurn = c;
+                return Save($"inputDuringTurn = {c}. Saved; applies from the next turn ({(c == "steer" ? "the input box stays up and Enter steers" : "the input box hides while the agent works; Ctrl+N steers")}).");
+            },
+        },
+        new Key
+        {
             Name = "scrollSpeedRows", Aliases = new[] { "scrollspeed", "scroll_speed_rows" }, ValueHint = "<int>=1",
             Get = () => Cfg.Console.ScrollSpeedRows.ToString(),
             Set = v =>
