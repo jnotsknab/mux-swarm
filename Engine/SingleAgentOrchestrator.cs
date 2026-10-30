@@ -81,6 +81,34 @@ public static class SingleAgentOrchestrator
         if (SteerLog.RestoreInto(history, notes) > 0) session.SetInMemoryChatHistory(history);
     }
 
+    // Lines the steer input box queued for after the turn: a /command typed mid-turn (it runs natively once the
+    // turn ends) and steers the turn never delivered (no model round-trip after them). Read by the next prompt.
+    private static readonly System.Collections.Concurrent.ConcurrentQueue<string> _afterTurn = new();
+
+    /// <summary>
+    /// Route one line submitted in the steer box (or Ctrl+N box): an immediate extension command runs now, any
+    /// other <c>/command</c> is queued to run when the turn ends (returns "queued"), plain text is a steer.
+    /// </summary>
+    internal static string RouteTurnLine(string text)
+    {
+        var line = text.Trim();
+        if (line.Length == 0) return "ignored";
+        if (Extensions.ExtensionCommands.TryRunImmediate(line)) return "ran";
+        if (line.StartsWith('/'))
+        {
+            _afterTurn.Enqueue(line);
+            return "queued";
+        }
+        EnqueueSteer(line);
+        return "steer";
+    }
+
+    /// <summary>The next queued after-turn line, else whatever <paramref name="read"/> returns (the prompt).</summary>
+    internal static string? NextInputOrQueued(Func<string?> read)
+    {
+        return _afterTurn.TryDequeue(out var queued) ? queued : read();
+    }
+
     internal static string? DrainSteer()
     {
         if (_pendingSteer.IsEmpty) return null;
@@ -2264,15 +2292,13 @@ public static class SingleAgentOrchestrator
             onAgents: () => MuxConsole.TuiEnterAgentView(),
             onSteer: () =>
             {
-                var s = MuxConsole.TuiSteerCompose();
-                // An immediate extension command typed in the steer box runs now instead of steering.
-                if (s is not null && !Extensions.ExtensionCommands.TryRunImmediate(s)) EnqueueSteer(s);
+                // Ctrl+N box: an immediate extension command runs now, a /command runs when the turn ends, text steers.
+                if (MuxConsole.TuiSteerCompose() is { } s) MuxConsole.TuiTraceTurnLine(RouteTurnLine(s), s);
             },
             // console.inputDuringTurn = "steer": the docked input box stays up; Enter there steers (same path as Ctrl+N).
             onTurnInput: steerBox ? ev =>
             {
-                var s = MuxConsole.TuiTurnInput(ev);
-                if (s is not null && !Extensions.ExtensionCommands.TryRunImmediate(s)) EnqueueSteer(s);
+                if (MuxConsole.TuiTurnInput(ev) is { } s) MuxConsole.TuiTraceTurnLine(RouteTurnLine(s), s);
             } : null);
             StdinCancelMonitor.Instance?.SetActiveTurnCts(turnCts);
 
@@ -2771,6 +2797,9 @@ public static class SingleAgentOrchestrator
                 // Steers spliced in mid-turn are not committed by the framework: restore them (after the
                 // interrupt/failure records above, so they land next to the message they followed).
                 try { RestoreTurnSteers(session); } catch { /* best-effort; never breaks the turn */ }
+                // A steer that still never reached the model (sent in the instant after the fallback above, or into a
+                // turn that was stopped/failed) is not dropped: it goes back into the input box to edit or send.
+                if (DrainSteer() is { } undelivered) MuxConsole.TuiAppendDraft(undelivered);
             }
 
             // /insight max: apply the agent's queued context_drop requests now that the turn has committed and
@@ -2859,7 +2888,7 @@ public static class SingleAgentOrchestrator
             }
 
             cancellationToken.ThrowIfCancellationRequested();
-            string? nextInput = ModelSwitch.NextInput(() => MuxConsole.ReadInput(cancellationToken));
+            string? nextInput = ModelSwitch.NextInput(() => NextInputOrQueued(() => MuxConsole.ReadInput(cancellationToken)));
             cancellationToken.ThrowIfCancellationRequested();
 
             if (IsQuitCommand(nextInput))
@@ -3249,7 +3278,7 @@ public static class SingleAgentOrchestrator
                 }
 
                 cancellationToken.ThrowIfCancellationRequested();
-                nextInput = ModelSwitch.NextInput(() => MuxConsole.ReadInput(cancellationToken));
+                nextInput = ModelSwitch.NextInput(() => NextInputOrQueued(() => MuxConsole.ReadInput(cancellationToken)));
                 cancellationToken.ThrowIfCancellationRequested();
 
                 if (IsQuitCommand(nextInput))
