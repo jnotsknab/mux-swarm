@@ -1205,12 +1205,16 @@ Extensions can add more themes (see ## Extensions); they appear in `/theme`, the
 "console": { "inputDuringTurn": "hide" }   // hide (default) | steer
 ```
 
-- `hide` (default): while a turn runs only the footer shows; Ctrl+N opens a steer box.
+- `hide` (default for configs without the key): while a turn runs only the footer shows; Ctrl+N opens a steer box
+  (same routing: text steers, `/commands` queue).
 - `steer`: the docked input box stays up during the turn (placeholder "steer the agent while it works"). What you
   type there is sent on Enter as a mid-turn steer, the same path as Ctrl+N (spliced into the running turn, saved in
-  the session; an immediate extension command runs instead). Esc and Ctrl+Q still stop the turn (bare `q` and `\`
-  are plain typing here). An `ask_user` prompt takes over input and hands it back. Text typed but not sent when the
-  turn ends stays in the box for the next prompt.
+  the session). `/commands` work natively: the palette completes them as at the prompt, an immediate extension
+  command runs at once, and any other `/command` is queued (`↳ queued`) and runs when the turn ends, exactly as if
+  typed at the prompt. Esc and Ctrl+Q still stop the turn (bare `q` and `\` are plain typing here). An `ask_user`
+  prompt takes over input and hands it back. Text typed but not sent when the turn ends stays in the box for the
+  next prompt; a steer that never reached the agent (the turn was stopped) is put back there too.
+- New installs: `/setup` writes `"inputDuringTurn": "steer"`. Existing configs without the key keep `hide`.
 - Frame renderer, `/agent` lead sessions. The classic renderer, `--stdio`/`--serve`, the web app and bridges are
   unaffected. Set with `/set inputDuringTurn steer` (applies from the next turn).
 

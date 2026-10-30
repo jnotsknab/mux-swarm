@@ -591,6 +591,13 @@ internal sealed partial class TuiDriver
 
     private string? _turnDraft;
 
+    /// <summary>Add text to what the next prompt opens with (joined to any unsent draft with a blank line).</summary>
+    internal void AppendDraft(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+        _turnDraft = string.IsNullOrEmpty(_turnDraft) ? text : text + "\n\n" + _turnDraft;
+    }
+
     /// <summary>Placeholder of the mid-turn input box (console.inputDuringTurn = "steer").</summary>
     internal const string TurnInputPlaceholder = "steer the agent while it works (Enter sends) \u00b7 Esc stops the turn";
 
@@ -601,15 +608,24 @@ internal sealed partial class TuiDriver
     internal string? TurnInputKey(ConsoleKeyInfo key)
     {
         if (!_turnInput) return null;
+        // The command palette / autocomplete works like at the prompt: Up/Down pick, Tab or Enter accepts.
+        if (PaletteOpen)
+        {
+            if (key.Key == ConsoleKey.UpArrow) { MovePaletteSelection(-1); Repaint(); return null; }
+            if (key.Key == ConsoleKey.DownArrow) { MovePaletteSelection(+1); Repaint(); return null; }
+            if (key.Key == ConsoleKey.Enter && _paletteSel >= 0) { AcceptCompletion(); _paletteSel = -1; Repaint(); return null; }
+        }
         var sig = _editor.Feed(key);
         if (sig == LineEditSignal.Submit)
         {
             string text = _editor.Buffer;
             _editor.Reset();
+            _paletteSel = -1;
             Repaint();
             return string.IsNullOrWhiteSpace(text) ? null : text;
         }
-        if (sig is LineEditSignal.Continue) Repaint();
+        if (sig == LineEditSignal.Complete) { AcceptCompletion(); _paletteSel = -1; Repaint(); return null; }
+        if (sig is LineEditSignal.Continue) { _paletteSel = -1; Repaint(); }
         return null;
     }
 
@@ -3985,7 +4001,7 @@ internal sealed partial class TuiDriver
 
     /// <summary>True when an autocomplete preview is currently open (and thus arrow keys
     /// should drive its selection rather than command history).</summary>
-    private bool PaletteOpen => _inInput && (_editor.IsAtFilter || _editor.IsSkillsFilter
+    private bool PaletteOpen => (_inInput || _turnInput) && (_editor.IsAtFilter || _editor.IsSkillsFilter
         || _editor.IsToolsFilter || _editor.IsResumeFilter || _editor.IsSlashFilter);
 
     /// <summary>The ranked candidate list backing the currently open preview (empty if none).</summary>

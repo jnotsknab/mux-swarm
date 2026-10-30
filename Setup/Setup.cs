@@ -117,6 +117,9 @@ public static class Setup
 
         _appConfig = new AppConfig();
         EnsureConfigInitialized();
+        // New installs keep the input box up while the agent works and steer from it; configs that predate the
+        // key (or never ran setup) stay on the "hide" default.
+        _appConfig.Console.InputDuringTurn = "steer";
 
         if (!StepCheckDependencies()) return false;
 

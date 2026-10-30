@@ -1298,11 +1298,7 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
             "Steer the agent (by the way ...) - it keeps working; your note is sent next.",
             choices: null);
         if (res is null || res.Cancelled || string.IsNullOrWhiteSpace(res.Text)) return null;
-        string trace = TuiMarkup.TruncatePlain(res.Text!.Replace("\r", " ").Replace("\n", " "), 60);
-        // An immediate extension command typed here runs instead of steering (the caller dispatches it).
-        string kind = Extensions.ExtensionCommands.Match(res.Text) is { Immediate: true } ? "ran" : "steer";
-        CommitToDriver($"  [{TC.Dim}]\u21b3 {kind} \u00b7 {Spectre.Console.Markup.Escape(trace)}[/]");
-        return res.Text;
+        return res.Text;   // the caller routes it (steer / immediate command / queued /command) and traces it
     }
 
     /// <summary>True when console.inputDuringTurn is "steer" and the frame TUI can host the mid-turn input box.</summary>
@@ -1331,12 +1327,27 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
             }
             text = _driver.TurnInputKey(ev.Key);
         }
-        if (text is null) return null;
-        string trace = TuiMarkup.TruncatePlain(text.Replace("\r", " ").Replace("\n", " "), 60);
-        string kind = Extensions.ExtensionCommands.Match(text) is { Immediate: true } ? "ran" : "steer";
-        CommitToDriver($"  [{TC.Dim}]\u21b3 {kind} \u00b7 {Spectre.Console.Markup.Escape(trace)}[/]");
         return text;
     }
+
+    /// <summary>
+    /// Trace line for a line the steer box handled: <c>steer</c>, <c>ran</c> (immediate extension command),
+    /// or <c>queued</c> (a /command that runs when the turn ends).
+    /// </summary>
+    internal static void TuiTraceTurnLine(string kind, string text)
+    {
+        if (kind == "ignored") return;
+        string trace = TuiMarkup.TruncatePlain(text.Replace("\r", " ").Replace("\n", " "), 60);
+        string note = kind switch
+        {
+            "queued" => " (runs when the turn ends)",
+            _ => "",
+        };
+        CommitToDriver($"  [{TC.Dim}]\u21b3 {kind} \u00b7 {Spectre.Console.Markup.Escape(trace)}{Spectre.Console.Markup.Escape(note)}[/]");
+    }
+
+    /// <summary>Put text back into the next prompt's input box (an undelivered steer after an interrupted turn).</summary>
+    internal static void TuiAppendDraft(string text) { if (ViaDriver) lock (ConsoleLock) { _driver!.AppendDraft(text); } }
 
     /// <summary>Set/clear the reasoning-effort chip shown in the docked footer.</summary>
     public static void SetTuiEffort(string? effort) { if (ViaDriver) lock (ConsoleLock) { _driver!.SetEffort(effort); } }
