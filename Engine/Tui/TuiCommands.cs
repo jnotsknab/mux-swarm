@@ -129,7 +129,7 @@ internal static class TuiCommands
         new("/createteam",   "Guided wizard to create a team (/createteam [name])", Scope.ReplOnly),
         new("/createhook",   "Guided wizard to scaffold a swarm hook (/createhook [id])", Scope.ReplOnly),
         new("/hooks",        "Hooks status / toggle / create (/hooks on|off|create)", Scope.ReplOnly),
-        new("/onboard",      "Create/update operator profile (BRAIN + MEMORY)", Scope.ReplOnly),
+        new("/onboard",      "Guided setup: profile + config (/onboard undo rolls back)", Scope.ReplOnly),
         new("/split",        "Arm optional lead-context sharing for delegated sub-agents (toggle)", Scope.ReplOnly),
         new("/history",      "Browse past sessions full-screen: fuzzy find, open, scroll, search", Scope.ReplOnly),
         new("/telemetry",    "Start/stop the telemetry dashboard (tokens + cost, all-time): /telemetry [port|off]", Scope.ReplOnly),

@@ -342,7 +342,9 @@ public static class LocalAiFunctions
                 "and 'multi_select' (pick several). Do NOT use for trivial decisions you can make yourself. " +
                 "DO use before destructive operations or when multiple valid approaches exist. " +
                 "Note: for confirm/select/multi_select the user may CANCEL the prompt or enter a CUSTOM " +
-                "free-text response outside the offered options; handle either result gracefully without erroring."
+                "free-text response outside the offered options; handle either result gracefully without erroring. " +
+                "The user sees only your reply text and this question, never your thinking: if you are answering something " +
+                "the user asked, put that answer at the top of 'question' (it is shown above the choices)."
         );
     }
 }

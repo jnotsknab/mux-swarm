@@ -191,6 +191,9 @@ can load its login prompt. Token compare is constant-time, never logged, and nev
 returned by `/api/config` (which exposes only a boolean `authRequired`). If enabled
 but no token resolves, auth stays inactive with a warning (never silently locks out).
 
+On connect, `/ws` replays recent output (up to 500 lines) so a reopened web UI catches up. `/ws?replay=0` skips the
+replay (used by messaging bridges, which would otherwise resend old output after a reconnect).
+
 ## Self-Update & Lifecycle
 
 Mux-Swarm can update itself in place from the latest GitHub release, and restart/shut down over the
@@ -461,20 +464,42 @@ Required fields: `command`
 | `restart` | bool | Whether to restart the process if it exits |
 | `interval` | uint | Restart delay in seconds (default 30) |
 
-Behavior: starts the process with `UseShellExecute=false`, redirects stdout/stderr to daemon log with `[Bridge:id:OUT]` and `[Bridge:id:ERR]` prefixes. Working directory is set to the mux-swarm base directory. The runtime auto-injects `MUX_WS_URL` (e.g. `ws://localhost:6723/ws`) into the process environment. If the process exits and `restart` is true, waits `interval` seconds then restarts. On daemon shutdown, all bridge processes are killed with `entireProcessTree: true`.
+Behavior: starts the process with `UseShellExecute=false`, sends everything the bridge writes (stdout and stderr) to the runtime log shown by `/logs`, prefixed `[Bridge:id]`, at the level the line carries (Python logging `[INFO]`/`[WARNING]`/`[ERROR]`; tracebacks and exceptions as errors; other stderr as warnings), never into the TUI. A line containing `Pairing code: XXXXXX` is also shown once as a notice. Start/restart lines go to the runtime log; a bridge exit or error still shows as a warning. Working directory is set to the mux-swarm base directory. The runtime auto-injects `MUX_WS_URL` (the address serve bound, e.g. `ws://127.0.0.1:6723/ws`; loopback when bound to `0.0.0.0`) and, when `serve.auth` is on, `MUX_SERVE_TOKEN` into the process environment (a trigger's own `env` wins). Bridges should connect to `/ws?replay=0` so a reconnect does not resend old output. If the process exits and `restart` is true, waits `interval` seconds then restarts. On daemon shutdown, all bridge processes are killed with `entireProcessTree: true`.
 
 IMPORTANT: The `type` field MUST be `bridge`. Not `discord_bridge`, not `telegram_bridge`, just `bridge`. The bridge type is generic; what makes it a Telegram or Discord bridge is the `command` and `args` pointing to the appropriate Python script.
 
 Bot tokens and secrets should be set as environment variables in the operator's shell, not in config.
 
+## Onboarding (`/onboard`)
+
+`/onboard` runs a guided session (prompt: `Context/ONBOARD.md`) that learns how the user works and **applies the
+setup they confirm**, instead of only writing notes. `/setup` offers it at the end (default yes).
+
+- **Backup first:** before the session starts, Mux copies Config.json, Swarm.json, BRAIN.md and MEMORY.md (those that
+  exist) to `Configs/.onboard-backup-<utc timestamp>/` with a `manifest.tsv`. `/onboard undo` restores the newest
+  backup (files created later are left alone); then `/refresh`. If the backup fails, onboarding does not start.
+- **Flow:** detect (OS, toolchains, language servers, container runtime, Tailscale, existing config; discovered by
+  the agent with the platform's own commands, nothing hardcoded) -> a posture preset (Collaborative / Hands-on /
+  Delegator / Away) that only pre-fills settings -> interfaces (web UI bind + auth, Zed, desktop, phone bridge) ->
+  models -> agents, MCP and `lsp` -> memory -> optional shell-guard extension, custom extensions and a personal theme
+  -> one change plan per file -> apply -> refresh -> verify -> summary.
+- **Rules it follows:** nothing the user didn't choose is imposed (no forced sandbox); config keys come from this
+  file; secrets go to user env vars referenced as `${NAME}`; it uses only the tools the onboarding agent (the
+  `singleAgent`) actually has and lists the rest as steps for the user.
+- The session uses the normal agent turn budget (15 rounds) and auto-compacts at 200k tokens unless you set
+  `compactionAgent.autoCompactTokenThreshold` (then yours applies). Prompt token `{{paths.docs}}` resolves to this file.
+
 ## Bridge Setup
 
-Three bridges ship under `Runtime/`:
+Three bridges ship under `Runtime/`. Each runs with `uv run --project Runtime Runtime/<name>_bridge.py`. Voice
+transcription (Whisper) is an optional extra: add `--extra voice` before the script path to install it. Bridge tests:
+`uv run --project Runtime --extra test pytest Runtime/tests`.
 
 ### Telegram
 
-Required env var: `TELEGRAM_BOT_TOKEN`
-Optional: `WHISPER_MODEL` (default: base), `ALLOWED_CHAT_IDS` (comma-separated, empty = open access)
+Required env var: `TELEGRAM_BOT_TOKEN` (create a bot with @BotFather).
+Optional: `ALLOWED_CHAT_IDS` (comma-separated), `MUX_BRIDGE_ALLOW_ALL=1` (let any chat in; not recommended),
+`MUX_BRIDGE_STATE` (paired-chats file), `WHISPER_MODEL` (with `--extra voice`).
 
 ```json
 {
@@ -482,16 +507,33 @@ Optional: `WHISPER_MODEL` (default: base), `ALLOWED_CHAT_IDS` (comma-separated, 
   "type": "bridge",
   "command": "uv",
   "args": "run --project Runtime Runtime/telegram_bridge.py",
-  "env": { "WHISPER_MODEL": "base" },
   "restart": true,
   "interval": 10
 }
 ```
 
+- **Access is closed by default.** Unknown chats get a "this bot is private" reply. To add your phone, find the
+  one-time pairing code Mux shows when the bridge starts (`[telegram-bridge] pairing code: XXXXXX`; also in `/logs`) and send
+  `/pair XXXXXX` to the bot. Paired chats are remembered across restarts.
+- **Questions come as buttons:** `ask_user`, approvals and confirms show as Telegram buttons ("Type my own" and
+  "Cancel" when the prompt allows them); multi-select takes numbers (`1,3`); text prompts take your next message.
+  Secret prompts (API keys) are refused over the bridge.
+- **Clean rendering:** answers are converted to Telegram HTML (bold, italics, code, links); tables and code blocks
+  become monospace blocks; long answers split without breaking a code block. Thinking text is not sent; sub-agent
+  output is labelled with the agent's name.
+- **Mux commands and menus work from the chat:** any slash command (`/agent`, `/resume`, `/status`, `/help`, `/qc`, ...)
+  is passed to Mux and its answer is posted back. A message sent while Mux is at its main menu gets a menu offering
+  to start an agent with that message. `/menu` shows quick actions as buttons; common commands are registered in Telegram's command menu.
+- **Attachments:** Photos and documents are uploaded to Mux like the web app's attachments (`/api/upload` into the sandbox
+  `uploads` folder) and handed to the agent as `[file: <path>]`; images go to its vision tool. Over 20 MB is refused with a reply.
+- **Quiet by default:** Mux's terminal session chrome (banners, `Type /qc` hints, tool counts, `Loaded session`, `[AGENT SESSION] Saved to`, `Total Tokens`, `[Hook:...]` lines) is not posted to the chat. `/settings` switches between quiet and verbose (saved in the bridge state file).
+- Commands: `/stop` interrupts the running agent, `/cancel` dismisses a pending question, `/pair <code>`.
+
 ### Discord
 
-Required env vars: `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`
-Optional: `WHISPER_MODEL`
+Required env var: `DISCORD_BOT_TOKEN` (Developer Portal > Bot; enable the **Message Content** intent).
+Optional: `DISCORD_CHANNEL_ID` (also listen in that server channel; DMs to the bot always work), `ALLOWED_USER_IDS`
+(comma-separated), `MUX_BRIDGE_ALLOW_ALL=1` (not recommended), `MUX_BRIDGE_STATE`, `WHISPER_MODEL` (with `--extra voice`).
 
 ```json
 {
@@ -499,23 +541,36 @@ Optional: `WHISPER_MODEL`
   "type": "bridge",
   "command": "uv",
   "args": "run --project Runtime Runtime/discord_bridge.py",
-  "env": { "WHISPER_MODEL": "base" },
   "restart": true,
   "interval": 10
 }
 ```
 
-The bot only responds in the channel specified by `DISCORD_CHANNEL_ID`. Create a bot at https://discord.com/developers/applications, enable Message Content Intent, and invite with message permissions.
+- **Closed by default:** only paired or allowlisted users are answered. Send `/pair <code>` (the one-time code Mux shows when the
+  bridge starts; also in `/logs`) in a DM or the channel to pair.
+- **Questions come as buttons** (up to 20 choices; longer lists and multi-select are numbered, reply with numbers).
+  Secret prompts are refused over the bridge.
+- **Rendering:** tables become code blocks, `####`+ headings become `###`, console markup is stripped, messages split
+  under 2000 characters without breaking a code block. No @mentions are ever pinged. Thinking text is not sent;
+  sub-agent output is labelled.
+- **Mux commands and menus work from the chat:** any slash command (`/agent`, `/resume`, `/status`, `/help`, `/qc`, ...)
+  is passed to Mux and its answer is posted back. A message sent while Mux is at its main menu gets a menu offering
+  to start an agent with that message. `/menu` shows quick actions as buttons.
+- **Attachments:** Images and files are uploaded to Mux like the web app's attachments (`/api/upload` into the sandbox
+  `uploads` folder) and handed to the agent as `[file: <path>]`; images go to its vision tool. Over 25 MB is refused with a reply.
+- **Quiet by default:** Mux's terminal session chrome (banners, `Type /qc` hints, tool counts, `Loaded session`, `[AGENT SESSION] Saved to`, `Total Tokens`, `[Hook:...]` lines) is not posted to the chat. `/settings` switches between quiet and verbose (saved in the bridge state file).
+- `/stop` interrupts the running agent; `/cancel` dismisses a pending question.
 
 ### Signal
 
-Required env vars: `SIGNAL_NUMBER` (E.164 format), `SIGNAL_API_URL`
-Optional: `WHISPER_MODEL`, `ALLOWED_NUMBERS` (comma-separated E.164)
+Required env var: `SIGNAL_NUMBER` (E.164). Optional: `SIGNAL_API_URL` (default `http://127.0.0.1:8080`),
+`ALLOWED_NUMBERS` (comma-separated E.164), `MUX_BRIDGE_ALLOW_ALL=1` (not recommended), `MUX_BRIDGE_STATE`,
+`WHISPER_MODEL` (with `--extra voice`).
 
-Requires a self-hosted signal-cli-rest-api container:
+Requires a self-hosted signal-cli-rest-api container in **json-rpc** mode (the bridge receives over its WebSocket):
 
 ```bash
-docker run -d --name signal-api -p 8080:8080 -v signal-cli-data:/home/.local/share/signal-cli bbernhard/signal-cli-rest-api
+docker run -d --name signal-api -p 8080:8080 -e MODE=json-rpc -v signal-cli-data:/home/.local/share/signal-cli bbernhard/signal-cli-rest-api
 ```
 
 Link via QR code at `http://localhost:8080/v1/qrcodelink?device_name=mux-swarm`.
@@ -526,15 +581,25 @@ Link via QR code at `http://localhost:8080/v1/qrcodelink?device_name=mux-swarm`.
   "type": "bridge",
   "command": "uv",
   "args": "run --project Runtime Runtime/signal_bridge.py",
-  "env": {
-    "SIGNAL_NUMBER": "+1XXXXXXXXXX",
-    "SIGNAL_API_URL": "http://localhost:8080",
-    "WHISPER_MODEL": "base"
-  },
+  "env": { "SIGNAL_NUMBER": "+1XXXXXXXXXX" },
   "restart": true,
   "interval": 60
 }
 ```
+
+- **Closed by default:** your own **Note to Self** always works; other numbers must be in `ALLOWED_NUMBERS` or pair with
+  `/pair <code>` (the one-time code Mux shows when the bridge starts; also in `/logs`). Group chats are ignored.
+- **Questions** come as numbered lists (Signal has no buttons): reply with a number, numbers for multi-select, yes/no
+  for confirms, your own text when the prompt allows it, or `/cancel`. Secret prompts are refused.
+- **Rendering:** styled text (bold, italic, strikethrough, monospace); code and tables as monospace lines; links as
+  `label (url)`; messages split under 1800 characters without leaving a style open.
+- **Mux commands and menus work from the chat:** any slash command (`/agent`, `/resume`, `/status`, `/help`, `/qc`, ...)
+  is passed to Mux and its answer is posted back. A message sent while Mux is at its main menu gets a menu offering
+  to start an agent with that message. `/menu` shows quick actions as a numbered list.
+- **Attachments:** Attachments are uploaded to Mux like the web app's attachments (`/api/upload` into the sandbox
+  `uploads` folder) and handed to the agent as `[file: <path>]`; images go to its vision tool. Over 25 MB is refused with a reply.
+- **Quiet by default:** Mux's terminal session chrome (banners, `Type /qc` hints, tool counts, `Loaded session`, `[AGENT SESSION] Saved to`, `Total Tokens`, `[Hook:...]` lines) is not posted to the chat. `/settings` switches between quiet and verbose (saved in the bridge state file).
+- `/stop` interrupts the running agent.
 
 ## Swarm.json Structure
 
@@ -918,7 +983,8 @@ Flags can be combined. Common stacks:
 
 ### System
 ```
-/onboard        Create or update operator profile (BRAIN.md + MEMORY.md)
+/onboard        Guided setup: profile (BRAIN.md + MEMORY.md) + config it applies after you confirm
+/onboard undo   Restore Config.json, Swarm.json, BRAIN.md, MEMORY.md from the latest onboarding backup
 /tools          List available MCP + native tools
 /skills         List loaded skills
 /theme          View or switch the TUI color theme (21 presets; bare /theme opens a picker; /theme <name> sets one)
@@ -1234,6 +1300,12 @@ options. Each choice prompt carries two bailout affordances:
 - **Cancel** - back out entirely; the tool returns a "cancelled" result the model handles gracefully
   (no forced choice, no wasted extra turn).
 - **Enter custom** - type a free-text value outside the option set; returned as a custom response.
+  In a multi-select the options checked alongside "enter custom" are kept: the tool returns
+  `User selected: <options>; and entered a custom response ...: <text>`.
+
+Client answers to a bailout `select_request` / `multiselect_request` over `/ws` or stdio: a 1-based
+index (`2`) or indices (`1,3`), `=text` for a custom answer, `cancel` to back out. Multi-select also
+accepts `1,3,=text` (checked options plus a custom answer; everything after the first `=` is the text).
 
 Implemented additively on the `MuxConsole` prompt primitives (`SelectChoice` / `ConfirmChoice` /
 `MultiSelectChoice` + the `PromptChoice` result); the base `Select`/`Confirm`/`MultiSelect` are
@@ -1275,6 +1347,25 @@ extensions off; problems are shown at startup and in `/extensions`:
 ```
 
 Extensions can add more themes (see ## Extensions); they appear in `/theme`, the picker and setup.
+
+### Input box while the agent works (`console.inputDuringTurn`)
+
+```jsonc
+"console": { "inputDuringTurn": "hide" }   // hide (default) | steer
+```
+
+- `hide` (default for configs without the key): while a turn runs only the footer shows; Ctrl+N opens a steer box
+  (same routing: text steers, `/commands` queue).
+- `steer`: the docked input box stays up during the turn (placeholder "steer the agent while it works"). What you
+  type there is sent on Enter as a mid-turn steer, the same path as Ctrl+N (spliced into the running turn, saved in
+  the session). `/commands` work natively: the palette completes them as at the prompt, an immediate extension
+  command runs at once, and any other `/command` is queued (`↳ queued`) and runs when the turn ends, exactly as if
+  typed at the prompt. Esc and Ctrl+Q still stop the turn (bare `q` and `\` are plain typing here). An `ask_user`
+  prompt takes over input and hands it back. Text typed but not sent when the turn ends stays in the box for the
+  next prompt; a steer that never reached the agent (the turn was stopped) is put back there too.
+- New installs: `/setup` writes `"inputDuringTurn": "steer"`. Existing configs without the key keep `hide`.
+- Frame renderer, `/agent` lead sessions. The classic renderer, `--stdio`/`--serve`, the web app and bridges are
+  unaffected. Set with `/set inputDuringTurn steer` (applies from the next turn).
 
 ## Extensions
 
@@ -1358,8 +1449,13 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   - `reasoning`: `fg`, `italic` (true/false). Also applies in the classic console.
   - `toast`: `mark` (`◆`), `markFg`, `fg`.
   - `divider` (side-pane divider): `glyph`, `fg`, `activeFg` (while dragging). `scrollbar`: `thumb`, `track`, `thumbFg`, `trackFg`.
-  - `toolCard` (tool calls, results, expanded cards, live panels): `dot` (running/done), `ok`, `error`, `result` (`⎿`),
-    `rail`, `pendingFg`, `okFg`, `errorFg`, `labelFg`, `railFg`, `bg` (card fill; off with content backgrounds off).
+  - `toolCard` (tool calls, results, expanded cards, live panels): `dot` (running/done), `ok`, `error`, `result` (`⎿`, a
+    result on its own row under the call), `resultInline` (`→`, 1-2 cells, a result on the call's row; when a theme
+    sets only `result`, that glyph is used inline too), `rail`, `pendingFg`, `okFg`, `errorFg`, `labelFg`, `railFg`,
+    `bg` (card fill; off with content backgrounds off).
+  - `toolCard.layout`: `merged` (default; one row, `● tool  → result`) or `stacked` (the result on its own row:
+    `● tool` then `⎿ result` under it; Ctrl+E expands the result row). Set it for yourself in `console.tui`:
+    `"console": { "tui": { "regions": { "toolCard": { "layout": "stacked" } } } }`.
   - `diff`: `rail`, `railFg`, `addFg`, `delFg`, `ctxFg`, `addBg`, `delBg`, `hunkBg`, `gutterFg`.
   - `delegation` (delegations, sub-agent rows): `arrow` (`→`), `branch` (`└`), `mark` (`▸`), `done`, `failed`, `fg`.
   - `thinking` (the working line and live sub-agent status): `fg`. Frames and quips stay in `thinking` at the top level.

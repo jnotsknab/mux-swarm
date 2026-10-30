@@ -13,6 +13,9 @@ namespace MuxSwarm.Tests.Tests;
 /// agent session commits exactly what the model was sent. That invariant is what keeps the provider prompt cache
 /// intact (measured: a line sent but not saved, or moved each call, drops cached share from ~85% to ~34-47%).
 /// </summary>
+// ContextGauge's prompt baseline and drop counter are process-global: serialize with every other class that
+// touches console/insight state (a parallel PromptStarted from another class reset the baseline mid-assert).
+[Collection("ConsoleState")]
 public class InsightGaugeTests
 {
     private static ChatMessage ToolResult(string id, string text) => new(ChatRole.Tool, [new FunctionResultContent(id, text)]);

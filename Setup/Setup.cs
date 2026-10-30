@@ -117,6 +117,9 @@ public static class Setup
 
         _appConfig = new AppConfig();
         EnsureConfigInitialized();
+        // New installs keep the input box up while the agent works and steer from it; configs that predate the
+        // key (or never ran setup) stay on the "hide" default.
+        _appConfig.Console.InputDuringTurn = "steer";
 
         if (!StepCheckDependencies()) return false;
 
@@ -164,12 +167,13 @@ public static class Setup
 
         StepPrintSummary();
 
-        MuxConsole.WriteBody("Would you like to set up your operator profile now?");
-        MuxConsole.WriteMuted("This teaches your agents who you are, how you work, and what to remember.");
-        MuxConsole.WriteMuted("You can always run /onboard later.");
+        MuxConsole.WriteBody("Would you like Mux to finish setting itself up for you now?");
+        MuxConsole.WriteMuted("A short guided session learns how you work and applies the setup you confirm");
+        MuxConsole.WriteMuted("(security, interfaces, models, tools, memory, look). Your config is backed up first.");
+        MuxConsole.WriteMuted("You can always run /onboard later, or /onboard undo to roll it back.");
         MuxConsole.WriteLine();
 
-        OnboardRequested = MuxConsole.Confirm("Run onboarding?", defaultValue: false);
+        OnboardRequested = MuxConsole.Confirm("Run onboarding?", defaultValue: true);
 
         return true;
     }

@@ -570,6 +570,85 @@ internal sealed partial class TuiDriver
 
     /// <summary>Draw the (empty) input box from the next paint, before the first <c>ReadLine</c>.</summary>
     internal void ReserveInputBox() => _inputReserved = true;
+
+    /// <summary>
+    /// Drop the startup input-box reservation without a keyboard read: a line came from somewhere else (a seeded
+    /// first goal, a workflow), so the agent is about to work and the empty box must not stay pinned. Repaints when
+    /// the box was showing.
+    /// </summary>
+    internal void ReleaseInputBox()
+    {
+        if (!_inputReserved) return;
+        _inputReserved = false;
+        Repaint();
+    }
+
+    // console.inputDuringTurn = "steer": the docked input box stays up while a turn runs and collects a steer.
+    // Editing reuses the prompt's LineEditor (it is idle mid-turn: ReadLine resets it on entry).
+    private bool _turnInput;
+
+    /// <summary>True while the mid-turn steer input box is shown.</summary>
+    internal bool TurnInputActive => _turnInput;
+
+    /// <summary>Show (or hide) the docked input box for the running turn. Showing starts with an empty box.</summary>
+    internal void SetTurnInput(bool on)
+    {
+        if (_turnInput == on) return;
+        _turnInput = on;
+        _pasteStatus = null;
+        // Text typed but not sent when the turn ends is kept for the next prompt instead of being lost.
+        _turnDraft = on ? null : (_editor.IsEmpty ? null : _editor.Buffer);
+        _editor.Reset();
+        Repaint();
+    }
+
+    private string? _turnDraft;
+
+    /// <summary>Add text to what the next prompt opens with (joined to any unsent draft with a blank line).</summary>
+    internal void AppendDraft(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text)) return;
+        _turnDraft = string.IsNullOrEmpty(_turnDraft) ? text : text + "\n\n" + _turnDraft;
+    }
+
+    /// <summary>Placeholder of the mid-turn input box (console.inputDuringTurn = "steer").</summary>
+    internal const string TurnInputPlaceholder = "steer the agent while it works (Enter sends) \u00b7 Esc stops the turn";
+
+    /// <summary>
+    /// One key typed into the mid-turn input box. Returns the text to send as a steer when Enter submits a
+    /// non-empty line (the box is cleared), otherwise null. Keys the box does not use are ignored.
+    /// </summary>
+    internal string? TurnInputKey(ConsoleKeyInfo key)
+    {
+        if (!_turnInput) return null;
+        // The command palette / autocomplete works like at the prompt: Up/Down pick, Tab or Enter accepts.
+        if (PaletteOpen)
+        {
+            if (key.Key == ConsoleKey.UpArrow) { MovePaletteSelection(-1); Repaint(); return null; }
+            if (key.Key == ConsoleKey.DownArrow) { MovePaletteSelection(+1); Repaint(); return null; }
+            if (key.Key == ConsoleKey.Enter && _paletteSel >= 0) { AcceptCompletion(); _paletteSel = -1; Repaint(); return null; }
+        }
+        var sig = _editor.Feed(key);
+        if (sig == LineEditSignal.Submit)
+        {
+            string text = _editor.Buffer;
+            _editor.Reset();
+            _paletteSel = -1;
+            Repaint();
+            return string.IsNullOrWhiteSpace(text) ? null : text;
+        }
+        if (sig == LineEditSignal.Complete) { AcceptCompletion(); _paletteSel = -1; Repaint(); return null; }
+        if (sig is LineEditSignal.Continue) { _paletteSel = -1; Repaint(); }
+        return null;
+    }
+
+    /// <summary>Text pasted into the mid-turn input box.</summary>
+    internal void TurnInputPaste(string text)
+    {
+        if (!_turnInput || string.IsNullOrEmpty(text)) return;
+        _editor.InsertText(text);
+        Repaint();
+    }
     private bool _shuttingDown;
 
     // True while the NAV (vim view) overlay owns the screen. NAV can be opened mid-turn (via
@@ -1737,8 +1816,11 @@ internal sealed partial class TuiDriver
         bool retain = s.Expandable || clippedLine;
         if (retain && merged.Count > 0)
         {
-            RetainExpandable(merged[0], toolName, s.ExpandBody ?? s.Result, s.Error);
-            for (int k = 1; k < merged.Count; k++) AddTranscriptEntry(new Entry { Collapsed = merged[k] });
+            // The expandable entry is the row that carries the result: the single merged row, or the last row
+            // (the result under the call) in the stacked toolCard.layout. Rows above it are plain entries.
+            int expandRow = merged.Count - 1;
+            for (int k = 0; k < expandRow; k++) AddTranscriptEntry(new Entry { Collapsed = merged[k] });
+            RetainExpandable(merged[expandRow], toolName, s.ExpandBody ?? s.Result, s.Error);
             TrimTranscript();
             if (!_navActive) CommitPaint(merged);
         }
@@ -2222,7 +2304,7 @@ internal sealed partial class TuiDriver
         int footerStart = lines.Count;
         string footerPos = RegionStyle.Choice("footer.position");
         // "border" needs a shape with a top edge and an input box on screen; otherwise the footer stays above.
-        bool showInput = _inInput || _inputReserved;
+        bool showInput = _inInput || _inputReserved || (_turnInput && !_promptModalActive);
         if (footerPos == "border" && !(showInput && !_editor.IsSearching && ComposeShape.HasTitleEdge(ComposeShape.Active))) footerPos = "above";
         _footerLine = -1;
         _footerBadgeShift = 0;
@@ -3339,6 +3421,8 @@ internal sealed partial class TuiDriver
         _remoteAuthors.Clear();
         _inInput = true;
         _inputReserved = false;
+        if (_turnInput) SetTurnInput(false);
+        if (_turnDraft is { } draft) { _editor.SetBuffer(draft); _turnDraft = null; }
         // Replay keys the mid-turn EscapeKeyListener read but did not act on (typed chars the user
         // pressed while the agent was streaming). On the frame engine they go back to the FRONT of
         // the shared input pump (the single input plane) so they are the next events this loop
@@ -3972,7 +4056,7 @@ internal sealed partial class TuiDriver
 
     /// <summary>True when an autocomplete preview is currently open (and thus arrow keys
     /// should drive its selection rather than command history).</summary>
-    private bool PaletteOpen => _inInput && (_editor.IsAtFilter || _editor.IsSkillsFilter
+    private bool PaletteOpen => (_inInput || _turnInput) && (_editor.IsAtFilter || _editor.IsSkillsFilter
         || _editor.IsToolsFilter || _editor.IsAgentFilter || _editor.IsResumeFilter || _editor.IsSlashFilter);
 
     /// <summary>The ranked candidate list backing the currently open preview (empty if none).</summary>

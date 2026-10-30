@@ -26,7 +26,7 @@ public class McpReadyBeforeSessionTests
     [InlineData("case \"/stateless\":", true)]
     [InlineData("case var rc when rc == \"/resume\"", true)]
     [InlineData("runSession: async", true)]
-    [InlineData("case \"/onboard\":", false)]
+    [InlineData("case var onb when onb == \"/onboard\"", false)]
     public void SessionEntry_DefersOrAwaitsMcp(string caseLabel, bool defers)
     {
         string src = AppSource();

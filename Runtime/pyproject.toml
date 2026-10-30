@@ -1,12 +1,28 @@
 [project]
 name = "mux-swarm-runtime"
-version = "0.8.2"
+version = "0.16.0"
+description = "Messaging bridges (Telegram, Discord, Signal) for Mux-Swarm daemon bridge triggers."
+requires-python = ">=3.10"
+# Core: what every bridge needs to connect to Mux and its platform. Voice transcription is optional (see extras),
+# so a text-only bridge installs in seconds instead of pulling whisper/torch.
 dependencies = [
+    "websocket-client>=1.7",
+    "python-telegram-bot>=21",
+    "discord.py>=2.3",
+    "requests>=2.31",
+]
+
+[project.optional-dependencies]
+# `uv run --project Runtime --extra voice ...` enables voice notes / audio attachments (local Whisper, no API key).
+voice = [
     "openai-whisper",
-    "python-telegram-bot",
-    "websockets",
-    "websocket-client",
-    "discord",
-    "pynacl>=1.6.2",
     "static-ffmpeg",
 ]
+# Bridge test suite (`uv run --project Runtime --extra test pytest Runtime/tests`).
+test = [
+    "pytest>=8",
+    "websockets>=12",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -7,6 +7,9 @@ using MuxSwarm.Engine.Insight;
 namespace MuxSwarm.Tests.Tests;
 
 /// <summary>/insight max: context_map lists droppable blocks; context_drop queues them; Apply replaces them copy-on-write.</summary>
+// ContextGauge's prompt baseline and drop counter are process-global: serialize with every other class that
+// touches console/insight state (a parallel PromptStarted from another class reset the baseline mid-assert).
+[Collection("ConsoleState")]
 public class InsightMaxTests
 {
     private static string Big(char c, int n = 2000) => new(c, n);

@@ -461,6 +461,15 @@ public class ConsoleConfig
     /// </summary>
     [JsonPropertyName("suppressActionWarnings")]
     public bool SuppressActionWarnings { get; set; }
+
+    /// <summary>
+    /// What the docked input box does while an agent turn runs (frame TUI only): <c>"hide"</c> (default) hides
+    /// it so only the footer shows, and Ctrl+N opens a steer box; <c>"steer"</c> keeps the input box up, and
+    /// what you type there is sent as a mid-turn steer on Enter (the same path as Ctrl+N). Esc still cancels
+    /// the turn. The classic renderer, stdio/serve, the web app and bridges are unaffected.
+    /// </summary>
+    [JsonPropertyName("inputDuringTurn")]
+    public string InputDuringTurn { get; set; } = "hide";
 }
 
 /// <summary>

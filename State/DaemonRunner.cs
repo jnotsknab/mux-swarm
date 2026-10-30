@@ -530,8 +530,8 @@ public sealed class DaemonRunner : IAsyncDisposable
 
         var restartDelay = trigger.EffectiveInterval > 0 ? trigger.EffectiveInterval : 5;
 
-        MuxConsole.WriteSuccess(
-            $"[Daemon:{trigger.Id}] Bridge: {trigger.Command} (restart={trigger.Restart}, delay={restartDelay}s)");
+        // Routine lifecycle lines go to the runtime log (/logs); exits and errors still show (a dead bridge matters).
+        OtelLogger.Info($"[Daemon:{trigger.Id}] Bridge: {trigger.Command} (restart={trigger.Restart}, delay={restartDelay}s)");
 
         try
         {
@@ -551,9 +551,9 @@ public sealed class DaemonRunner : IAsyncDisposable
                         WorkingDirectory = PlatformContext.BaseDirectory
                     };
 
-                    //handle expected defaults  
-                    if (!psi.EnvironmentVariables.ContainsKey("MUX_WS_URL"))
-                        psi.EnvironmentVariables["MUX_WS_URL"] = $"ws://localhost:{App.ServePort}/ws";
+                    // Defaults a bridge needs to reach /ws: the address serve actually bound (not always localhost)
+                    // and, when serve.auth is on, the token. A trigger's own env (merged below) wins.
+                    BridgeEnvDefaults(psi.EnvironmentVariables, App.Config.ServeAddress, App.ServePort, App.Config.Serve?.Auth);
 
                     // Merge env vars from trigger
                     if (trigger.Env is { Count: > 0 })
@@ -618,8 +618,7 @@ public sealed class DaemonRunner : IAsyncDisposable
                 if (!trigger.Restart || ct.IsCancellationRequested || _killed)
                     break;
 
-                MuxConsole.WriteInfo(
-                    $"[Daemon:{trigger.Id}] Restarting bridge in {restartDelay}s...");
+                OtelLogger.Info($"[Daemon:{trigger.Id}] Restarting bridge in {restartDelay}s...");
 
                 await Task.Delay(TimeSpan.FromSeconds(restartDelay), ct);
             }
@@ -631,6 +630,18 @@ public sealed class DaemonRunner : IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Fill <c>MUX_WS_URL</c> (reachable bound address) and, when <c>serve.auth</c> resolves a token, <c>MUX_SERVE_TOKEN</c>
+    /// into a bridge's environment, unless already present.
+    /// </summary>
+    internal static void BridgeEnvDefaults(System.Collections.Specialized.StringDictionary env, string? serveAddress, int port, ServeAuthConfig? auth)
+    {
+        if (!env.ContainsKey("MUX_WS_URL"))
+            env["MUX_WS_URL"] = ServeMode.LocalWsUrl(serveAddress, port);
+        if (!env.ContainsKey("MUX_SERVE_TOKEN") && ServeMode.ResolvedAuthToken(auth) is { } token)
+            env["MUX_SERVE_TOKEN"] = token;
+    }
+
     private static async Task PipeLogs(string id, StreamReader reader, string prefix, CancellationToken ct)
     {
         try
@@ -639,12 +650,70 @@ public sealed class DaemonRunner : IAsyncDisposable
             {
                 var line = await reader.ReadLineAsync(ct);
                 if (line == null) break;
-                MuxConsole.WriteMuted($"[Bridge:{id}:{prefix}] {line}");
+                HandleBridgeLine(id, line, isStderr: prefix == "ERR");
             }
         }
         catch (OperationCanceledException) { }
         catch { /* stream closed */ }
     }
+
+    // Last pairing code shown per bridge, so a restart that logs the same code does not repeat the notice.
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _shownPairCodes = new();
+
+    /// <summary>
+    /// One line a bridge process wrote. Bridge output never prints into the TUI (it would clobber the transcript):
+    /// it goes to the runtime log (<c>/logs</c>) at the level the line carries. The one exception is a new pairing
+    /// code, which the user must see: it is also shown once as a notice.
+    /// </summary>
+    internal static void HandleBridgeLine(string id, string line, bool isStderr)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return;
+        string text = $"[Bridge:{id}] {line.TrimEnd()}";
+        switch (BridgeLineLevel(line, isStderr))
+        {
+            case "error": OtelLogger.Error(text); break;
+            case "warn": OtelLogger.Warn(text); break;
+            default: OtelLogger.Info(text); break;
+        }
+        if (PairingCode(line) is not { } code) return;
+        if (_shownPairCodes.TryGetValue(id, out var shown) && shown == code) return;
+        _shownPairCodes[id] = code;
+        MuxConsole.WriteInfo($"[{id}] pairing code: {code} - send /pair {code} to the bot from your phone");
+    }
+
+    /// <summary>
+    /// Log level for a bridge output line: the level the line names (Python logging's <c>[INFO]</c>,
+    /// <c>[WARNING]</c>, <c>[ERROR]</c>, ...), "error" for tracebacks and exceptions, otherwise "info" for
+    /// stdout and "warn" for anything else on stderr.
+    /// </summary>
+    internal static string BridgeLineLevel(string line, bool isStderr)
+    {
+        var m = BridgeLevelRe.Match(line);
+        if (m.Success)
+            return m.Groups[1].Value.ToUpperInvariant() switch
+            {
+                "ERROR" or "CRITICAL" or "FATAL" => "error",
+                "WARNING" or "WARN" => "warn",
+                _ => "info",   // INFO, DEBUG
+            };
+        if (line.StartsWith("Traceback (most recent call last)", StringComparison.Ordinal) || BridgeExceptionRe.IsMatch(line))
+            return "error";
+        return isStderr ? "warn" : "info";
+    }
+
+    /// <summary>The pairing code a bridge announced on this line (the bridges log "Pairing code: XXXXXX"), else null.</summary>
+    internal static string? PairingCode(string line)
+    {
+        var m = BridgePairRe.Match(line);
+        return m.Success ? m.Groups[1].Value.ToUpperInvariant() : null;
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex BridgeLevelRe =
+        new(@"^(?:\S+\s+\S+\s+)?\[(DEBUG|INFO|WARNING|WARN|ERROR|CRITICAL|FATAL)\]", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    private static readonly System.Text.RegularExpressions.Regex BridgeExceptionRe =
+        new(@"^[A-Za-z_][\w.]*(Error|Exception):\s");
+    private static readonly System.Text.RegularExpressions.Regex BridgePairRe =
+        new(@"Pairing code:\s*([0-9A-Fa-f]{6})\b");
 
     private static async Task<(bool Healthy, string Detail)> RunHealthCheck(
         string check, CancellationToken ct)

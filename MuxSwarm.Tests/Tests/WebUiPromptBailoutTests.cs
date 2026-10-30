@@ -22,9 +22,16 @@ public class WebUiPromptBailoutTests
     public void BailoutRows_AreSplitOff_AndSendTheEngineProtocol()
     {
         Assert.Contains("if (ev.bailout && choices.length >= 2) {", Html);
-        Assert.Contains("sendRaw('=' + v);", Html);
+        Assert.Contains("sendRaw(picked.length ? picked.join(',') + ',=' + v : '=' + v);", Html);
         Assert.Contains("sendRaw('cancel'); done('cancelled');", Html);
         Assert.Contains("respond('cancel', 'cancelled')", Html);
+    }
+
+    [Fact]
+    public void MultiSelectCustom_KeepsTheCheckedOptions()
+    {
+        // Multi-select "enter custom" sends the checked indices with the text ("1,3,=text"), not the text alone.
+        Assert.Contains("const picked = multi ? Array.from(selected).sort((a, b) => a - b) : [];", Html);
     }
 
     [Fact]

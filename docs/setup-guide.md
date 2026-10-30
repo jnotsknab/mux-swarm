@@ -118,6 +118,14 @@ Each enabled MCP server is validated for connectivity. On success you'll see a s
 
 > **Troubleshooting:** If a server fails to connect and you're running in strict mode (default), Mux-Swarm will exit. You can disable a problematic server by editing `Configs/Config.json` and setting `"enabled": false` on that server, then re-launch. You can also replace any default MCP server with your own - point to a local binary, a custom runtime, or a remote HTTP/SSE endpoint. As long as it implements the MCP protocol, Mux-Swarm will pick it up. Re-run `/setup` at any time to reconfigure.
 
+### After setup: onboarding
+
+`/setup` ends by offering onboarding (default yes). It's a short guided session that asks how you work: hands-on,
+collaborative, or mostly away and reachable by phone. It then proposes a setup (security modes, web UI access, a phone
+bridge, models, language servers, an optional command-guard extension, a personal theme). It shows you one change
+plan, applies only what you approve, and checks that it works. Your config is backed up first; `/onboard undo` puts it
+back. Run `/onboard` again any time to tune things.
+
 ## Verifying Your Setup
 
 The real test is whether your agents can make LLM calls end to end. Launch a single-agent session and send a simple prompt:
@@ -194,7 +202,7 @@ source ~/.bashrc
 [System.Environment]::SetEnvironmentVariable("TELEGRAM_BOT_TOKEN", "your-token-here", "User")
 ```
 
-For Discord, use `DISCORD_BOT_TOKEN` instead. Discord also requires `DISCORD_CHANNEL_ID` set to the channel ID the bot should listen on.
+For Discord, use `DISCORD_BOT_TOKEN` instead. DMs to the bot work out of the box; set `DISCORD_CHANNEL_ID` to also listen in one server channel.
 
 For Signal, set `SIGNAL_NUMBER` and `SIGNAL_API_URL`:
 ```bash
@@ -207,6 +215,7 @@ source ~/.bashrc
 ```bash
 docker run -d --name signal-api \
   -p 8080:8080 \
+  -e MODE=json-rpc \
   -v signal-cli-data:/home/.local/share/signal-cli \
   bbernhard/signal-cli-rest-api
 ```
@@ -289,15 +298,20 @@ mux-swarm --serve --daemon
 
 ### Audio Transcription
 
-All three bridges support voice messages and audio attachments via local Whisper (no API key needed). FFmpeg is resolved automatically via the `static-ffmpeg` Python package. If you want to use a different Whisper model, set `WHISPER_MODEL` in the bridge's `env` block (options: `tiny`, `base`, `small`, `medium`, `large`, `turbo`).
+Voice messages and audio attachments are transcribed locally with Whisper (no API key needed). It is an optional
+extra so text-only bridges install in seconds: add `--extra voice` to the trigger's `args`, e.g.
+`"args": "run --project Runtime --extra voice Runtime/telegram_bridge.py"`. FFmpeg comes from the `static-ffmpeg`
+package in the same extra. Without the extra, voice messages get a reply explaining how to enable it. To pick a
+different Whisper model, set `WHISPER_MODEL` in the bridge's `env` block (`tiny`, `base`, `small`, `medium`,
+`large`, `turbo`).
 
 ### Restricting Access
 
-**Telegram:** Set `ALLOWED_CHAT_IDS` as a comma-separated list of Telegram chat IDs. Empty means open access. Get your chat ID by sending `/start` to the bot.
+**Telegram:** Closed by default. Pair your phone by sending `/pair <code>` to the bot, using the one-time code Mux shows when the bridge starts (also in `/logs`); or list chat IDs in `ALLOWED_CHAT_IDS`. `MUX_BRIDGE_ALLOW_ALL=1` opens the bot to any chat (not recommended: it drives agents that can run commands).
 
-**Discord:** The bot only responds in the channel specified by `DISCORD_CHANNEL_ID`.
+**Discord:** Closed by default. Pair with `/pair <code>` (the one-time code Mux shows when the bridge starts; also in `/logs`) in a DM to the bot or the channel in `DISCORD_CHANNEL_ID`, or list user IDs in `ALLOWED_USER_IDS`. `MUX_BRIDGE_ALLOW_ALL=1` opens it to everyone (not recommended).
 
-**Signal:** Set `ALLOWED_NUMBERS` as a comma-separated list of E.164 phone numbers (e.g. `+15551234567,+15559876543`). Empty means open access.
+**Signal:** Closed by default: your own Note to Self always works; other numbers must be listed in `ALLOWED_NUMBERS` (E.164, comma-separated) or pair with `/pair <code>` (the one-time code Mux shows when the bridge starts; also in `/logs`). `MUX_BRIDGE_ALLOW_ALL=1` opens it to everyone (not recommended).
 
 ## Serve Layer: Editor & Auth (Optional)
 
