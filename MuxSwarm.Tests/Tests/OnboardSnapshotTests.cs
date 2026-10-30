@@ -83,6 +83,19 @@ public sealed class OnboardSnapshotTests : IDisposable
         Assert.True(CliCmdUtils.OnboardMaxIterations >= 15);   // 3 ended onboarding mid-setup
 
     [Fact]
+    public void Playbook_PutsTheUsersQuestionsBeforeTheFlow()
+    {
+        // A question typed as a custom ask_user answer was treated as a side note and the flow moved on.
+        string root = AppContext.BaseDirectory;
+        for (var d = new DirectoryInfo(root); d != null; d = d.Parent)
+            if (File.Exists(Path.Combine(d.FullName, "MuxSwarm.csproj"))) { root = d.FullName; break; }
+        var playbook = File.ReadAllText(Path.Combine(root, "Context", "ONBOARD.md"));
+        Assert.Contains("The user's own words come first, always.", playbook);
+        Assert.Contains("park the flow and handle that first", playbook);
+        Assert.Contains("is never a\n  choice", playbook.Replace("\r\n", "\n"));
+    }
+
+    [Fact]
     public void DocsToken_PointsAtLocalDocs()
     {
         var resolved = TokenInjector.InjectTokens("read {{paths.docs}}");
