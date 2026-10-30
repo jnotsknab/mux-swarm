@@ -8,7 +8,7 @@
         <Nullable>enable</Nullable>
         <EnableDefaultEmbeddedResourceItems>false</EnableDefaultEmbeddedResourceItems>
         <!-- Keep in sync with App.Version (VersionMetadataTests enforces it). Shown in Windows file properties. -->
-        <Version>0.16.0-nightly.20261027</Version>
+        <Version>0.16.0-nightly.20261030</Version>
         <FileVersion>0.16.0</FileVersion>
         <AssemblyVersion>0.16.0.0</AssemblyVersion>
 
