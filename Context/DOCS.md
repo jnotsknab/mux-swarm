@@ -1199,6 +1199,21 @@ extensions off; problems are shown at startup and in `/extensions`:
 
 Extensions can add more themes (see ## Extensions); they appear in `/theme`, the picker and setup.
 
+### Input box while the agent works (`console.inputDuringTurn`)
+
+```jsonc
+"console": { "inputDuringTurn": "hide" }   // hide (default) | steer
+```
+
+- `hide` (default): while a turn runs only the footer shows; Ctrl+N opens a steer box.
+- `steer`: the docked input box stays up during the turn (placeholder "steer the agent while it works"). What you
+  type there is sent on Enter as a mid-turn steer, the same path as Ctrl+N (spliced into the running turn, saved in
+  the session; an immediate extension command runs instead). Esc and Ctrl+Q still stop the turn (bare `q` and `\`
+  are plain typing here). An `ask_user` prompt takes over input and hands it back. Text typed but not sent when the
+  turn ends stays in the box for the next prompt.
+- Frame renderer, `/agent` lead sessions. The classic renderer, `--stdio`/`--serve`, the web app and bridges are
+  unaffected. Set with `/set inputDuringTurn steer` (applies from the next turn).
+
 ## Extensions
 
 Extensions customize Mux without rebuilding it. An extension is a folder holding an

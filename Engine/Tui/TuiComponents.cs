@@ -1225,7 +1225,8 @@ internal static class TuiComponents
 
     /// <summary>Overload reporting per-row <see cref="InputRowMeta"/> (parallel to the returned
     /// rows) from the same pass that painted them.</summary>
-    public static List<string> InputRowsWithCursor(string buffer, int cursor, int width, bool highlight, List<InputRowMeta>? meta)
+    public static List<string> InputRowsWithCursor(string buffer, int cursor, int width, bool highlight, List<InputRowMeta>? meta,
+        string? placeholderOverride = null)
     {
         meta?.Clear();
         string cur = $"{RegionStyle.Color("input.cursorFg")} on {RegionStyle.Color("input.cursorBg")}";
@@ -1265,7 +1266,7 @@ internal static class TuiComponents
         if (string.IsNullOrEmpty(buffer))
         {
             meta?.Add(new InputRowMeta(promptLeadCols, 0, 0, 0, Caret: true));
-            string placeholder = RegionStyle.Glyph("input.placeholder");
+            string placeholder = placeholderOverride ?? RegionStyle.Glyph("input.placeholder");
             return Shade(new List<string>
             {
                 $"{promptLead}[{cur}] [/]" + (placeholder.Length > 0 ? $"[{RegionStyle.Color("input.placeholderFg")}]{placeholder}[/]" : "")
