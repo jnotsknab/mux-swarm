@@ -93,6 +93,7 @@ public sealed class OnboardSnapshotTests : IDisposable
         Assert.Contains("The user's own words come first, always.", playbook);
         Assert.Contains("park the flow and handle that first", playbook);
         Assert.Contains("is never a\n  choice", playbook.Replace("\r\n", "\n"));
+        Assert.Contains("never your thinking", playbook);   // answers go where the user can read them
     }
 
     [Fact]
