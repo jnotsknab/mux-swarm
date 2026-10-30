@@ -2254,6 +2254,8 @@ public static class SingleAgentOrchestrator
             int stuckCount = 0;
 
             using var turnCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            bool steerBox = MuxConsole.SteerInputDuringTurn;
+            if (steerBox) MuxConsole.TuiSetTurnInput(true);
             // Esc cancels the turn; Ctrl+E expands the latest large tool result inline (mid-stream)
         // without cancelling - so the user can read full output while the agent keeps working.
         using var escapeListener = EscapeKeyListener.Start(turnCts, cancellationToken,
@@ -2265,7 +2267,13 @@ public static class SingleAgentOrchestrator
                 var s = MuxConsole.TuiSteerCompose();
                 // An immediate extension command typed in the steer box runs now instead of steering.
                 if (s is not null && !Extensions.ExtensionCommands.TryRunImmediate(s)) EnqueueSteer(s);
-            });
+            },
+            // console.inputDuringTurn = "steer": the docked input box stays up; Enter there steers (same path as Ctrl+N).
+            onTurnInput: steerBox ? ev =>
+            {
+                var s = MuxConsole.TuiTurnInput(ev);
+                if (s is not null && !Extensions.ExtensionCommands.TryRunImmediate(s)) EnqueueSteer(s);
+            } : null);
             StdinCancelMonitor.Instance?.SetActiveTurnCts(turnCts);
 
             bool wasInterrupted = false;
@@ -2759,6 +2767,7 @@ public static class SingleAgentOrchestrator
             {
                 StdinCancelMonitor.Instance?.ClearActiveTurnCts();
                 escapeListener.Dispose();
+                if (steerBox) MuxConsole.TuiSetTurnInput(false);
                 // Steers spliced in mid-turn are not committed by the framework: restore them (after the
                 // interrupt/failure records above, so they land next to the message they followed).
                 try { RestoreTurnSteers(session); } catch { /* best-effort; never breaks the turn */ }

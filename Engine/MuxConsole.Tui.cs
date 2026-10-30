@@ -1312,6 +1312,39 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
         return res.Text;
     }
 
+    /// <summary>True when console.inputDuringTurn is "steer" and the frame TUI can host the mid-turn input box.</summary>
+    internal static bool SteerInputDuringTurn =>
+        ViaDriver && FrameEngineEnabled && InputOverride == Console.In
+        && string.Equals(App.Config.Console?.InputDuringTurn, "steer", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>Show or hide the docked input box for the running turn (console.inputDuringTurn = "steer").</summary>
+    internal static void TuiSetTurnInput(bool on) { if (ViaDriver) lock (ConsoleLock) { _driver!.SetTurnInput(on); } }
+
+    /// <summary>
+    /// A key or paste typed mid-turn while the input box is up. Returns the submitted line (Enter) to send as a
+    /// steer, else null. A trace line is committed for each submitted steer, like the Ctrl+N box.
+    /// </summary>
+    internal static string? TuiTurnInput(Tui.ConsoleInputPump.InputEvent ev)
+    {
+        if (!ViaDriver) return null;
+        string? text;
+        lock (ConsoleLock)
+        {
+            if (!_driver!.TurnInputActive) return null;
+            if (ev.Kind is Tui.ConsoleInputPump.EventKind.Paste or Tui.ConsoleInputPump.EventKind.InferredPaste)
+            {
+                _driver.TurnInputPaste(ev.PasteText ?? "");
+                return null;
+            }
+            text = _driver.TurnInputKey(ev.Key);
+        }
+        if (text is null) return null;
+        string trace = TuiMarkup.TruncatePlain(text.Replace("\r", " ").Replace("\n", " "), 60);
+        string kind = Extensions.ExtensionCommands.Match(text) is { Immediate: true } ? "ran" : "steer";
+        CommitToDriver($"  [{TC.Dim}]\u21b3 {kind} \u00b7 {Spectre.Console.Markup.Escape(trace)}[/]");
+        return text;
+    }
+
     /// <summary>Set/clear the reasoning-effort chip shown in the docked footer.</summary>
     public static void SetTuiEffort(string? effort)
     {
