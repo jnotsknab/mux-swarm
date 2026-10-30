@@ -66,6 +66,73 @@ public class InputDuringTurnTests
     }
 
     [Fact]
+    public void FirstTimeSetup_DefaultsToSteer_OldConfigsStayHide()
+    {
+        var field = typeof(MuxSwarm.Setup.Setup).GetField("_appConfig", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+        var saved = field.GetValue(null);
+        bool stdio = MuxConsole.StdioMode;
+        var input = MuxConsole.InputOverride;
+        try
+        {
+            MuxConsole.StdioMode = true;
+            MuxConsole.InputOverride = new StringReader("");                 // setup stops at the first step
+            MuxSwarm.Setup.Setup.RunSetup();
+            Assert.Equal("steer", ((AppConfig)field.GetValue(null)!).Console.InputDuringTurn);
+            Assert.Equal("hide", System.Text.Json.JsonSerializer.Deserialize<AppConfig>("{\"console\":{\"theme\":\"nord\"}}")!.Console.InputDuringTurn);
+        }
+        finally
+        {
+            field.SetValue(null, saved);
+            MuxConsole.StdioMode = stdio;
+            MuxConsole.InputOverride = input;
+        }
+    }
+
+    [Fact]
+    public void SteerBoxLine_CommandIsQueuedForAfterTheTurn_TextSteers()
+    {
+        try
+        {
+            Assert.Equal("queued", SingleAgentOrchestrator.RouteTurnLine("/status"));
+            Assert.Equal("steer", SingleAgentOrchestrator.RouteTurnLine("use tabs"));
+            Assert.Equal("ignored", SingleAgentOrchestrator.RouteTurnLine("   "));
+            Assert.Equal("use tabs", SingleAgentOrchestrator.DrainSteer());          // text went to the steer queue
+            Assert.Equal("/status", SingleAgentOrchestrator.NextInputOrQueued(() => "typed"));   // the next read gets the command
+            Assert.Equal("typed", SingleAgentOrchestrator.NextInputOrQueued(() => "typed"));    // then the prompt again
+        }
+        finally
+        {
+            SingleAgentOrchestrator.DrainSteer();
+            while (SingleAgentOrchestrator.NextInputOrQueued(() => null) is not null) { }
+        }
+    }
+
+    [Fact]
+    public void SteerBox_PaletteCompletesCommandsLikeThePrompt()
+    {
+        var driver = new TuiDriver(new Term(), frameEngine: true);
+        driver.SetTurnInput(true);
+        foreach (var c in "/stat") driver.TurnInputKey(K(c));
+        Assert.Contains("/status", Plain(driver.ComposeFrameRows()));                // palette preview is up
+        // Down highlights a candidate and Enter ACCEPTS it into the box (it does not submit "/stat").
+        Assert.Null(driver.TurnInputKey(new ConsoleKeyInfo('\0', ConsoleKey.DownArrow, false, false, false)));
+        Assert.Null(driver.TurnInputKey(Enter));
+        Assert.Equal("/status", driver.TurnInputKey(Enter));                          // accepted, then submitted
+    }
+
+    [Fact]
+    public void UndeliveredSteer_GoesBackIntoTheNextPrompt()
+    {
+        var driver = new TuiDriver(new Term(), frameEngine: true);
+        driver.SetTurnInput(true);
+        foreach (var c in "half") driver.TurnInputKey(K(c));
+        driver.SetTurnInput(false);
+        driver.AppendDraft("late steer");
+        var draft = typeof(TuiDriver).GetField("_turnDraft", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        Assert.Equal("late steer\n\nhalf", draft.GetValue(driver));
+    }
+
+    [Fact]
     public void UnsentText_IsKeptForTheNextPrompt()
     {
         var driver = new TuiDriver(new Term(), frameEngine: true);
