@@ -339,7 +339,7 @@ class MuxSession:
         elif t in ("select_request", "multiselect_request", "confirm_request", "input_request"):
             out.extend(self.take_answer())
             out.extend(self.take_notices())
-            out.append(self._prompt(t, ev))
+            out.extend(self._chunked(self._prompt(t, ev)))
         elif t == "error":
             out.append(Outgoing(text="⚠️ " + str(ev.get("message") or ev.get("text") or "Unknown error")[:1900]))
         return out
@@ -366,6 +366,12 @@ class MuxSession:
             self.after_prompt, self.stash = self.stash, None
             return "/agent"
         return command
+
+    @staticmethod
+    def _chunked(item: Outgoing) -> list[Outgoing]:
+        """A long question (e.g. a whole plan) goes out as several messages; its buttons ride on the last one."""
+        parts = chunk_discord(item.text) or [item.text]
+        return [Outgoing(text=p) for p in parts[:-1]] + [Outgoing(text=parts[-1], buttons=item.buttons)]
 
     def _prompt(self, t: str, ev: dict[str, Any]) -> Outgoing:
         prompt = render_discord(str(ev.get("prompt") or ""))
@@ -696,13 +702,17 @@ def main(argv: Optional[list[str]] = None) -> int:
             await channel.send(item.text or "\u200b", view=AnswerView(item.buttons) if item.buttons else None,
                                allowed_mentions=no_pings)
 
+    def log_send_failure(fut: Any) -> None:
+        if not fut.cancelled() and fut.exception() is not None:
+            log.error("Discord send failed: %s", fut.exception())
+
     def emit(items: list[Outgoing]) -> None:
         for item in items:
             if item.mux is not None:
                 link.send(item.mux)               # session.sent() was already recorded by MuxSession
         chat = [i for i in items if i.mux is None]
         if chat and state["channel"] is not None and client.loop is not None:
-            asyncio.run_coroutine_threadsafe(deliver(chat), client.loop)
+            asyncio.run_coroutine_threadsafe(deliver(chat), client.loop).add_done_callback(log_send_failure)
 
     def on_mux_event(ev: dict[str, Any]) -> None:
         with lock:
