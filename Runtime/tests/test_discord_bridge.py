@@ -311,3 +311,19 @@ def test_state_file_keeps_pairing_and_settings(tmp_path):
     db.update_state(path, verbose=True)
     db.update_state(path, paired=[1])
     assert db.read_state(path) == {"verbose": True, "paired": [1]}
+
+
+# --- long questions (a whole plan in ask_user) ----------------------------------------------------------------------
+
+def test_long_prompt_is_split_under_the_limit_with_buttons_on_the_last_message():
+    big = "Plan:\n" + "\n".join(f"Step {i:03d}: do the thing carefully and verify it" for i in range(1, 150))
+    for ev in ({"type": "select_request", "prompt": big, "choices": ["Go", "Wait", CUSTOM, CANCEL], "bailout": True},
+               {"type": "confirm_request", "prompt": big, "bailout": True},
+               {"type": "input_request", "prompt": big},
+               {"type": "multiselect_request", "prompt": big, "choices": ["a", "b", CUSTOM, CANCEL], "bailout": True}):
+        out = db.MuxSession().on_event(ev)
+        assert len(out) > 1 and all(len(o.text) <= db.DISCORD_LIMIT for o in out), ev["type"]
+        assert all(not o.buttons for o in out[:-1])
+        assert "Step 001" in out[0].text and "Step 149" in "".join(o.text for o in out)
+    out = db.MuxSession().on_event({"type": "select_request", "prompt": big, "choices": ["Go", "Wait", CUSTOM, CANCEL], "bailout": True})
+    assert out[-1].buttons == [("Go", "1"), ("Wait", "2"), ("Type my own", "custom"), ("Cancel", "cancel")]
