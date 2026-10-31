@@ -72,7 +72,7 @@ public class ConfigModelTests
         // A is high by default so a normal tool chain never trips it.
         Assert.True(limits.MaxToolIterationsPerTurn >= 100);
         // B defaults to a small bounded number of silent continues.
-        Assert.Equal(3, limits.MaxAutoContinuesPerTurn);
+        Assert.Equal(100, limits.MaxAutoContinuesPerTurn);
     }
 
     [Fact]
@@ -84,7 +84,7 @@ public class ConfigModelTests
         var limits = JsonSerializer.Deserialize<ExecutionLimits>("{}");
         Assert.NotNull(limits);
         Assert.Equal(1000, limits!.MaxToolIterationsPerTurn);
-        Assert.Equal(3, limits.MaxAutoContinuesPerTurn);
+        Assert.Equal(100, limits.MaxAutoContinuesPerTurn);
     }
 
     [Fact]

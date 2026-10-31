@@ -631,7 +631,7 @@ Link via QR code at `http://localhost:8080/v1/qrcodelink?device_name=mux-swarm`.
   "delegationRetentionDays": 30,
   "activityTimeoutSeconds": 3600,
   "maxToolIterationsPerTurn": 1000,
-  "maxAutoContinuesPerTurn": 3,
+  "maxAutoContinuesPerTurn": 100,
   "taskClaimTtlSeconds": 900,
   "maxTaskAttempts": 3,
   "midTurnCompaction": true,
@@ -652,7 +652,7 @@ Any key may be omitted; missing keys inherit the built-in default shown above.
 - `delegationRetentionDays` - days spilled sub-agent raw outputs are kept under `<sandbox>/delegations` (or `%LOCALAPPDATA%/Mux-Swarm/delegations`) before a startup prune. 0 disables pruning.
 - `activityTimeoutSeconds` - deadman's-switch window for a turn: reset on every streamed update (text, tool call or tool result), and paused entirely while `ask_user` waits on you (a slow answer never times a turn out). A single tool call that blocks longer than the window with no updates still times out. Also the OpenAI client HTTP NetworkTimeout. NOT an idle-between-turns timeout. Default 3600 (1h). When it fires, the turn ends with a "timed out" warning and the session records your message plus a `[turn ended: ...]` note listing the tools that ran; any other mid-turn failure is recorded the same way (previously such a turn was dropped from the saved session).
 - `maxToolIterationsPerTurn` - max model->tool round-trips per turn before the invocation middleware stops looping (<= 0 = unlimited).
-- `maxAutoContinuesPerTurn` - how many times a turn may transparently continue itself after `finish_reason == length` (output/reasoning cap hit mid-generation). 0 disables.
+- `maxAutoContinuesPerTurn` - how many times a turn may transparently continue itself after `finish_reason == length` (output/reasoning cap hit mid-generation). Default 100 (was 3); 0 disables.
 - `taskClaimTtlSeconds` - team TaskBoard claim time-to-live: a claimed task with no heartbeat past this window is reclaimed by the stale-reaper. Default 900.
 - `maxTaskAttempts` - bounded retry ceiling for a team task before the circuit-breaker marks it Failed. Default 3.
 - `midTurnCompaction` - compact mid-turn when the context crosses the threshold: the tools the model just requested run, then the turn is compacted (its tool calls appear in the tool manifest; their full output is in the pre-compaction snapshot) and continues. A crossing on the final answer is not cut; the next turn compacts first. Needs a compaction model. Default true; false = compact only between turns.

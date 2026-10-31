@@ -89,10 +89,12 @@ public class ExecutionLimits
     /// ended with finish_reason "length" (output/reasoning token cap hit mid-generation) rather
     /// than a real stop. Each auto-continue re-invokes on the SAME session so the model resumes
     /// exactly where it was cut off. 0 disables auto-continue (revert to manual "continue"). When
-    /// the budget is exhausted mid-generation a muted hint is shown.
+    /// the budget is exhausted mid-generation a muted hint is shown. Default 100: a long answer or
+    /// reasoning block keeps going instead of stopping with "type 'continue'"; the cap only stops a
+    /// response that never finishes.
     /// </summary>
     [JsonPropertyName("maxAutoContinuesPerTurn")]
-    public int MaxAutoContinuesPerTurn { get; set; } = 3;
+    public int MaxAutoContinuesPerTurn { get; set; } = 100;
 
     /// <summary>
     /// Claim time-to-live (seconds) for a running team task. When a task has been InProgress with no
