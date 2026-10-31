@@ -240,3 +240,16 @@ def test_state_file_keeps_pairing_and_settings(tmp_path):
     sb.update_state(path, verbose=True)
     sb.update_state(path, paired=[1])
     assert sb.read_state(path) == {"verbose": True, "paired": [1]}
+
+
+# --- long questions (a whole plan in ask_user) ----------------------------------------------------------------------
+
+def test_long_prompt_is_split_under_the_limit():
+    big = "Plan:\n" + "\n".join(f"Step {i:03d}: do the thing carefully and verify it" for i in range(1, 150))
+    for ev in ({"type": "select_request", "prompt": big, "choices": ["Go", "Wait", CUSTOM, CANCEL], "bailout": True},
+               {"type": "confirm_request", "prompt": big, "bailout": True},
+               {"type": "input_request", "prompt": big},
+               {"type": "multiselect_request", "prompt": big, "choices": ["a", "b", CUSTOM, CANCEL], "bailout": True}):
+        out = sb.MuxSession().on_event(ev)
+        assert len(out) > 1 and all(len(t) <= sb.CHUNK_LIMIT for t in out), ev["type"]
+        assert "Step 001" in out[0] and "Step 149" in "".join(out) and "Reply" in out[-1]

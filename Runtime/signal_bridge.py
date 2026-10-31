@@ -362,7 +362,7 @@ class MuxSession:
         elif t in ("select_request", "multiselect_request", "confirm_request", "input_request"):
             out.extend(self.take_answer())
             out.extend(self.take_notices())
-            out.append(self._prompt(t, ev))
+            out.extend(chunk_signal(self._prompt(t, ev)))   # a long question goes out as several messages
         elif t == "error":
             out.append("⚠️ " + str(ev.get("message") or ev.get("text") or "Unknown error")[:1700])
         return out
