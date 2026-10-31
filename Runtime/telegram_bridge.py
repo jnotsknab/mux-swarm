@@ -384,11 +384,17 @@ class MuxSession:
         elif t in ("select_request", "multiselect_request", "confirm_request", "input_request"):
             out.extend(self.take_answer())       # show what the agent said before asking
             out.extend(self.take_notices())
-            out.append(self._prompt(t, ev))
+            out.extend(self._chunked(self._prompt(t, ev)))
         elif t == "error":
             msg = ev.get("message") or ev.get("text") or "Unknown error"
             out.append(Outgoing(text="⚠️ " + html.escape(str(msg)[:3500], quote=False)))
         return out
+
+    @staticmethod
+    def _chunked(item: Outgoing) -> list[Outgoing]:
+        """A long question (e.g. a whole plan) goes out as several messages; its buttons ride on the last one."""
+        parts = chunk_html(item.text) or [item.text]
+        return [Outgoing(text=p) for p in parts[:-1]] + [Outgoing(text=parts[-1], buttons=item.buttons)]
 
     def _prompt(self, t: str, ev: dict[str, Any]) -> Outgoing:
         prompt = str(ev.get("prompt") or "")
@@ -735,6 +741,10 @@ def main(argv: Optional[list[str]] = None) -> int:
             session.sent(line, plain)
         return link.send(line)
 
+    def log_send_failure(fut: Any) -> None:
+        if not fut.cancelled() and fut.exception() is not None:
+            log.error("Telegram send failed: %s", fut.exception())
+
     def emit(items: list[Outgoing]) -> None:
         for item in items:
             if item.mux is not None:
@@ -742,7 +752,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         chat = [i for i in items if i.mux is None]
         chat_id = state["chat_id"]
         if chat and chat_id is not None and "loop" in loop_holder:
-            asyncio.run_coroutine_threadsafe(deliver(chat_id, chat), loop_holder["loop"])
+            asyncio.run_coroutine_threadsafe(deliver(chat_id, chat), loop_holder["loop"]).add_done_callback(log_send_failure)
 
     def on_mux_event(ev: dict[str, Any]) -> None:
         with lock:
