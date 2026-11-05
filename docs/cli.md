@@ -347,7 +347,7 @@ an existing keyboard path - nothing is reachable only by mouse.
 - **Double-click** activates - the keyboard Enter for that surface (pickers advance/choose,
   ask_user accepts, NAV/transcript expands, job rows reopen).
 - **Triple-click** applies (F4) in `/setmodel` and `/set`.
-- **Drag** over transcript rows selects whole lines; release copies them to the clipboard
+- **Drag** in the transcript selects text character by character, from the press cell to the pointer (across lines); release copies it to the clipboard
   (OSC 52 with a local shell fallback, so it works over SSH). Shift+drag bypasses tracking for
   terminal-native selection in most terminals.
 - **Scrollbar**: clicking the track pages toward the click; dragging the thumb scrolls continuously.
