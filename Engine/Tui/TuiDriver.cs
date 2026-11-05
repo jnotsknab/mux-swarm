@@ -420,6 +420,9 @@ internal sealed partial class TuiDriver
     // between the live tail and the scroll position). Entries are keyed on their Expanded state;
     // the whole cache is dropped when the width, card-markdown mode or row styling changes.
     private readonly Dictionary<Entry, (bool Expanded, List<string> Rows)> _frameRowCache = new();
+    // Entries whose row count was subtracted from the cached total by an expand/collapse and is
+    // re-added on the next GetFrameTotalRows, so a toggle inside NAV never renders the frame card.
+    private readonly HashSet<Entry> _frameRowCountDirty = new();
     private (int W, bool Md, Theme Theme, bool Bg) _frameRowCacheKey;
 
     /// <summary>Styling the cached rows were rendered with (colours only; never geometry).</summary>
@@ -449,6 +452,7 @@ internal sealed partial class TuiDriver
         _frameTotalRowsCache = 0;
         _frameWindowCache = null;
         _frameRowCache.Clear();
+        _frameRowCountDirty.Clear();
     }
 
     /// <summary>One entry's expansion toggled: re-render only that entry and move the cached total
@@ -458,18 +462,26 @@ internal sealed partial class TuiDriver
         _frameRowCache.Remove(entry);
         _frameWindowCache = null;
         if (!_frameRowCountValid) return;
-        if (!_frameRowCountCache.TryGetValue(entry, out int old)) { InvalidateFrameRowCounts(); return; }
-        int count = RenderEntryRows(entry, _frameRowCountWidth).Count;
-        _frameRowCountCache[entry] = count;
-        _frameTotalRowsCache += count - old;
+        if (_frameRowCountCache.Remove(entry, out int old)) { _frameTotalRowsCache -= old; _frameRowCountDirty.Add(entry); }
+        else if (!_frameRowCountDirty.Contains(entry)) InvalidateFrameRowCounts();
     }
 
     private int GetFrameTotalRows(int wrapWidth)
     {
         if (_frameRowCountValid && _frameRowCountWidth == wrapWidth
             && _frameRowCountCardMarkdown == _cardMarkdown)
+        {
+            foreach (var entry in _frameRowCountDirty)
+            {
+                int count = RenderEntryRows(entry, wrapWidth).Count;
+                _frameRowCountCache[entry] = count;
+                _frameTotalRowsCache += count;
+            }
+            _frameRowCountDirty.Clear();
             return _frameTotalRowsCache;
+        }
 
+        _frameRowCountDirty.Clear();
         _frameRowCountCache.Clear();
         int total = 0;
         for (int e = VisibleStart(); e < _transcript.Count; e++)
@@ -539,6 +551,7 @@ internal sealed partial class TuiDriver
         {
             foreach (var entry in removed)
             {
+                if (_frameRowCountDirty.Remove(entry)) continue;   // count already subtracted
                 if (_frameRowCountCache.Remove(entry, out int count)) _frameTotalRowsCache -= count;
                 else { InvalidateFrameRowCounts(); break; }
             }

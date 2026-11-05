@@ -163,6 +163,28 @@ public class TuiRenderCacheTests
         Assert.Equal(0, calls.Count(w => w == d.Width));
     }
 
+    [Fact]
+    public void NavToggles_ThenExit_KeepTheExactTotal()
+    {
+        var term = new Terminal();
+        var d = new TuiDriver(term, frameEngine: true);
+        CommitCounted(d, 10);
+        d.CommitCollapsed("· CodeAgent finished (ctrl+e)", "CodeAgent", string.Join("\n", Enumerable.Range(0, 30).Select(i => $"body {i}")));
+        Compose(d);
+        int collapsed = TotalRows(d);
+        // NAV opens on the last line (the card): expand, collapse, expand; exit collapses it again.
+        var enter = new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, false, false);
+        RunNav(d, term, enter, enter, enter);
+        Compose(d);
+        Assert.Equal(collapsed, TotalRows(d));
+        InvalidateAll(d);
+        Assert.Equal(collapsed, TotalRows(d));
+        // A click expand after NAV still lands the exact total (the delta path).
+        RunNav(d, term, enter);   // leaves it collapsed again on exit
+        Compose(d);
+        Assert.Equal(collapsed, TotalRows(d));
+    }
+
     /// <summary>Replays an ANSI row into per-cell (char, active SGR) pairs: the terminal's view.</summary>
     private static List<(char Ch, string Style)> Cells(string ansi)
     {
