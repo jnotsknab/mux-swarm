@@ -180,7 +180,8 @@ internal static class TuiCommands
         new("/status",       "View full system status", Scope.ReplOnly),
         new("/help",         "Full command reference", Scope.ReplOnly),
         new("/shortcuts",    "Show keyboard shortcuts (/keys)", Scope.ReplOnly),
-        new("/keybinds",     "Reload Configs/Keybinds.json and show its path + problems", Scope.ReplOnly),
+        new("/keybinds",     "Edit keyboard shortcuts in a panel (saves Configs/Keybinds.json)", Scope.ReplOnly),
+        new("/keybinds reload", "Re-read a hand-edited Configs/Keybinds.json and show problems", Scope.ReplOnly),
         new("/keybinds init", "Write Configs/Keybinds.json with every action and its default keys", Scope.ReplOnly),
         new("/exit",         "Exit Mux-Swarm", Scope.ReplOnly),
     };

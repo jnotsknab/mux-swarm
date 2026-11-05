@@ -261,8 +261,41 @@ internal static class KeyBinds
         }
     }
 
+    /// <summary>Write <paramref name="overrides"/> (action -> chords that differ from the defaults) to
+    /// <see cref="FilePath"/>, replacing the file, then make it current. Keys of an existing file that are not
+    /// actions (e.g. <c>$schema</c>) are kept. Returns load warnings.</summary>
+    public static List<string> Save(IReadOnlyDictionary<string, string[]> overrides)
+    {
+        var warnings = Write(FilePath, overrides);
+        warnings.AddRange(Load());
+        return warnings;
+    }
+
+    /// <summary>Write the overrides file at <paramref name="path"/> (no reload). Returns write warnings.</summary>
+    internal static List<string> Write(string path, IReadOnlyDictionary<string, string[]> overrides)
+    {
+        var doc = new Dictionary<string, object>();
+        var warnings = new List<string>();
+        if (File.Exists(path))
+        {
+            try
+            {
+                using var old = JsonDocument.Parse(File.ReadAllText(path), new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true });
+                if (old.RootElement.ValueKind == JsonValueKind.Object)
+                    foreach (var p in old.RootElement.EnumerateObject())
+                        if (p.Name.StartsWith('$') || p.Name.StartsWith('_')) doc[p.Name] = p.Value.Clone();
+            }
+            catch (JsonException) { warnings.Add($"{FileName} was not valid JSON; it was replaced."); }
+        }
+        foreach (var (action, chords) in overrides) doc[action] = chords;
+        File.WriteAllText(path, JsonSerializer.Serialize(doc, WriteOptions) + Environment.NewLine);
+        return warnings;
+    }
+
+    private static readonly JsonSerializerOptions WriteOptions =
+        new() { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping };
+
     /// <summary>The full default file (every action with its default chords), for <c>/keybinds init</c>.</summary>
     public static string DefaultJson() => JsonSerializer.Serialize(
-        Defaults.ToDictionary(b => b.Action, b => b.Defaults),
-        new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
+        Defaults.ToDictionary(b => b.Action, b => b.Defaults), WriteOptions);
 }

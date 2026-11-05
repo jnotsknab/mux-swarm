@@ -1120,12 +1120,26 @@ public static class CliCmdUtils
     }
 
     /// <summary>
-    /// <c>/keybinds</c>: reload <c>Keybinds.json</c> (next to Config.json) and report its path and any problems.
-    /// <c>/keybinds init</c> first writes a file listing every action with its default keys (never overwrites).
+    /// <c>/keybinds</c>: open the keybinds panel (docked TUI); F4 saves the changed actions to <c>Keybinds.json</c>.
+    /// Without the TUI (or with <c>/keybinds reload</c>) it reloads the file and reports problems.
+    /// <c>/keybinds init</c> writes a file listing every action with its default keys (never overwrites).
     /// </summary>
-    public static void HandleKeybinds(bool init)
+    public static void HandleKeybinds(string sub)
     {
         string path = Tui.KeyBinds.FilePath;
+        bool init = sub == "init";
+        var panel = new Tui.KeybindsPanelView();
+        if (sub == "" && MuxConsole.TryKeybindsPanel(panel, out bool saved))
+        {
+            if (!saved) { MuxConsole.WriteMuted("Keybinds unchanged."); return; }
+            try
+            {
+                foreach (var warning in Tui.KeyBinds.Save(panel.Overrides())) MuxConsole.WriteWarning(warning);
+                MuxConsole.WriteSuccess($"Saved {path}. /shortcuts shows the keys in effect.");
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { MuxConsole.WriteError($"Could not write {path}: {ex.Message}"); }
+            return;
+        }
         if (init)
         {
             if (File.Exists(path)) { MuxConsole.WriteWarning($"{path} already exists; edit it, then run /keybinds."); return; }

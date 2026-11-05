@@ -675,7 +675,8 @@ internal class App
 
                 case "/keybinds":
                 case "/keybinds init":
-                    CliCmdUtils.HandleKeybinds(init: userInput == "/keybinds init");
+                case "/keybinds reload":
+                    CliCmdUtils.HandleKeybinds(userInput.Length > 10 ? userInput[10..] : "");
                     break;
 
                 case "/":
