@@ -124,7 +124,7 @@ public struct Help
         "  Click           Select items/lanes/jobs/settings; position the compose caret; expand/collapse cards",
         "  Double-click    Activate the clicked item (the Enter alias)",
         "  Triple-click    Apply staged changes in /setmodel and /set (the F4 alias)",
-        "  Drag            Select transcript lines; release copies clean text (works mid-turn)",
+        "  Drag            Select transcript text character by character; release copies it (works mid-turn)",
         "  Scrollbar       Click the rail to page; drag the thumb to scroll",
         "  Footer chips    Click the model chip for /setmodel; the effort chip cycles effort",
         "  Inline engine   Mouse stays native (terminal selection/scrollback); modals still clickable",
