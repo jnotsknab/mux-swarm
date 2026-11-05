@@ -258,21 +258,18 @@ public sealed class EscapeKeyListener : IDisposable
                         // Steer input box up: printable keys are typing, so the bare-Q cancel alias and the
                         // backslash agent-view shortcut stand down (Esc and Ctrl+Q still cancel).
                         bool typing = onTurnInput is not null && pump is not null && !Tui.ConsoleInputPump.ModalActive;
-                        bool cancelKey = key.Key == ConsoleKey.Escape
-                            || (key.Key == ConsoleKey.Q && !key.Modifiers.HasFlag(ConsoleModifiers.Alt)
-                                && ((key.Modifiers & ~ConsoleModifiers.Shift) == ConsoleModifiers.Control
-                                    || (!typing && (key.Modifiers & ~ConsoleModifiers.Shift) == 0)));
+                        bool cancelKey = Tui.KeyBinds.Matches(Tui.KeyAction.TurnCancel, key)
+                            || (!typing && key.Key == ConsoleKey.Q && (key.Modifiers & ~ConsoleModifiers.Shift) == 0);
                         if (cancelKey)
                         {
                             targetCts.Cancel();
                             break;
                         }
-                        bool ctrl = (key.Modifiers & ConsoleModifiers.Control) != 0;
                         // Ctrl+G: open the scrollback / vim view overlay mid-turn (scroll up,
                         // expand a specific tool block or sub-agent output) WITHOUT cancelling.
                         // Runs the overlay synchronously on this thread, so there is never a
                         // second concurrent key reader. Falls back to onExpand if no view handler.
-                        if (ctrl && key.Key == ConsoleKey.G && (onView is not null || onExpand is not null))
+                        if (Tui.KeyBinds.Matches(Tui.KeyAction.TurnView, key) && (onView is not null || onExpand is not null))
                         {
                             try { if (onView is not null) onView(); else onExpand!(); }
                             catch { /* overlay is best-effort */ }
@@ -289,21 +286,21 @@ public sealed class EscapeKeyListener : IDisposable
                         }
                         // Ctrl+E: expand the latest tool result inline without cancelling the turn.
                         // Swallows the keystroke; the turn keeps streaming.
-                        if (ctrl && key.Key == ConsoleKey.E && onExpand is not null)
+                        if (Tui.KeyBinds.Matches(Tui.KeyAction.TurnExpand, key) && onExpand is not null)
                         {
                             try { onExpand(); } catch { /* expansion is best-effort */ }
                             continue;
                         }
                         // Ctrl+L: clear the screen mid-turn without cancelling. Routes through the
                         // driver (no-op outside the TUI).
-                        if (ctrl && key.Key == ConsoleKey.L)
+                        if (Tui.KeyBinds.Matches(Tui.KeyAction.TurnRedraw, key))
                         {
                             try { MuxConsole.TuiClearScreen(); } catch { /* clear is best-effort */ }
                             continue;
                         }
                         // Ctrl+T: toggle the team TaskBoard strip mid-turn (v0.12.0 M2) without
                         // cancelling. No-op when no team board is active.
-                        if (ctrl && key.Key == ConsoleKey.T)
+                        if (Tui.KeyBinds.Matches(Tui.KeyAction.TurnTaskBoard, key))
                         {
                             try { MuxConsole.TuiToggleTaskBoard(); } catch { /* strip is best-effort */ }
                             continue;
@@ -314,7 +311,7 @@ public sealed class EscapeKeyListener : IDisposable
                         // and on submit the note is queued for the next turn boundary. Suppressed
                         // while another modal owns the pump (an ask_user prompt is up) so two modal
                         // loops never contend for the single input plane.
-                        if (ctrl && key.Key == ConsoleKey.N && onSteer is not null
+                        if (Tui.KeyBinds.Matches(Tui.KeyAction.TurnSteer, key) && onSteer is not null
                             && !Tui.ConsoleInputPump.ModalActive && !typing)   // steer box already up: no second box
                         {
                             try { onSteer(); } catch { /* steer compose is best-effort */ }

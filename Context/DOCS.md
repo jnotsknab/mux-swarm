@@ -8,6 +8,7 @@ Read this document before modifying any configuration file. All schemas and exam
 
 - Config: `{{paths.config}}/Config.json` -- infrastructure, providers, MCP servers, filesystem, daemon, telemetry
 - Swarm: `{{paths.config}}/Swarm.json` -- agent topology, model routing, model tuning, execution limits
+- Keybinds: `{{paths.config}}/Keybinds.json` -- optional TUI shortcut overrides (see ## Keybinds)
 - Context: `{{paths.context}}/` -- BRAIN.md, MEMORY.md, ONBOARD.md, this file
 - Prompts: `{{paths.prompts}}/` -- agent system prompts (*.md)
 - Skills: `{{paths.skills}}/` -- agent skill modules
@@ -1311,6 +1312,36 @@ Implemented additively on the `MuxConsole` prompt primitives (`SelectChoice` / `
 `MultiSelectChoice` + the `PromptChoice` result); the base `Select`/`Confirm`/`MultiSelect` are
 unchanged, so existing callers keep their behaviour. (Spectre's blocking picker exposes no raw Esc
 hook, so cancellation is delivered via an explicit "cancel" affordance labelled with Esc.)
+
+## Keybinds - `Configs/Keybinds.json` + `/keybinds`
+
+Optional file next to Config.json (follows `--cfg`). It lists only the actions you change; every
+other action keeps its default. Read at startup, on `/refresh`, and on `/keybinds`. `/keybinds init`
+writes the file with every action and its defaults (never overwrites). `/shortcuts` shows the keys in effect.
+
+```json
+{
+  "prompt.newline": ["Ctrl+J", "Alt+N"],
+  "prompt.submit": "Enter",
+  "prompt.taskBoard": []
+}
+```
+
+- Value: one chord string or an array (any of them triggers the action). `[]` unbinds.
+- Chord: `[Ctrl+][Alt+][Shift+]Key`, case-insensitive. Key = a `ConsoleKey` name (`F6`, `Tab`, `Delete`)
+  or `Esc`, `Enter`/`Return`, `Up`/`Down`/`Left`/`Right`, `Space`, `PgUp`/`PgDn`, a letter, a digit.
+- Bad JSON keeps all defaults; an unknown action or bad chord is skipped with a warning; keys
+  starting with `$` or `_` are ignored. JSON comments and trailing commas are allowed.
+- Newline is checked before submit, so a chord bound to both inserts a newline.
+- Actions: `prompt.submit`, `prompt.newline`, `prompt.complete`, `prompt.cycleEffort`, `prompt.paste`,
+  `prompt.undoAttachment`, `prompt.attachments`, `prompt.lineStart`, `prompt.lineEnd`, `prompt.killToStart`,
+  `prompt.killToEnd`, `prompt.deleteWord`, `prompt.cancel`, `prompt.exit`, `prompt.search`, `prompt.expand`,
+  `prompt.view`, `prompt.redraw`, `prompt.taskBoard`, `turn.cancel`, `turn.expand`, `turn.view`,
+  `turn.redraw`, `turn.taskBoard`, `turn.steer`.
+- Terminal limits: VT terminals send Ctrl+Enter as the same byte as Ctrl+J, Ctrl+I as Tab, Ctrl+M as
+  Enter, and Ctrl+H as Backspace, so those pairs cannot be bound apart. Many terminals send Shift+Enter
+  as plain Enter, and some take a chord before Mux sees it (Windows Terminal: Alt+Enter = fullscreen).
+  Arrow keys, the transcript view, pickers, and mouse are not rebindable.
 
 ## TUI color themes - `/theme` + setup step
 

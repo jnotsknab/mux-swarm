@@ -1200,6 +1200,27 @@ public static class CliCmdUtils
         MuxConsole.WriteMuted("Run /refresh (or restart Mux) to load the restored config.");
     }
 
+    /// <summary>
+    /// <c>/keybinds</c>: reload <c>Keybinds.json</c> (next to Config.json) and report its path and any problems.
+    /// <c>/keybinds init</c> first writes a file listing every action with its default keys (never overwrites).
+    /// </summary>
+    public static void HandleKeybinds(bool init)
+    {
+        string path = Tui.KeyBinds.FilePath;
+        if (init)
+        {
+            if (File.Exists(path)) { MuxConsole.WriteWarning($"{path} already exists; edit it, then run /keybinds."); return; }
+            try { File.WriteAllText(path, Tui.KeyBinds.DefaultJson() + Environment.NewLine); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { MuxConsole.WriteError($"Could not write {path}: {ex.Message}"); return; }
+            MuxConsole.WriteSuccess($"Wrote {path}");
+        }
+        var warnings = Tui.KeyBinds.Load();
+        foreach (var warning in warnings) MuxConsole.WriteWarning(warning);
+        MuxConsole.WriteInfo(File.Exists(path)
+            ? $"Keybinds loaded from {path}{(warnings.Count == 0 ? "" : $" ({warnings.Count} problem(s))")}. /shortcuts shows the keys in effect."
+            : $"No {Tui.KeyBinds.FileName}; using defaults. /keybinds init writes {path} to edit.");
+    }
+
     public static async Task HandleFullReload(Func<AppConfig, Task<bool>> initMcpServers,
         string configPath)
     {
