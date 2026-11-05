@@ -382,7 +382,7 @@ internal sealed class LineEditor
     public ReverseSearchSignal SearchFeed(ConsoleKeyInfo key)
     {
         bool ctrl = (key.Modifiers & ConsoleModifiers.Control) != 0;
-        if (ctrl && key.Key == ConsoleKey.R) { StepSearchOlder(); return ReverseSearchSignal.Redraw; }
+        if (KeyBinds.Matches(KeyAction.Search, key)) { StepSearchOlder(); return ReverseSearchSignal.Redraw; }
         if (ctrl && (key.Key == ConsoleKey.G || key.Key == ConsoleKey.C))
         {
             _searching = false;
@@ -457,10 +457,8 @@ internal sealed class LineEditor
     {
         // Ctrl-C / Ctrl-D handling first (mode-independent).
         bool ctrl = (key.Modifiers & ConsoleModifiers.Control) != 0;
-        bool shift = (key.Modifiers & ConsoleModifiers.Shift) != 0;
-        bool alt = (key.Modifiers & ConsoleModifiers.Alt) != 0;
-        if (ctrl && key.Key == ConsoleKey.C) return LineEditSignal.Cancel;
-        if (ctrl && key.Key == ConsoleKey.D)
+        if (KeyBinds.Matches(KeyAction.Cancel, key)) return LineEditSignal.Cancel;
+        if (KeyBinds.Matches(KeyAction.Exit, key))
             return IsEmpty ? LineEditSignal.Eof : LineEditSignal.Ignored;
 
         // Esc on an empty buffer opens the transcript NAV (view) overlay directly - the
@@ -472,28 +470,40 @@ internal sealed class LineEditor
             return IsEmpty ? LineEditSignal.NavEnter : LineEditSignal.Ignored;
 
         // Shift+Tab cycles the active mode (reasoning effort) without typing a slash command.
-        if (shift && key.Key == ConsoleKey.Tab) return LineEditSignal.ModeCycle;
-        // Plain Tab accepts the top autocomplete candidate; the driver resolves which list is
+        if (KeyBinds.Matches(KeyAction.CycleEffort, key)) return LineEditSignal.ModeCycle;
+        // Tab accepts the top autocomplete candidate; the driver resolves which list is
         // active (command palette / skill / session / @file) and applies the replacement.
-        if (!shift && !ctrl && key.Key == ConsoleKey.Tab) return LineEditSignal.Complete;
+        if (KeyBinds.Matches(KeyAction.Complete, key)) return LineEditSignal.Complete;
+
+        // Newline is checked before submit, so a chord bound to both inserts a newline. Defaults:
+        // Ctrl+J / Ctrl+Enter / Shift+Enter / Alt+Enter (VT terminals send Ctrl+Enter as Ctrl+J).
+        if (KeyBinds.Matches(KeyAction.Newline, key)) { InsertText("\n"); return LineEditSignal.Continue; }
+        if (KeyBinds.Matches(KeyAction.Submit, key)) return LineEditSignal.Submit;
+
+        if (KeyBinds.Matches(KeyAction.LineStart, key)) { _cursor = 0; return LineEditSignal.Continue; }
+        if (KeyBinds.Matches(KeyAction.LineEnd, key)) { _cursor = _buf.Length; return LineEditSignal.Continue; }
+        if (KeyBinds.Matches(KeyAction.KillToStart, key))
+        {
+            if (_cursor > 0) { RemoveRange(0, _cursor); _cursor = 0; return LineEditSignal.Continue; }
+            return LineEditSignal.Ignored;
+        }
+        if (KeyBinds.Matches(KeyAction.KillToEnd, key))
+        {
+            if (_cursor < _buf.Length) { RemoveRange(_cursor, _buf.Length - _cursor); return LineEditSignal.Continue; }
+            return LineEditSignal.Ignored;
+        }
+        if (KeyBinds.Matches(KeyAction.DeleteWord, key))
+        {
+            int p = PrevWord(_cursor);
+            if (p < _cursor) { RemoveRange(p, _cursor - p); return LineEditSignal.Continue; }
+            return LineEditSignal.Ignored;
+        }
 
         switch (key.Key)
         {
+            // Enter with a chord that is neither newline nor submit (e.g. unbound) does nothing.
             case ConsoleKey.Enter:
-                // Enter with any modifier (Ctrl, Alt, Shift) inserts a literal newline (multiline
-                // compose) instead of submitting. Native consoles report Ctrl+Enter as Enter+Ctrl;
-                // terminals that forward it to the app may report Shift/Alt the same way. Plain Enter submits.
-                if (ctrl || alt || shift)
-                {
-                    InsertText("\n");
-                    return LineEditSignal.Continue;
-                }
-                return LineEditSignal.Submit;
-
-            // Ctrl+J: newline alias (terminals that can\u0027t signal Alt+Enter still get multiline).
-            case ConsoleKey.J when ctrl:
-                InsertText("\n");
-                return LineEditSignal.Continue;
+                return LineEditSignal.Ignored;
 
             case ConsoleKey.Backspace:
                 if (_cursor > 0) { RemoveRange(_cursor - 1, 1); return LineEditSignal.Continue; }
@@ -518,21 +528,6 @@ internal sealed class LineEditor
 
             case ConsoleKey.UpArrow: return HistoryPrev();
             case ConsoleKey.DownArrow: return HistoryNext();
-
-            case ConsoleKey.A when ctrl: _cursor = 0; return LineEditSignal.Continue;
-            case ConsoleKey.E when ctrl: _cursor = _buf.Length; return LineEditSignal.Continue;
-            case ConsoleKey.U when ctrl: // kill to start of line
-                if (_cursor > 0) { RemoveRange(0, _cursor); _cursor = 0; return LineEditSignal.Continue; }
-                return LineEditSignal.Ignored;
-            case ConsoleKey.K when ctrl: // kill to end of line
-                if (_cursor < _buf.Length) { RemoveRange(_cursor, _buf.Length - _cursor); return LineEditSignal.Continue; }
-                return LineEditSignal.Ignored;
-            case ConsoleKey.W when ctrl: // delete previous word
-            {
-                int p = PrevWord(_cursor);
-                if (p < _cursor) { RemoveRange(p, _cursor - p); return LineEditSignal.Continue; }
-                return LineEditSignal.Ignored;
-            }
         }
 
         // Printable character insertion (ignore remaining control chars).
