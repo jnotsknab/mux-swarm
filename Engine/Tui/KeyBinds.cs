@@ -263,5 +263,6 @@ internal static class KeyBinds
 
     /// <summary>The full default file (every action with its default chords), for <c>/keybinds init</c>.</summary>
     public static string DefaultJson() => JsonSerializer.Serialize(
-        Defaults.ToDictionary(b => b.Action, b => b.Defaults), new JsonSerializerOptions { WriteIndented = true });
+        Defaults.ToDictionary(b => b.Action, b => b.Defaults),
+        new JsonSerializerOptions { WriteIndented = true, Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping });
 }
