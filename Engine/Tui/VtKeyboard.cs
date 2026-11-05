@@ -10,7 +10,9 @@ internal static class VtKeyboard
         char c = key.KeyChar;
         ConsoleKey code = c switch
         {
-            '\r' or '\n' => ConsoleKey.Enter, '\t' => ConsoleKey.Tab,
+            // VT terminals send LF (0x0A) for both Ctrl+J and Ctrl+Enter, and CR for Enter.
+            // LF is the newline chord, not Enter: mapping it to Enter submitted the draft.
+            '\r' => ConsoleKey.Enter, '\n' => ConsoleKey.J, '\t' => ConsoleKey.Tab,
             '\b' or '\x7f' => ConsoleKey.Backspace, '\x1b' => ConsoleKey.Escape,
             >= '\x01' and <= '\x1a' => (ConsoleKey)((int)ConsoleKey.A + c - 1),
             // Space has no glyph to match by character the way h/j/k/q are matched, so give it
@@ -18,7 +20,7 @@ internal static class VtKeyboard
             ' ' => ConsoleKey.Spacebar,
             _ => key.Key
         };
-        bool control = c is >= '\x01' and <= '\x1a' && c is not ('\r' or '\n' or '\t' or '\b');
+        bool control = c is >= '\x01' and <= '\x1a' && c is not ('\r' or '\t' or '\b');
         return new ConsoleKeyInfo(c, code, key.Modifiers.HasFlag(ConsoleModifiers.Shift),
             key.Modifiers.HasFlag(ConsoleModifiers.Alt), control || key.Modifiers.HasFlag(ConsoleModifiers.Control));
     }

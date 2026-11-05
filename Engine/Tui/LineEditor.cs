@@ -480,10 +480,10 @@ internal sealed class LineEditor
         switch (key.Key)
         {
             case ConsoleKey.Enter:
-                // Alt+Enter inserts a literal newline (multiline compose) instead of submitting,
-                // so users can write multi-line messages WITHOUT the \\ delimiter or delimiter-block
-                // mode. Plain Enter still submits.
-                if (alt)
+                // Enter with any modifier (Ctrl, Alt, Shift) inserts a literal newline (multiline
+                // compose) instead of submitting. Native consoles report Ctrl+Enter as Enter+Ctrl;
+                // terminals that forward it to the app may report Shift/Alt the same way. Plain Enter submits.
+                if (ctrl || alt || shift)
                 {
                     InsertText("\n");
                     return LineEditSignal.Continue;
