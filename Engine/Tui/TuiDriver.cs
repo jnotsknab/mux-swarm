@@ -415,6 +415,16 @@ internal sealed partial class TuiDriver
     private List<string>? _frameWindowCache;
     private (int W, int Room, int Scroll, int Count, long Seq, bool Md) _frameWindowKey;
 
+    // Rendered physical rows per Entry, so scrolling, commits while scrolled back and row counting
+    // slice cached rows instead of re-wrapping history (a scroll step used to re-render every entry
+    // between the live tail and the scroll position). Entries are keyed on their Expanded state;
+    // the whole cache is dropped when the width, card-markdown mode or row styling changes.
+    private readonly Dictionary<Entry, (bool Expanded, List<string> Rows)> _frameRowCache = new();
+    private (int W, bool Md, Theme Theme, bool Bg) _frameRowCacheKey;
+
+    /// <summary>Styling the cached rows were rendered with (colours only; never geometry).</summary>
+    private static (Theme Theme, bool Bg) RowStyle => (Theme.Active, TuiComponents.ContentBackgrounds);
+
     private void AddTranscriptEntry(Entry entry)
     {
         entry.Sequence = ++_transcriptSequence;
@@ -438,6 +448,20 @@ internal sealed partial class TuiDriver
         _frameRowCountCache.Clear();
         _frameTotalRowsCache = 0;
         _frameWindowCache = null;
+        _frameRowCache.Clear();
+    }
+
+    /// <summary>One entry's expansion toggled: re-render only that entry and move the cached total
+    /// by its row delta, instead of invalidating (and later re-rendering) the whole transcript.</summary>
+    private void InvalidateEntryRows(Entry entry)
+    {
+        _frameRowCache.Remove(entry);
+        _frameWindowCache = null;
+        if (!_frameRowCountValid) return;
+        if (!_frameRowCountCache.TryGetValue(entry, out int old)) { InvalidateFrameRowCounts(); return; }
+        int count = RenderEntryRows(entry, _frameRowCountWidth).Count;
+        _frameRowCountCache[entry] = count;
+        _frameTotalRowsCache += count - old;
     }
 
     private int GetFrameTotalRows(int wrapWidth)
@@ -510,6 +534,7 @@ internal sealed partial class TuiDriver
         if (over <= 0) return;
         var removed = _transcript.GetRange(0, over);
         _transcript.RemoveRange(0, over);
+        foreach (var entry in removed) _frameRowCache.Remove(entry);
         if (_frameRowCountValid)
         {
             foreach (var entry in removed)
@@ -931,7 +956,7 @@ internal sealed partial class TuiDriver
         int idx = -1;
         for (int i = _transcript.Count - 1; i >= 0; i--)
             if (_transcript[i].Expandable is not null) { idx = i; break; }
-        if (idx >= 0) { _transcript[idx].Expanded = true; InvalidateFrameRowCounts(); }
+        if (idx >= 0) { _transcript[idx].Expanded = true; InvalidateEntryRows(_transcript[idx]); }
         EnterNavMode(focusEntry: idx);
         return true;
     }
@@ -948,7 +973,7 @@ internal sealed partial class TuiDriver
             if (_transcript[i].Expandable is not null) { idx = i; break; }
         if (idx < 0) return false;
         _transcript[idx].Expanded = true;
-        InvalidateFrameRowCounts();
+        InvalidateEntryRows(_transcript[idx]);
         EnterNavMode(focusEntry: idx);
         return true;
     }
@@ -2375,14 +2400,27 @@ internal sealed partial class TuiDriver
             }
             else
             {
+                // Collect cached per-entry rows bottom-up, then copy out only the visible slice.
                 int want = transcriptRoom + Math.Max(0, _frameScroll);
                 int first = VisibleStart();
-                for (int e = _transcript.Count - 1; e >= first && transcriptRows.Count < want; e--)
-                    transcriptRows.InsertRange(0, RenderEntryRows(_transcript[e], wrapW));
-                int skipTail = Math.Max(0, _frameScroll);
-                int end = transcriptRows.Count - skipTail;
+                var parts = new List<List<string>>();
+                int have = 0;
+                for (int e = _transcript.Count - 1; e >= first && have < want; e--)
+                {
+                    var part = RenderEntryRows(_transcript[e], wrapW);
+                    parts.Add(part);
+                    have += part.Count;
+                }
+                int end = have - Math.Max(0, _frameScroll);
                 int start = Math.Max(0, end - transcriptRoom);
-                transcriptRows = transcriptRows.GetRange(start, Math.Max(0, end - start));
+                transcriptRows = new List<string>(Math.Max(0, end - start));
+                int at = 0;   // index of the current part's first row in the oldest-first concatenation
+                for (int p = parts.Count - 1; p >= 0 && at < end; p--)
+                {
+                    var part = parts[p];
+                    for (int i = Math.Max(0, start - at); i < part.Count && at + i < end; i++) transcriptRows.Add(part[i]);
+                    at += part.Count;
+                }
                 _frameWindowCache = transcriptRows;
                 _frameWindowKey = windowKey;
             }
@@ -2541,6 +2579,18 @@ internal sealed partial class TuiDriver
     /// entries get their full panel (diff or tool-result card - the same rendering NAV uses),
     /// collapsed entries their one-line summary, wrapped.</summary>
     private List<string> RenderEntryRows(Entry ent, int wrapW)
+    {
+        // Cached per entry (see _frameRowCache); callers copy or count the list, never mutate it.
+        var (theme, bg) = RowStyle;
+        var key = (wrapW, _cardMarkdown, theme, bg);
+        if (_frameRowCacheKey != key) { _frameRowCache.Clear(); _frameRowCacheKey = key; }
+        if (_frameRowCache.TryGetValue(ent, out var hit) && hit.Expanded == ent.Expanded) return hit.Rows;
+        var rows = RenderEntryRowsUncached(ent, wrapW);
+        _frameRowCache[ent] = (ent.Expanded, rows);
+        return rows;
+    }
+
+    private List<string> RenderEntryRowsUncached(Entry ent, int wrapW)
     {
         if (ent.Layout is { } layout)
             return layout(wrapW).SelectMany(line => LiveRegion.WrapMarkupLine(line, wrapW)).ToList();
@@ -3043,7 +3093,7 @@ internal sealed partial class TuiDriver
                 var ent = _transcript[captured.Payload];
                 if (ent.Expandable is null) break;
                 ent.Expanded = !ent.Expanded;
-                InvalidateFrameRowCounts();
+                InvalidateEntryRows(ent);
                 Repaint();
                 break;
 
@@ -3995,6 +4045,9 @@ internal sealed partial class TuiDriver
             var spans = TuiMarkup.Parse(model.DisplayLine(r));
             int col = 0;
             int rowCap = Math.Max(1, _term.Width - 1);   // never render into the last column
+            // One SGR per run: re-emit only when the cell's style changes (span edge, cursor cell,
+            // selection edge). Per-character SGR+Reset made a styled row ~20x larger on the wire.
+            string open = "";
             foreach (var span in spans)
             {
                 string sgr = span.Style.ToAnsi();
@@ -4003,12 +4056,19 @@ internal sealed partial class TuiDriver
                     if (col >= rowCap) break;
                     bool sel = model.InSelection(r, col);
                     bool cur = r == model.Row && col == model.Col;
-                    if (sel || cur) sb.Append(Ansi.Reset).Append(Ansi.Invert).Append(ch).Append(Ansi.Reset);
-                    else { if (sgr.Length > 0) sb.Append(sgr); sb.Append(ch); if (sgr.Length > 0) sb.Append(Ansi.Reset); }
+                    string want = sel || cur ? Ansi.Invert : sgr;
+                    if (!string.Equals(want, open, StringComparison.Ordinal))
+                    {
+                        if (open.Length > 0) sb.Append(Ansi.Reset);
+                        sb.Append(want);
+                        open = want;
+                    }
+                    sb.Append(ch);
                     col++;
                 }
                 if (col >= rowCap) break;
             }
+            if (open.Length > 0) sb.Append(Ansi.Reset);
             // Cursor parked just past the last char: show an inverted space.
             if (model.Row == r && model.Col >= col) { sb.Append(Ansi.Invert).Append(' ').Append(Ansi.Reset); col++; }
             // Pad to width-1 (never touch the last column) - combined with AutoWrapOff this
@@ -4225,7 +4285,7 @@ internal sealed partial class TuiDriver
                     var ent2 = _transcript[e];
                     if (ent2.Expandable is null) { Paint(); continue; }
                     ent2.Expanded = !ent2.Expanded;
-                    InvalidateFrameRowCounts();
+                    InvalidateEntryRows(ent2);
                     (disp, owner) = Build();
                     model.Load(disp);
                     model.SeekRow(FirstLineOf(owner, e));   // stay on the toggled card, no top-snap
@@ -4240,8 +4300,10 @@ internal sealed partial class TuiDriver
             _navSavedEntry = owner[Math.Clamp(model.Row, 0, owner.Count - 1)];
             // Leaving NAV: collapse all entries again (keep live scrollback compact) and return to
             // Insert mode at the live input prompt.
-            foreach (var e in _transcript) e.Expanded = false;
-            InvalidateFrameRowCounts();
+            // Only entries that were actually expanded change geometry; a plain open/close keeps
+            // every cached row (re-rendering the whole transcript here made NAV exit O(history)).
+            foreach (var e in _transcript)
+                if (e.Expanded) { e.Expanded = false; InvalidateEntryRows(e); }
         }
         finally
         {
