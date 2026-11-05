@@ -47,13 +47,13 @@ public class MouseCopyHardeningTests
         for (int i = 0; i < 30; i++)
             driver.CommitLine($"[#64B4DC]agent[/] [#3A3A3A]\u00b7[/] styled line {i} [#F0F0F0]tail[/]");
         ComposeRows(driver);
-        Mouse(driver, 0, 10, 5);
-        Mouse(driver, 32, 10, 7);
+        Mouse(driver, 0, 1, 5);
+        Mouse(driver, 32, 1, 8);   // rows 5-7 fully selected (row 8 only its first cell)
         var rows = ComposeRows(driver);
         for (int r = 5; r <= 7; r++)
         {
             string row = rows[r - 1];
-            Assert.StartsWith(Ansi.Invert, row);
+            Assert.Contains(Ansi.Invert, row);
             // EVERY embedded reset must be immediately followed by a re-assert of the invert,
             // except the FINAL reset that closes the overlay.
             int idx = 0;
@@ -65,7 +65,7 @@ public class MouseCopyHardeningTests
                 idx = after;
             }
         }
-        Mouse(driver, 0, 10, 7, release: true);
+        Mouse(driver, 0, 1, 8, release: true);
     }
 
     // ---- clipboard chrome classification ----
@@ -113,9 +113,9 @@ public class MouseCopyHardeningTests
             if (TuiMarkup.StripAnsi(rows[r - 1]).Contains("gutter line 10")) r0 = r;
         Assert.True(r0 > 0);
         term.Output.Clear();
-        Mouse(driver, 0, 10, r0);
-        Mouse(driver, 32, 10, r0 + 1);
-        Mouse(driver, 0, 10, r0 + 1, release: true);
+        Mouse(driver, 0, 1, r0);                    // from the gutter cell of the first row ...
+        Mouse(driver, 32, term.Width, r0 + 1);      // ... to the end of the next row
+        Mouse(driver, 0, term.Width, r0 + 1, release: true);
         Assert.Equal("gutter line 10\ngutter line 11", CopiedText(term));
     }
 
@@ -135,10 +135,10 @@ public class MouseCopyHardeningTests
             if (TuiMarkup.StripAnsi(rows[r - 1]).Contains("stream line 20")) r0 = r;   // bottom-anchored: high lines are on screen
         Assert.True(r0 > 0);
         term.Output.Clear();
-        Assert.Null(driver.RouteMouseMidTurn(ConsoleInputPump.InputEvent.OfMouse(0, 10, r0, false)));
-        Assert.Null(driver.RouteMouseMidTurn(ConsoleInputPump.InputEvent.OfMouse(32, 10, r0 + 1, false)));
+        Assert.Null(driver.RouteMouseMidTurn(ConsoleInputPump.InputEvent.OfMouse(0, 1, r0, false)));
+        Assert.Null(driver.RouteMouseMidTurn(ConsoleInputPump.InputEvent.OfMouse(32, term.Width, r0 + 1, false)));
         Assert.True(driver.DragSelecting);
-        Assert.Null(driver.RouteMouseMidTurn(ConsoleInputPump.InputEvent.OfMouse(0, 10, r0 + 1, true)));
+        Assert.Null(driver.RouteMouseMidTurn(ConsoleInputPump.InputEvent.OfMouse(0, term.Width, r0 + 1, true)));
         Assert.False(driver.DragSelecting);
         Assert.Equal("stream line 20\nstream line 21", CopiedText(term));
     }

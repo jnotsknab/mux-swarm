@@ -396,7 +396,7 @@ internal static class TuiCommands
         new("Click card",   "Expand / collapse a tool-result or sub-agent card (works mid-turn)", "mouse"),
         new("Double-click", "Activate: choose the item / accept the option (the Enter alias)", "mouse"),
         new("Triple-click", "Apply: /setmodel and /set staged changes (the F4 alias)", "mouse"),
-        new("Drag",         "Select transcript lines; release copies clean text to the clipboard", "mouse"),
+        new("Drag",         "Select transcript text character by character; release copies it to the clipboard", "mouse"),
         new("Scrollbar",    "Click the rail to page; drag the thumb to scroll", "mouse"),
         new("Footer chips", "Click the model chip = /setmodel; the effort chip = cycle effort (\u21e7\u21b9)", "mouse"),
         new("NAV click",    "Seek cursor; drag = line selection (y copies); double-click = expand", "mouse"),

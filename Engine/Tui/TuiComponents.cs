@@ -885,6 +885,24 @@ internal static class TuiComponents
         return null;   // decoration-only after stripping: borders / rules / stray glyph runs
     }
 
+    /// <summary>Character-span variant of <see cref="ClipboardText(string)"/> for drag selection:
+    /// the selected chars [<paramref name="start"/>, <paramref name="end"/>) of a PLAIN row,
+    /// clamped to the row's content (leading chrome and the trailing ctrl+e hint are never
+    /// copied), right-trimmed. Null for a decoration-only row; the full span equals
+    /// <see cref="ClipboardText(string)"/>.</summary>
+    public static string? ClipboardText(string plainRow, int start, int end)
+    {
+        if (ClipboardText(plainRow) is not { } whole) return null;
+        if (whole.Length == 0) return "";
+        int lead = LeadingChrome.Match(plainRow).Length;
+        string body = plainRow[lead..];
+        var hint = TrailingHint.Match(body);
+        int bodyEnd = hint.Success ? hint.Index : body.Length;
+        int s = Math.Clamp(start - lead, 0, bodyEnd);
+        int e = Math.Clamp(end - lead, s, bodyEnd);
+        return body[s..e].TrimEnd();
+    }
+
     /// <summary>Badge id: the model chip (click alias = /setmodel).</summary>
     public const string BadgeModel = "model";
     /// <summary>Badge id: the reasoning-effort chip (click alias = the Shift+Tab mode cycle).</summary>
