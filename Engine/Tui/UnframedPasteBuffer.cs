@@ -17,7 +17,8 @@ internal sealed class UnframedPasteBuffer
     {
         var result = new List<ConsoleInputPump.InputEvent>();
         bool text = ev.Kind == ConsoleInputPump.EventKind.Key
-            && (ev.Key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt)) == 0
+            // VT LF normalizes to Ctrl+J; it is still newline text for paste inference.
+            && (ev.Key.KeyChar == '\n' || (ev.Key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt)) == 0)
             && (ev.Key.KeyChar is '\r' or '\n' or '\t' || !char.IsControl(ev.Key.KeyChar));
         if (!text)
         {
