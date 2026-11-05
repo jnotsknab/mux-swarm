@@ -130,7 +130,8 @@ internal sealed class KeybindsPanelView
         int room = height - 5;
         int start = Math.Clamp(_index - room / 2, 0, Math.Max(0, _rows.Count - room));
         int actionW = Math.Min(24, _rows.Max(r => r.Action.Length) + 1);
-        int keysW = Math.Min(34, Math.Max(16, width / 3));
+        // Keys get the room they need (the newline row lists 4+ chords); descriptions take the rest.
+        int keysW = Math.Clamp(_rows.Max(r => string.Join(" / ", Chords(r.Action)).Length) + 1, 16, Math.Max(16, width / 2));
         for (int r = 0; r < room; r++)
         {
             int i = start + r;
