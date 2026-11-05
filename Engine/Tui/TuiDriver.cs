@@ -2723,15 +2723,12 @@ internal sealed partial class TuiDriver
         // row's own SGR runs and the row ends with a Reset).
         if (_dragSelecting)
         {
-            int selTop = Math.Clamp(Math.Min(_dragAnchorRow, _dragLastRow), 1, rows.Count);
-            int selBottom = Math.Clamp(Math.Max(_dragAnchorRow, _dragLastRow), 1, rows.Count);
-            for (int r = selTop; r <= selBottom; r++)
-                // Re-assert the invert after EVERY embedded SGR reset: transcript rows are full
-                // of [0m runs (per-span styling), and each one would otherwise terminate the
-                // inversion mid-row - leaving only the leading chrome highlighted.
-                rows[r - 1] = Ansi.Invert
-                    + rows[r - 1].Replace(Ansi.Reset, Ansi.Reset + Ansi.Invert)
-                    + Ansi.Reset;
+            // Stream selection (text-editor style): the start row from the start cell, middle rows
+            // whole, the end row up to the end cell. InvertCells re-asserts the invert after every
+            // embedded SGR reset (transcript rows are full of [0m runs) and maps wide chars by cell.
+            var (sr, sc, er, ec) = DragSpan();
+            for (int r = Math.Max(1, sr); r <= Math.Min(rows.Count, er); r++)
+                rows[r - 1] = TuiMarkup.InvertCells(rows[r - 1], r == sr ? sc : 1, r == er ? ec : int.MaxValue);
         }
         // Transient copy chip: replace the footer row briefly (same slot the NAV status uses;
         // mapped through the SAME wrap-extent walk as the badge regions).
@@ -3094,14 +3091,16 @@ internal sealed partial class TuiDriver
     private string? _pendingBadgeCommand;
 
     // ---- transcript drag-selection (frame engine; batch 8) ----------------------------------
-    // Line-granularity drag-select-to-copy: press in the transcript pane + vertical motion =
-    // select physical rows (rendered as reverse-video overlay), release = copy the selected
-    // rows' visible text (TuiClipboard OSC52 + shell fallback, the NAV yank pair). A release
-    // without motion is a CLICK and falls through to normal click routing, so expand/collapse
-    // and drag-select coexist on the same button. Inline mode never registers the backdrop -
-    // the terminal's native selection owns that plane (herdr/WT convention takes precedence).
-    private bool _dragSelecting;                     // motion crossed a row boundary since press
+    // Character-granularity drag-select-to-copy: press in the transcript pane + motion = a
+    // stream selection from the press cell to the pointer cell, spanning rows like a text editor
+    // (rendered as reverse-video overlay), release = copy exactly that text (TuiClipboard OSC52 +
+    // shell fallback, the NAV yank pair). A release without motion is a CLICK and falls through
+    // to normal click routing, so expand/collapse and drag-select coexist on the same button.
+    // Inline mode never registers the backdrop - the terminal's native selection owns that plane
+    // (herdr/WT convention takes precedence).
+    private bool _dragSelecting;                     // motion left the press cell since press
     private int _dragAnchorRow, _dragLastRow;        // 1-based physical rows (press origin, latest)
+    private int _dragAnchorCol, _dragLastCol;        // 1-based display cells (press origin, latest)
     private IReadOnlyList<string>? _dragRowsSnapshot; // the composed rows the selection indexes
     private int _dragPaneTop, _dragPaneBottom;       // inclusive physical bounds of the pane
     private string _copyStatus = "";                 // transient "copied N lines" chip (footer row)
@@ -3174,6 +3173,7 @@ internal sealed partial class TuiDriver
         _mouseCaptured = false;
         _dragSelecting = false;
         _dragAnchorRow = _dragLastRow = ev.Row;
+        _dragAnchorCol = _dragLastCol = ev.Col;
         var hits = _frameHits;
         bool found = hits is not null && hits.TryHit(ev.Row, ev.Col, out _, out _, out _);
         HitRegion hit = default; int localRow = 0;
@@ -3193,9 +3193,9 @@ internal sealed partial class TuiDriver
         // pointer drifts (standard scrollbar behavior).
         if (_mouseCapture.Kind == MouseTargetKind.ScrollBarThumb) { if (DragThumbTo(ev.Row)) Repaint(); return; }
         if (_mouseCapture.Kind == MouseTargetKind.DockSash) { if (DragSash(_mouseCapture, ev.Row, ev.Col)) Repaint(); return; }
-        // Transcript pane targets (backdrop, cards, lanes): vertical motion converts the gesture
-        // into a LINE SELECTION - crossing a row boundary is the motion-vs-click discriminator,
-        // so a wobbly click never selects and a real drag never mis-fires a click. Works MID-TURN
+        // Transcript pane targets (backdrop, cards, lanes): motion converts the gesture into a
+        // CHARACTER SELECTION - leaving the press cell is the motion-vs-click discriminator (a
+        // press+release with no motion stays a click). Works MID-TURN
         // too: the overlay is STATE applied by every compose (ticker repaints re-apply it, they
         // cannot erase it), and the copy reads the frozen row snapshot from the same compose the
         // user saw - streaming may shift rows under a long-held selection, but the selection
@@ -3203,16 +3203,32 @@ internal sealed partial class TuiDriver
         bool paneTarget = _mouseCapture.Kind is MouseTargetKind.ExpandedPanel
             or MouseTargetKind.TranscriptEntry or MouseTargetKind.AgentLane;
         if (!paneTarget) return;
-        int row = Math.Clamp(ev.Row, _dragPaneTop, Math.Max(_dragPaneTop, _dragPaneBottom));
-        if (!_dragSelecting && row != _dragAnchorRow)
-            _dragSelecting = true;   // first boundary crossing arms the selection
-        if (_dragSelecting && row != _dragLastRow)
+        var (row, col) = DragCell(ev);
+        if (!_dragSelecting && (row != _dragAnchorRow || col != _dragAnchorCol))
+            _dragSelecting = true;   // first move off the press cell arms the selection
+        if (_dragSelecting && (row != _dragLastRow || col != _dragLastCol))
         {
             _dragLastRow = row;
+            _dragLastCol = col;
             Repaint();               // overlay tracks the pointer (diff repaint: only changed rows)
         }
-        else if (_dragSelecting) _dragLastRow = row;
     }
+
+    /// <summary>Pointer cell clamped to the transcript pane; leaving the pane above/below snaps to
+    /// the start/end of the edge row (text-editor drag semantics).</summary>
+    private (int Row, int Col) DragCell(MouseEvent ev)
+    {
+        int bottom = Math.Max(_dragPaneTop, _dragPaneBottom);
+        if (ev.Row < _dragPaneTop) return (_dragPaneTop, 1);
+        if (ev.Row > bottom) return (bottom, int.MaxValue);
+        return (ev.Row, Math.Max(1, ev.Col));
+    }
+
+    /// <summary>The active selection as an ordered inclusive cell span (start row/col, end row/col).</summary>
+    private (int StartRow, int StartCol, int EndRow, int EndCol) DragSpan()
+        => (_dragAnchorRow, _dragAnchorCol).CompareTo((_dragLastRow, _dragLastCol)) <= 0
+            ? (_dragAnchorRow, _dragAnchorCol, _dragLastRow, _dragLastCol)
+            : (_dragLastRow, _dragLastCol, _dragAnchorRow, _dragAnchorCol);
 
     private void OnMouseRelease(MouseEvent ev)
     {
@@ -3225,7 +3241,8 @@ internal sealed partial class TuiDriver
         if (_dragSelecting)
         {
             _dragSelecting = false;
-            CopyDragSelection(Math.Min(_dragAnchorRow, ev.Row), Math.Max(_dragAnchorRow, ev.Row));
+            (_dragLastRow, _dragLastCol) = DragCell(ev);
+            CopyDragSelection();
             Repaint();
             return;
         }
@@ -3342,16 +3359,16 @@ internal sealed partial class TuiDriver
         }
     }
 
-    /// <summary>Copy a completed drag selection: physical rows <paramref name="fromRow"/>..
-    /// <paramref name="toRow"/> (1-based, clamped to the transcript pane) are pulled from the
-    /// LAST COMPOSED row snapshot - the exact rows the overlay highlighted - ANSI-stripped to
-    /// visible text, right-trimmed, and yanked through the SAME dual path as NAV's y (OSC 52 via
-    /// the terminal sink + platform shell fallback). Shows a transient "copied N lines" chip in
-    /// the footer slot.</summary>
-    private void CopyDragSelection(int fromRow, int toRow)
+    /// <summary>Copy a completed drag selection: the cell span from <see cref="DragSpan"/>
+    /// (clamped to the transcript pane) is pulled from the LAST COMPOSED row snapshot - the exact
+    /// cells the overlay highlighted - ANSI-stripped to visible text, right-trimmed, and yanked
+    /// through the SAME dual path as NAV's y (OSC 52 via the terminal sink + platform shell
+    /// fallback). Shows a transient "copied N lines" chip in the footer slot.</summary>
+    private void CopyDragSelection()
     {
         var snapshot = _dragRowsSnapshot;
         if (snapshot is null || snapshot.Count == 0) return;
+        var (fromRow, fromCol, toRow, toCol) = DragSpan();
         int top = Math.Clamp(fromRow, Math.Max(1, _dragPaneTop), snapshot.Count);
         int bottom = Math.Clamp(toRow, top, Math.Min(snapshot.Count, Math.Max(top, _dragPaneBottom)));
         // Classify every selected row: strip leading gutter/tree/status chrome and trailing
@@ -3361,7 +3378,9 @@ internal sealed partial class TuiDriver
         bool lastBlank = false;
         for (int r = top; r <= bottom; r++)
         {
-            string? line = TuiComponents.ClipboardText(TuiMarkup.StripAnsi(snapshot[r - 1]));
+            string plain = TuiMarkup.StripAnsi(snapshot[r - 1]);
+            var (start, end) = TuiMarkup.CellSpanToChars(plain, r == fromRow ? fromCol : 1, r == toRow ? toCol : int.MaxValue);
+            string? line = TuiComponents.ClipboardText(plain, start, end);
             if (line is null) continue;                       // decoration-only: never paste it
             bool blank = line.Length == 0;
             if (blank && (lastBlank || kept.Count == 0)) continue;
