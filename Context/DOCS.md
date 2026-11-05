@@ -1163,8 +1163,13 @@ hook, so cancellation is delivered via an explicit "cancel" affordance labelled 
 
 ## Keybinds - `Configs/Keybinds.json` + `/keybinds`
 
-Optional file next to Config.json (follows `--cfg`). It lists only the actions you change; every
-other action keeps its default. Read at startup, on `/refresh`, and on `/keybinds`. `/keybinds init`
+`/keybinds` opens a panel listing every action and its keys: Enter (or A) then press a key adds it,
+Delete removes the last key, R resets to the default, U unbinds, F4 saves, Esc discards. Keys pressed
+while it captures are taken raw (your own bindings do not intercept them); a key already used by
+another action in the same context is reported. Saving writes only actions that differ from the defaults.
+
+The file is optional, next to Config.json (follows `--cfg`), and lists only the actions you change; every
+other action keeps its default. Read at startup, on `/refresh`, and on `/keybinds reload`. `/keybinds init`
 writes the file with every action and its defaults (never overwrites). `/shortcuts` shows the keys in effect.
 
 ```json
