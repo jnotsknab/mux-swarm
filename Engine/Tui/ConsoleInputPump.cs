@@ -378,6 +378,8 @@ internal sealed class SgrInputAssembler
                 if (c == ']') { _acc.Clear(); _acc.Append("\x1b]"); _state = State.Osc; break; }
                 if (c == '[') { _state = State.EscBracket; break; }
                 if (c == 'O') { _acc.Clear(); _state = State.Ss3Key; break; }
+                // ESC CR / ESC LF is Alt+Enter: one chord, never a bare Esc followed by a submitting Enter.
+                if (c is '\r' or '\n') { outp.Add(ConsoleInputPump.InputEvent.OfKey(new ConsoleKeyInfo('\r', ConsoleKey.Enter, false, true, false))); _state = State.Ground; break; }
                 // Alt-chord (ESC+char) or a second ESC: emit the held ESC, reprocess this key.
                 outp.Add(ConsoleInputPump.InputEvent.OfKey(EscKey));
                 _state = State.Ground;

@@ -283,6 +283,21 @@ public class TuiCoreTests
     public void LineEditor_Enter_Submits()
         => Assert.Equal(LineEditSignal.Submit, new LineEditor().Feed(Key(ConsoleKey.Enter)));
 
+    /// <summary>Native consoles report Ctrl/Shift/Alt+Enter as Enter with the modifier; each inserts a newline.</summary>
+    [Theory]
+    [InlineData(ConsoleModifiers.Control)]
+    [InlineData(ConsoleModifiers.Shift)]
+    [InlineData(ConsoleModifiers.Alt)]
+    public void LineEditor_ModifiedEnter_InsertsNewline(ConsoleModifiers mods)
+    {
+        var ed = new LineEditor();
+        ed.Feed(Ch('a'));
+        var key = new ConsoleKeyInfo('\r', ConsoleKey.Enter, mods.HasFlag(ConsoleModifiers.Shift),
+            mods.HasFlag(ConsoleModifiers.Alt), mods.HasFlag(ConsoleModifiers.Control));
+        Assert.Equal(LineEditSignal.Continue, ed.Feed(key));
+        Assert.Equal("a\n", ed.Buffer);
+    }
+
     [Fact]
     public void LineEditor_CtrlC_Cancels()
         => Assert.Equal(LineEditSignal.Cancel, new LineEditor().Feed(Key(ConsoleKey.C, ctrl: true)));
