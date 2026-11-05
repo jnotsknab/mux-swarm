@@ -1339,6 +1339,8 @@ writes the file with every action and its defaults (never overwrites). `/shortcu
 - Terminal limits: VT terminals send Ctrl+Enter as the same byte as Ctrl+J, Ctrl+I as Tab, Ctrl+M as
   Enter, and Ctrl+H as Backspace, so those pairs cannot be bound apart. Many terminals send Shift+Enter
   as plain Enter, and some take a chord before Mux sees it (Windows Terminal: Alt+Enter = fullscreen).
+  VT terminals send Alt+letter as Esc then the letter, which Mux reads as two keys: prefer Ctrl or
+  F-key chords (Alt+Enter and Alt+V are recognized).
   Arrow keys, the transcript view, pickers, and mouse are not rebindable.
 
 ## TUI color themes - `/theme` + setup step

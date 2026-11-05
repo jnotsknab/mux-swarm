@@ -124,6 +124,7 @@ public class KeyBindsTests
         Assert.Empty(warnings);
         Assert.Equal(KeyBinds.Defaults.Length, missing.Count);
 
+        Assert.Contains("\"Ctrl+J\"", KeyBinds.DefaultJson());   // hand-editable: '+' is not \u002B-escaped
         var map = KeyBinds.Parse(KeyBinds.DefaultJson(), warnings);
         Assert.Empty(warnings);
         foreach (var bind in KeyBinds.Defaults) Assert.Equal(bind.Combination, map[bind.Action].Combination);
