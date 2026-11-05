@@ -230,6 +230,7 @@ internal class App
             File.WriteAllText(hbPath, DateTimeOffset.UtcNow.ToUnixTimeMilliseconds().ToString());
 
         Config = LoadConfig(ConfigPath);
+        foreach (var warning in Engine.Tui.KeyBinds.Load()) MuxConsole.WriteWarning(warning);
 
         // Activate the configured theme BEFORE the splash renders. WriteSplashScreen resolves its
         // C.* color roles (Banner/Accent/Muted/...) against Theme.Active at emit time; the inline
@@ -676,6 +677,11 @@ internal class App
                 case "/shortcuts":
                 case "/keys":
                     MuxConsole.PrintShortcuts();
+                    break;
+
+                case "/keybinds":
+                case "/keybinds init":
+                    CliCmdUtils.HandleKeybinds(init: userInput == "/keybinds init");
                     break;
 
                 case "/":
@@ -1263,6 +1269,7 @@ internal class App
 
                 case "/refresh":
                     Config = LoadConfig(ConfigPath);
+                    foreach (var warning in Engine.Tui.KeyBinds.Load()) MuxConsole.WriteWarning(warning);
                     SwarmConfig = LoadSwarm();
                     await CliCmdUtils.HandleFullReload(InitMcpServersAsync, ConfigPath);
                     break;

@@ -114,7 +114,7 @@ internal sealed class ComposeAttachments
 
     internal bool HandleKey(ConsoleKeyInfo key, Action<int, int> remove)
     {
-        if (key.Key == ConsoleKey.F2 && _items.Count > 0)
+        if (KeyBinds.Matches(KeyAction.Attachments, key) && _items.Count > 0)
         { Focused = !Focused; Expanded = false; Scroll = 0; return true; }
         if (!Focused || _items.Count == 0) return false;
         if (key.Key == ConsoleKey.Escape) { if (Expanded) Expanded = false; else Focused = false; return true; }
