@@ -265,6 +265,63 @@ internal static class TuiMarkup
     /// MARKUP tags from a not-yet-rendered line.</summary>
     public static string StripAnsi(string ansi) => AnsiSeq.Replace(ansi ?? "", "");
 
+    /// <summary>Map the inclusive 1-based display-cell span [<paramref name="fromCol"/>,
+    /// <paramref name="toCol"/>] of PLAIN text to a char range [Start, End). A wide grapheme
+    /// (CJK/emoji) is included when either of its cells is in the span; a span past the text
+    /// maps to an empty range at the end.</summary>
+    public static (int Start, int End) CellSpanToChars(string plain, int fromCol, int toCol)
+    {
+        plain ??= "";
+        int col = 1, start = -1, end = plain.Length;
+        var e = System.Globalization.StringInfo.GetTextElementEnumerator(plain);
+        while (e.MoveNext())
+        {
+            string el = (string)e.Current;
+            int w = TextElementWidth(el);
+            if (col > toCol) { end = e.ElementIndex; break; }
+            if (start < 0 && col + Math.Max(w, 1) - 1 >= fromCol) start = e.ElementIndex;
+            col += w;
+        }
+        return start < 0 ? (plain.Length, plain.Length) : (start, Math.Max(start, end));
+    }
+
+    /// <summary>Reverse-video the inclusive 1-based display-cell span [<paramref name="fromCol"/>,
+    /// <paramref name="toCol"/>] of an already-rendered ANSI row (selection highlight). Escape
+    /// sequences pass through untouched; inside the span the invert is re-asserted after every
+    /// embedded SGR reset (per-span styling would otherwise end it), and it is switched off
+    /// (CSI 27m, reverse only) where the span ends. Cells map exactly like
+    /// <see cref="CellSpanToChars"/> on the stripped text.</summary>
+    public static string InvertCells(string ansi, int fromCol, int toCol)
+    {
+        ansi ??= "";
+        var sb = new System.Text.StringBuilder(ansi.Length + 16);
+        int col = 1, pos = 0;
+        bool inSpan = false;
+        void Text(string chunk)
+        {
+            var e = System.Globalization.StringInfo.GetTextElementEnumerator(chunk);
+            while (e.MoveNext())
+            {
+                string el = (string)e.Current;
+                int w = TextElementWidth(el);
+                bool want = col <= toCol && col + Math.Max(w, 1) - 1 >= fromCol;
+                if (want != inSpan) { sb.Append(want ? Ansi.Invert : Ansi.CSI + "27m"); inSpan = want; }
+                sb.Append(el);
+                col += w;
+            }
+        }
+        foreach (System.Text.RegularExpressions.Match m in AnsiSeq.Matches(ansi))
+        {
+            Text(ansi[pos..m.Index]);
+            sb.Append(m.Value);
+            if (inSpan && (m.Value == Ansi.Reset || m.Value == Ansi.CSI + "m")) sb.Append(Ansi.Invert);
+            pos = m.Index + m.Length;
+        }
+        Text(ansi[pos..]);
+        if (inSpan) sb.Append(Ansi.Reset);
+        return sb.ToString();
+    }
+
     /// <summary>
     /// Hard-truncate plain text to a maximum display width, appending an ellipsis when
     /// truncation occurs (the ellipsis is included within <paramref name="maxWidth"/>).
