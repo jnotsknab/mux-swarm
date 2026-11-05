@@ -98,6 +98,7 @@ public struct Help
         "  /clear          Clear screen",
         "  /status         View current system status: provider, models, tools, skills, and sessions",
         "  /shortcuts      Show keyboard shortcuts (alias /keys)",
+        "  /keybinds       Reload Configs/Keybinds.json (rebind shortcuts); /keybinds init writes the defaults",
         "  /exit           Exit Mux-Swarm",
         "",
         "Input & Editing (live TUI)",

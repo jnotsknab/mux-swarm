@@ -3482,20 +3482,19 @@ internal sealed partial class TuiDriver
                     && _editor.Buffer.Trim().Equals("/paste", StringComparison.OrdinalIgnoreCase)
                     && !RemoteSubmitAllowed(_editor.Buffer))
                 { Repaint(); continue; }
-                if ((key.Key == ConsoleKey.V && (key.Modifiers & (ConsoleModifiers.Control | ConsoleModifiers.Alt)) != 0)
+                if (KeyBinds.Matches(KeyAction.Paste, key)
                     || (key.Key == ConsoleKey.Enter && _editor.Buffer.Trim().Equals("/paste", StringComparison.OrdinalIgnoreCase)))
                 {
                     if (key.Key == ConsoleKey.Enter) _editor.SetBuffer("");
                     BeginClipboardPaste(); Repaint(); continue;
                 }
-                if (key.Key == ConsoleKey.Z && key.Modifiers.HasFlag(ConsoleModifiers.Control) && _editor.UndoAttachment())
+                if (KeyBinds.Matches(KeyAction.UndoAttachment, key) && _editor.UndoAttachment())
                 { Repaint(); continue; }
                 if (_editor.Attachments.HandleKey(key, _editor.RemoveRange)) { Repaint(); continue; }
 
                 // Ctrl+R at the prompt: enter reverse-incremental history search. No-op (falls
                 // through) when there is no history yet, so the key is never silently swallowed.
-                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.R
-                    && _editor.History.Count > 0)
+                if (KeyBinds.Matches(KeyAction.Search, key) && _editor.History.Count > 0)
                 {
                     _editor.BeginReverseSearch();
                     if (_editor.IsSearching) { _paletteSel = -1; Repaint(); continue; }
@@ -3543,7 +3542,7 @@ internal sealed partial class TuiDriver
                 // instead of falling into the transcript NAV overlay. Otherwise open the NAV overlay
                 // on the most-recent large tool result, pre-expanded (reversible). Falls through to
                 // the editor's emacs Ctrl+E (end-of-line) when neither applies.
-                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.E)
+                if (KeyBinds.Matches(KeyAction.Expand, key))
                 {
                     if (_subAgents.Count > 0 && OnSubAgentExpand is { } expandSub)
                     {
@@ -3563,7 +3562,7 @@ internal sealed partial class TuiDriver
                 // secondary affordance to Esc-on-empty for users whose terminal binds Esc to
                 // cancel-the-turn. Opens NAV focused on the latest expandable block if one exists,
                 // else the plain transcript overlay. Never cancels.
-                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.G)
+                if (KeyBinds.Matches(KeyAction.View, key))
                 {
                     if (!ExpandLastBlock()) EnterNavMode();
                     Repaint();
@@ -3572,7 +3571,7 @@ internal sealed partial class TuiDriver
 
                 // Ctrl+L at the prompt: clear any resize/redraw artifacts and repaint the live
                 // region from scratch. Does not cancel or submit.
-                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.L)
+                if (KeyBinds.Matches(KeyAction.Redraw, key))
                 {
                     ForceRedraw();
                     continue;
@@ -3613,7 +3612,7 @@ internal sealed partial class TuiDriver
 
                 // Ctrl+T at the prompt: toggle the team TaskBoard strip (v0.12.0 M2). No-op visual
                 // when no team board is active. Does not cancel or submit.
-                if ((key.Modifiers & ConsoleModifiers.Control) != 0 && key.Key == ConsoleKey.T)
+                if (KeyBinds.Matches(KeyAction.TaskBoard, key))
                 {
                     ToggleTaskBoard();
                     Repaint();
