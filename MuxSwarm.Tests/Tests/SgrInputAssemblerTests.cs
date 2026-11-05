@@ -416,6 +416,38 @@ public class SgrInputAssemblerTests
         Assert.Equal(ConsoleKey.Spacebar, VtKeyboard.Normalize(new ConsoleKeyInfo(' ', (ConsoleKey)0, true, false, false)).Key);
     }
 
+    /// <summary>VT input sends LF for Ctrl+J and Ctrl+Enter and ESC CR for Alt+Enter. Each must reach the editor
+    /// as a newline chord, never as a plain Enter that submits the draft (11-04 hotfix).</summary>
+    [Theory]
+    [InlineData("\n")]
+    [InlineData("\x1b\r")]
+    public void VtNewlineChords_InsertNewline_NeverSubmit(string bytes)
+    {
+        var asm = new SgrInputAssembler(true, true);
+        var editor = new LineEditor();
+        editor.InsertText("hi");
+        var events = new List<ConsoleInputPump.InputEvent>();
+        foreach (char c in bytes)
+        {
+            Assert.True(Win32ConsoleInput.TryTranslateKey(true, 0, c, 0, out var raw));
+            events.AddRange(asm.Feed(raw));
+        }
+        var key = Assert.Single(events);
+        Assert.Equal(ConsoleInputPump.EventKind.Key, key.Kind);
+        Assert.Equal(LineEditSignal.Continue, editor.Feed(key.Key));
+        Assert.Equal("hi\n", editor.Buffer);
+    }
+
+    /// <summary>Plain CR stays Enter and still submits.</summary>
+    [Fact]
+    public void VtCarriageReturn_StillSubmits()
+    {
+        var asm = new SgrInputAssembler(true, true);
+        Assert.True(Win32ConsoleInput.TryTranslateKey(true, 0, '\r', 0, out var raw));
+        var key = Assert.Single(asm.Feed(raw));
+        Assert.Equal(LineEditSignal.Submit, new LineEditor().Feed(key.Key));
+    }
+
     /// <summary>Captured ConPTY-style Unicode records retain framed payload and decode subsequent navigation.</summary>
     [Fact]
     public void ConPtyVtRecords_PreservePasteBeforeKeyboardAndMouse()
