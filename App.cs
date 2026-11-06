@@ -1888,7 +1888,7 @@ internal class App
         string? goalId = null;
         uint minDelay = 300;
         uint persistInterval = 60;
-        uint sessionRetention = 10;
+        uint sessionRetention = 0;   // 0 = keep every session; pruning is opt-in via --session-retention
         bool prodMode = false;
         int? telemetryPort = null;
         bool? mcpStrictOverride = null;

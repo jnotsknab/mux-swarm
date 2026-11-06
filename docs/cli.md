@@ -22,7 +22,7 @@ Launch flags accepted by the `mux-swarm` binary. Any of these can be persisted a
 | `--model <id>` | CLI model override |
 | `--min-delay <secs>` | Minimum delay between continuous loops (default 300) |
 | `--persist-interval <s>` | Persist session state every N seconds |
-| `--session-retention <n>` | Keep the last N sessions (default 10) |
+| `--session-retention <n>` | Keep only the newest N sessions (default 0 = keep all) |
 | `--watchdog` | External watchdog (auto-restart on crash) |
 | `--mcp-strict <bool>` | Require ALL MCP servers to connect or exit (default false: failed servers are skipped with a warning badge; exits only if every enabled server fails). Opt in via flag or `MUXSWARM_MCP_STRICT=1` |
 | `--docker-exec <bool>` | Route execution through Docker skills |

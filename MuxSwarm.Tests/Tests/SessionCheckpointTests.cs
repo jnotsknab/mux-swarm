@@ -288,6 +288,42 @@ public class SessionCheckpointTests : IDisposable
     }
 
     [Fact]
+    public void PruneOldSessions_RetentionZero_KeepsEverySession()
+    {
+        // 0 = retention off. Skip(0) used to select every session, so a 0 would have wiped them all.
+        for (int i = 1; i <= 3; i++)
+        {
+            var d = Path.Combine(_root, $"2026-03-0{i}_00-00-00");
+            Directory.CreateDirectory(d);
+            File.WriteAllText(Path.Combine(d, "agent_session.json"), "{}");
+        }
+
+        Common.PruneOldSessions(_root, 0);
+
+        for (int i = 1; i <= 3; i++)
+            Assert.True(Directory.Exists(Path.Combine(_root, $"2026-03-0{i}_00-00-00")));
+    }
+
+    private static object ParseCliArgs(params string[] args) =>
+        typeof(App).GetMethod("ParseArgs", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!
+            .Invoke(null, new object[] { args })!;
+
+    private static uint Retention(object parsed) => (uint)parsed.GetType().GetProperty("SessionRetention")!.GetValue(parsed)!;
+
+    [Fact]
+    public void SessionRetention_DefaultsToOff_InTheCliAndEveryOrchestrator()
+    {
+        // A goal run (dynamic workflow children run `MuxSwarm --stdio --agent X <goal>`) used to prune the
+        // shared Sessions folder down to the newest 10 when it ended. Pruning is now opt-in.
+        Assert.Equal(0u, Retention(ParseCliArgs("do the thing")));
+        Assert.Equal(3u, Retention(ParseCliArgs("do the thing", "--session-retention", "3")));
+        foreach (var type in new[] { typeof(MultiAgentOrchestrator), typeof(ParallelSwarmOrchestrator), typeof(SingleAgentOrchestrator) })
+        foreach (var method in type.GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static))
+        foreach (var p in method.GetParameters().Where(p => p.Name == "sessionRetention"))
+            Assert.True(0u.Equals(p.DefaultValue), $"{type.Name}.{method.Name} defaults sessionRetention to {p.DefaultValue}");
+    }
+
+    [Fact]
     public async Task PersistChatSession_LeavesNoPartialFile_AndWritesValidJson()
     {
         // The write is temp + atomic replace; a reader must never see a ".partial" in the

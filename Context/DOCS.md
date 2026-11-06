@@ -818,7 +818,7 @@ Pass-through for provider-specific parameters not covered by standard fields:
 --max-parallelism <n>      Max concurrent tasks (default 4)
 --min-delay <secs>         Loop delay (default 300)
 --persist-interval <secs>  Session save interval
---session-retention <n>    Keep last N sessions (default 10)
+--session-retention <n>    Keep only the newest N sessions (default 0 = keep all)
 --stdio                    Machine-readable NDJSON output
 --serve [port]             Start web UI (default 6723)
 --telemetry [port]         Standalone telemetry dashboard (default 6725)
