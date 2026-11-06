@@ -595,8 +595,14 @@ public static class Common
         catch { return false; }
     }
 
+    /// <summary>
+    /// Deletes all but the newest <paramref name="retention"/> sessions in <paramref name="sessionDir"/>.
+    /// 0 keeps every session (the default): pruning only runs when the user passes --session-retention.
+    /// </summary>
     public static void PruneOldSessions(string sessionDir, uint retention)
     {
+        // 0 = retention off. Without this guard Skip(0) would select, and delete, every session.
+        if (retention == 0) return;
         // Retention counts real SESSIONS, not bare directories. A session dir is only a candidate
         // once it holds a persisted *_session.json: the pre-turn checkpoint creates the directory
         // at user-submit time, and unrelated tooling drops its own folders in here (observed:

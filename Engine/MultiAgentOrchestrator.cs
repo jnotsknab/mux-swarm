@@ -125,7 +125,7 @@ public static class MultiAgentOrchestrator
         string? goalId = null,
         uint minDelaySeconds = 300,
         uint persistIntervalSeconds = 60,
-        uint sessionRetention = 10,
+        uint sessionRetention = 0,
         CancellationToken cancellationToken = default,
         bool persistSession = true)
     {

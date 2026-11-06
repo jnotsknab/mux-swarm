@@ -21,7 +21,7 @@ internal class App
 {
     /// <summary>Product version string surfaced by <c>--version</c>, the splash, <c>/api/health</c> and the updater.
     /// A const so it can be read before <see cref="App"/> (and its config-loading static state) is touched.</summary>
-    public const string Version = "0.15.3";
+    public const string Version = "0.15.4";
     /// <summary>Local debug/build tag shown next to the version on the splash. Empty string = release (no tag rendered). Bump per local test build.</summary>
     public static readonly string DebugTag = "";
     
@@ -1885,7 +1885,7 @@ write the complete script to {scriptPath} (overwrite the seed). Confirm the path
         string? goalId = null;
         uint minDelay = 300;
         uint persistInterval = 60;
-        uint sessionRetention = 10;
+        uint sessionRetention = 0;   // 0 = keep every session; pruning is opt-in via --session-retention
         bool prodMode = false;
         int? telemetryPort = null;
         bool? mcpStrictOverride = null;
