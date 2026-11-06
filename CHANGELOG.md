@@ -13,6 +13,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [v0.15.4-alpha]
+
+### Fixed
+- **Saved sessions were deleted after goal runs.** `--session-retention` defaulted to 10, so every CLI goal run
+  (`MuxSwarm <goal>`, `--agent X <goal>`, `--stdio`, `--parallel`), every dynamic-workflow child process, and every
+  continuous `/swarm` / `/pswarm` iteration deleted all but the newest 10 sessions in the shared `Sessions/` folder
+  (no Recycle Bin). Pruning is now opt-in. (#114)
+
+### Changed
+- `--session-retention` defaults to **0 = keep every session**. Pass `--session-retention <n>` to keep only the
+  newest N (e.g. `--session-retention 10` restores the old behavior for long-running continuous installs). (#114)
+
 ## [v0.15.3-alpha]
 
 ### Fixed
