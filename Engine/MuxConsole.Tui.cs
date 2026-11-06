@@ -1313,6 +1313,18 @@ internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _dri
         ViaDriver && FrameEngineEnabled && InputOverride == Console.In
         && string.Equals(App.Config.Console?.InputDuringTurn, "steer", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// True when a backslash typed into the mid-turn steer box should open the Agent View instead of being typed:
+    /// the box is empty (the idle prompt's first-char rule, so a literal backslash mid-line still types) and
+    /// sub-agents are running.
+    /// </summary>
+    internal static bool TuiTurnInputOpensAgentView()
+    {
+        if (!ViaDriver) return false;
+        lock (_captureGate) { if (_activeCaptures.Count == 0) return false; }
+        lock (ConsoleLock) { return _driver!.TurnInputEmpty; }
+    }
+
     /// <summary>Show or hide the docked input box for the running turn (console.inputDuringTurn = "steer").</summary>
     internal static void TuiSetTurnInput(bool on) { if (ViaDriver) lock (ConsoleLock) { _driver!.SetTurnInput(on); } }
 

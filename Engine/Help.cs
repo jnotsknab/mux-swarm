@@ -175,7 +175,7 @@ public struct Help
         "  --goal-id <id>             Attach goal/session id",
         "  --min-delay <secs>         Min delay between loops (default 300)",
         "  --persist-interval <s>     Persist session every N seconds",
-        "  --session-retention <n>    Keep last N sessions (default 10)",
+        "  --session-retention <n>    Keep only the newest N sessions (default 0 = keep all)",
         "  --stdio                    Machine-readable output (no ANSI)",
         "  --acp                      Run as a Zed ACP (Agent Client Protocol) server over stdio",
         "  --classic                  Force the classic line renderer (opt out of the live TUI default)",
