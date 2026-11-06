@@ -211,6 +211,36 @@ public class InputDuringTurnTests
             }
             driver.SetTurnInput(false);
 
+            // steer + sub-agents running: "\\" in an EMPTY box opens the Agent View (like the idle prompt);
+            // after text it is typed, so a literal backslash mid-line still works.
+            var captures = (System.Collections.IList)typeof(MuxConsole).GetField("_activeCaptures", Static)!.GetValue(null)!;
+            var savedCaptures = captures.Cast<object>().ToArray();
+            var captureType = typeof(MuxConsole).GetNestedType("SubAgentCapture", System.Reflection.BindingFlags.NonPublic)!;
+            var capture = Activator.CreateInstance(captureType, nonPublic: true)!;
+            captureType.GetField("Agent")!.SetValue(capture, "Worker");
+            captureType.GetField("Lane")!.SetValue(capture, "Worker");
+            captures.Clear(); captures.Add(capture);
+            try
+            {
+                int opened = 0;
+                steers.Clear();
+                driver.SetTurnInput(true);
+                using (var turn = new CancellationTokenSource())
+                using (EscapeKeyListener.Start(turn, stop.Token, null, null, () => Interlocked.Increment(ref opened), null,
+                    ev => { if (MuxConsole.TuiTurnInput(ev) is { } s) steers.Enqueue(s); }))
+                {
+                    pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(K('\\')));
+                    Assert.True(SpinWait.SpinUntil(() => Volatile.Read(ref opened) == 1, TimeSpan.FromSeconds(2)), "\\ in an empty steer box did not open the Agent View");
+                    foreach (var c in "a\\") pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(K(c)));
+                    pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(Enter));
+                    SpinWait.SpinUntil(() => !steers.IsEmpty, TimeSpan.FromSeconds(2));
+                    Assert.Equal(new[] { "a\\" }, steers.ToArray());                     // typed, not swallowed
+                    Assert.Equal(1, Volatile.Read(ref opened));
+                }
+                driver.SetTurnInput(false);
+            }
+            finally { captures.Clear(); foreach (var c in savedCaptures) captures.Add(c); }
+
             // hide (no turn-input callback): typed keys are replayed into the next prompt, as before.
             using (var turn = new CancellationTokenSource())
             using (EscapeKeyListener.Start(turn, stop.Token, null, null, null, null))

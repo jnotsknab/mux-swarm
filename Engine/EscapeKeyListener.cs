@@ -255,8 +255,8 @@ public sealed class EscapeKeyListener : IDisposable
                             try { used = dock(key); } catch { /* panels are best-effort */ }
                             if (used) continue;
                         }
-                        // Steer input box up: printable keys are typing, so the bare-Q cancel alias and the
-                        // backslash agent-view shortcut stand down (Esc and Ctrl+Q still cancel).
+                        // Steer input box up: printable keys are typing, so the bare-Q cancel alias stands down
+                        // (Esc and Ctrl+Q still cancel) and backslash opens the Agent View only from an empty box.
                         bool typing = onTurnInput is not null && pump is not null && !Tui.ConsoleInputPump.ModalActive;
                         bool cancelKey = key.Key == ConsoleKey.Escape
                             || (key.Key == ConsoleKey.Q && !key.Modifiers.HasFlag(ConsoleModifiers.Alt)
@@ -282,7 +282,8 @@ public sealed class EscapeKeyListener : IDisposable
                         // a keyboard-navigable session list over the running sub-agents - WITHOUT
                         // cancelling. Runs the dashboard loop synchronously on this thread, so there
                         // is never a second concurrent key reader (same contract as the Ctrl+G view).
-                        if (key.KeyChar == '\\' && onAgents is not null && !typing)
+                        // Steer box up: only from an empty box with sub-agents running (the idle prompt's rule).
+                        if (key.KeyChar == '\\' && onAgents is not null && (!typing || MuxConsole.TuiTurnInputOpensAgentView()))
                         {
                             try { onAgents(); } catch { /* dashboard is best-effort */ }
                             continue;

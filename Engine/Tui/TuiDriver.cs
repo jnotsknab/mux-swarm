@@ -577,6 +577,9 @@ internal sealed partial class TuiDriver
     /// <summary>True while the mid-turn steer input box is shown.</summary>
     internal bool TurnInputActive => _turnInput;
 
+    /// <summary>True while the mid-turn steer input box is shown and holds no text.</summary>
+    internal bool TurnInputEmpty => _turnInput && _editor.IsEmpty;
+
     /// <summary>Show (or hide) the docked input box for the running turn. Showing starts with an empty box.</summary>
     internal void SetTurnInput(bool on)
     {
