@@ -380,17 +380,20 @@ internal static class CliProxyManager
     /// </summary>
     public static async Task<string> EnsureRunningAsync(CancellationToken ct = default)
     {
-        // A startup warm-up (StartWarmup) already did the slow first adopt/spawn: use its result once.
+        // A startup warm-up (StartWarmup) already did the slow first adopt/spawn: wait for it once, but never
+        // trust its result as-is. The sidecar may have died since, so the normal check below still runs (its
+        // fast path is one loopback health probe once the warm-up found the port).
         if (Interlocked.Exchange(ref _warmup, null) is { } warm)
         {
-            try { return await warm.WaitAsync(ct).ConfigureAwait(false); }
+            try { await warm.WaitAsync(ct).ConfigureAwait(false); }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
-            catch { /* warm-up failed: retry normally so the caller sees the real error */ }
+            catch { /* warm-up failed: the check below retries and surfaces the real error */ }
         }
-        return await EnsureRunningCoreAsync(ct).ConfigureAwait(false);
+        return await (_coreForTests ?? EnsureRunningCoreAsync)(ct).ConfigureAwait(false);
     }
 
     private static Task<string>? _warmup;
+    private static Func<CancellationToken, Task<string>>? _coreForTests;
 
     /// <summary>
     /// Starts <see cref="EnsureRunningAsync"/> in the background (idempotent), so the first session does not
@@ -407,6 +410,9 @@ internal static class CliProxyManager
 
     /// <summary>Test seam: install a pending warm-up result.</summary>
     internal static void SetWarmupForTests(Task<string>? warmup) => _warmup = warmup;
+
+    /// <summary>Test seam: replace the adopt/spawn/health check that runs after the warm-up (null = real one).</summary>
+    internal static void SetCoreForTests(Func<CancellationToken, Task<string>>? core) => _coreForTests = core;
 
     private static async Task<string> EnsureRunningCoreAsync(CancellationToken ct)
     {
