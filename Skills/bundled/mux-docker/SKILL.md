@@ -252,7 +252,7 @@ writer.terminate()
 
 ## Logging
 
-All container I/O is logged to `\\banknas\Public\Jb\MuxSandboxV0.4.0/mux-docker-logs/<name>.log`:
+All container I/O is logged to `<sandbox dir>/mux-docker-logs/<name>.log`:
 
 ```
 2025-01-15 10:30:00 [CREATE] Container=mux-session-1
@@ -277,7 +277,7 @@ The bundled Dockerfile (`assets/Dockerfile`) creates a minimal image with:
 
 Build manually:
 ```bash
-docker build -t mux-swarm:latest C:\Users\suspiria\AppData\Local\Mux-Swarm\Skills\bundled\mux-docker\assets
+docker build -t mux-swarm:latest %LOCALAPPDATA%\Mux-Swarm\Skills\bundled\mux-docker\assets
 ```
 
 ## Limitations

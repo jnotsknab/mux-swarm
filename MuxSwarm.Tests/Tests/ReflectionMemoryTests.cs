@@ -225,7 +225,7 @@ public class ReflectionMemoryTests
     [InlineData(@"the error was in ReflectionGatherer.cs")]
     [InlineData(@"I got a CS0246 exception during build")]
     [InlineData(@"can you locate the handoff doc")]
-    [InlineData(@"\\banknas\Public\Jb path to the report")]
+    [InlineData(@"\\nas\share path to the report")]
     public void Gatherer_DetectCue_FiresOnConcreteCues(string msg)
     {
         Assert.NotNull(ReflectionGatherer.DetectCue(msg));

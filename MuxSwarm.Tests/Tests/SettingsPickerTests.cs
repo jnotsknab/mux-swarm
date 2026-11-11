@@ -64,7 +64,7 @@ public class SettingsPickerViewTests
     [Fact]
     public void SecretDraftIsVisibleWhileTyping_StoredValueStaysMasked_PasteIsNotAnAction()
     {
-        // v0.14.1 contract (Jonathan): the LIVE DRAFT is never masked - users must see what they
+        // v0.14.1 contract: the LIVE DRAFT is never masked - users must see what they
         // type. Only the STORED current value renders as (masked), and pasted text must never be
         // interpreted as commands/actions.
         var view = new SettingsPickerView(new[] { Item("serve.auth.token", secret: true) }, "serve.auth.token");

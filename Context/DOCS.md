@@ -1,4 +1,4 @@
-﻿# Mux-Swarm System Reference
+# Mux-Swarm System Reference
 
 Source repository: https://github.com/jnotsknab/mux-swarm
 
@@ -111,7 +111,7 @@ Optional. Injected into the preamble for all agents.
 
 ```json
 "userInfo": {
-  "name": "Jonathan",
+  "name": "Alex",
   "role": "admin",
   "timezone": "America/New_York",
   "locale": "en-US",
