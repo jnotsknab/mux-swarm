@@ -112,6 +112,7 @@ public sealed class AcpServer
     {
         MuxConsole.AcpActive = true;
         MuxConsole.AcpSink = OnMuxEvent;
+        AskUserHandler = AskUserAsync;
 
         // Read AND dispatch on a DEDICATED thread, never the thread pool. During startup MCP
         // init spawns many subprocess connections concurrently, which can saturate the pool
@@ -147,6 +148,8 @@ public sealed class AcpServer
         {
             _reader?.CloseSession();
             MuxConsole.AcpSink = null;
+            AskUserHandler = null;
+            ReleasePendingRequests();   // client gone: release waiting requests
             try { if (_sessionTask is not null) await _sessionTask; } catch { /* session teardown best-effort */ }
         }
     }
@@ -213,10 +216,14 @@ public sealed class AcpServer
 
                 case "session/cancel":
                     _cancelRequested = true;
+                    // The client should answer open permission prompts with "cancelled"; release
+                    // them here too so an ask_user can never outlive its cancelled turn.
+                    ReleasePendingRequests();
                     StdinCancelMonitor.Instance?.FireCancel();
                     break;            // notification: no response
 
                 case "session/close":
+                    ReleasePendingRequests();   // an open ask_user would keep the loop from reaching /qc
                     _reader?.CloseSession();
                     Respond(id, new Dictionary<string, object?>());
                     break;
@@ -392,6 +399,67 @@ public sealed class AcpServer
         }
     }
 
+    /// <summary>
+    /// Set while an ACP server runs: the ask_user tool routes through it (question, type
+    /// confirm|select|multi_select|text, choices, tool call id) instead of reading the console.
+    /// </summary>
+    internal static Func<string, string, IReadOnlyList<string>, string?, Task<string>>? AskUserHandler;
+
+    /// <summary>
+    /// ask_user over ACP. Confirm/select/multi_select become a session/request_permission on the
+    /// same tool call (one option per choice; a client can pick only one), mapped back to the
+    /// tool's usual result text. Free-text questions cannot be asked mid-turn, so the model is told
+    /// to ask in its reply instead. Never reads stdin.
+    /// </summary>
+    private async Task<string> AskUserAsync(string question, string type, IReadOnlyList<string> choices, string? callId)
+    {
+        string? sid = _sessionId;
+        bool confirm = type == "confirm";
+        if (sid is null || (!confirm && choices.Count == 0) || type is not ("confirm" or "select" or "multi_select"))
+            return "This client cannot collect a typed answer mid-turn. Ask the question in your reply and end your turn, "
+                + "or proceed with your best judgement and state the assumption.";
+
+        var labels = confirm ? new List<string> { "Yes", "No" } : choices.ToList();
+        var options = labels.Select((l, i) => (object)new Dictionary<string, object?>
+        {
+            ["optionId"] = "opt_" + i,
+            ["name"] = l,
+            ["kind"] = confirm && i == 1 ? "reject_once" : "allow_once"
+        }).ToArray();
+        var prms = new Dictionary<string, object?>
+        {
+            ["sessionId"] = sid,
+            ["toolCall"] = new Dictionary<string, object?>
+            {
+                ["toolCallId"] = callId ?? "ask_" + Guid.NewGuid().ToString("N")[..8],
+                ["title"] = AcpProtocol.ToolTitle("ask_user", JsonSerializer.Serialize(new { question })),
+                ["kind"] = "other",
+                ["status"] = "pending",
+                ["content"] = new[] { AcpProtocol.TextContent(question) }
+            },
+            ["options"] = options
+        };
+        // A human answers this: no timeout. session/cancel makes the client answer "cancelled".
+        var res = await SendRequestAsync("session/request_permission", prms, Timeout.Infinite);
+        string? picked = res.ValueKind == JsonValueKind.Object && res.TryGetProperty("outcome", out var o)
+            && o.ValueKind == JsonValueKind.Object && StrProp(o, "outcome") == "selected" ? StrProp(o, "optionId") : null;
+        int idx = picked is not null && picked.StartsWith("opt_", StringComparison.Ordinal)
+            && int.TryParse(picked[4..], out var k) && k >= 0 && k < labels.Count ? k : -1;
+        if (idx < 0)
+            return confirm ? "User cancelled the prompt (no yes/no answer given)."
+                : "User cancelled the prompt without choosing (no option selected).";
+        if (confirm) return idx == 0 ? "User confirmed: yes" : "User declined: no";
+        return $"User selected: {labels[idx]}";
+    }
+
+    /// <summary>Complete every outstanding agent-to-client request with an empty result, so a
+    /// waiting ask_user returns instead of blocking a turn that is ending.</summary>
+    internal void ReleasePendingRequests()
+    {
+        foreach (var key in _pendingOutbound.Keys)
+            if (_pendingOutbound.TryRemove(key, out var pending)) pending.TrySetResult(default);
+    }
+
     private void StartSession(string sid, AcpResume? resume)
     {
         // One active session per process. A new session/new (e.g. the client's "/new") must
@@ -407,6 +475,7 @@ public sealed class AcpServer
         if (prevReader is not null)
         {
             prevReader.ReadEntered -= OnTurnBoundary;   // stop stale turn-boundary ticks
+            ReleasePendingRequests();                   // an open ask_user must not pin the old turn
             StdinCancelMonitor.Instance?.FireCancel();  // abort any in-flight turn so it can quit
             prevReader.CloseSession();                  // queue /qc so the loop exits
         }
@@ -845,7 +914,9 @@ public sealed class AcpServer
     private static object? ExtractId(JsonElement idEl) => idEl.ValueKind switch
     {
         JsonValueKind.String => idEl.GetString(),
-        JsonValueKind.Number => idEl.TryGetInt64(out var l) ? l : idEl.GetDouble(),
+        // Explicit (object) casts: a bare `? l : d` is typed double, which boxed every numeric id
+        // as a double and broke matching responses to our own requests by long id.
+        JsonValueKind.Number => idEl.TryGetInt64(out var l) ? (object)l : idEl.GetDouble(),
         _ => null
     };
 

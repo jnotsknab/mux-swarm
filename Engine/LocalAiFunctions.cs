@@ -274,6 +274,11 @@ public static class LocalAiFunctions
             {
                 var normalized = (type ?? "text").Trim().ToLowerInvariant();
 
+                // ACP: stdin is the protocol stream, so ask through the client instead of the console.
+                if (MuxConsole.AcpActive && Acp.AcpServer.AskUserHandler is { } acpAsk)
+                    return await acpAsk(question, normalized, MuxConsole.ParseOptions(options),
+                        FunctionInvokingChatClient.CurrentContext?.CallContent?.CallId);
+
                 var tcs = new TaskCompletionSource<string>();
 
                 var thread = new Thread(() =>
