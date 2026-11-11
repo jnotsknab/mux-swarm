@@ -5651,7 +5651,9 @@ const icons = {
   // updateCommandCatalog(); this hardcoded set is the fallback for older binaries.
   // The screen-clear commands are handled purely client-side and are never in
   // the server catalog, so they are always preserved.
-  const CLIENT_ONLY_SAFE_CMDS = ['/clear-screen', '/cls', '/clear-ui', '/clear', '/copy', '/yank'];
+  // '/skill <name>' is plain text for the agent (it resolves skills itself), so it never leaves
+  // the session; it is not in the server catalog, so keep it here like the client-only commands.
+  const CLIENT_ONLY_SAFE_CMDS = ['/clear-screen', '/cls', '/clear-ui', '/clear', '/copy', '/yank', '/skill'];
   let IN_SESSION_SAFE_CMDS = new Set([
     '/qc', '/exit', '/compact', '/wipe', '/tokens', '/undo', '/retry', '/skill', ...CLIENT_ONLY_SAFE_CMDS
   ]);
