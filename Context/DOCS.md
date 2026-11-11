@@ -1169,7 +1169,7 @@ while it captures are taken raw (your own bindings do not intercept them); a key
 another action in the same context is reported. Saving writes only actions that differ from the defaults.
 
 The file is optional, next to Config.json (follows `--cfg`), and lists only the actions you change; every
-other action keeps its default. Read at startup, on `/refresh`, and on `/keybinds reload`. `/keybinds init`
+other action keeps its default. Read at startup, on `/refresh`, on `/keybinds reload`, and each time the panel opens. `/keybinds init`
 writes the file with every action and its defaults (never overwrites). `/shortcuts` shows the keys in effect.
 
 ```json

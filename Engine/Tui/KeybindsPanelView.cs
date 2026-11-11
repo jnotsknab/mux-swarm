@@ -49,6 +49,7 @@ internal sealed class KeybindsPanelView
 
     internal Action Handle(ConsoleKeyInfo key, int pageSize)
     {
+        key = WithLetterKey(key);
         if (_capturing)
         {
             _capturing = false;
@@ -94,6 +95,18 @@ internal sealed class KeybindsPanelView
                 Set(Selected.Action, []); Message = "Unbound."; break;
         }
         return Action.None;
+    }
+
+    /// <summary>VT input delivers printable letters and digits with no virtual key; give them their key code so the
+    /// letter commands (A/R/U) and chord capture see them like native console keys.</summary>
+    private static ConsoleKeyInfo WithLetterKey(ConsoleKeyInfo key)
+    {
+        if (key.Key is not (ConsoleKey.NoName or (ConsoleKey)0)) return key;
+        char c = char.ToUpperInvariant(key.KeyChar);
+        ConsoleKey code = c is >= 'A' and <= 'Z' ? (ConsoleKey)c : c is >= '0' and <= '9' ? ConsoleKey.D0 + (c - '0') : key.Key;
+        if (code == key.Key) return key;
+        var m = key.Modifiers;
+        return new ConsoleKeyInfo(key.KeyChar, code, m.HasFlag(ConsoleModifiers.Shift), m.HasFlag(ConsoleModifiers.Alt), m.HasFlag(ConsoleModifiers.Control));
     }
 
     /// <summary>The complete set of user overrides after the edits: every action whose chords differ from the

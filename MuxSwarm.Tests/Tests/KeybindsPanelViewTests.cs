@@ -89,4 +89,39 @@ public class KeybindsPanelViewTests
         }
         finally { File.Delete(path); }
     }
+
+    /// <summary>VT input delivers printable letters with no virtual key (NoName + the character). The panel's letter
+    /// commands and chord capture must still work, as they do for every other key check (KeyChord.Matches).</summary>
+    [Fact]
+    public void VtLetters_WithoutAVirtualKey_StillDriveTheLetterCommands_AndCapture()
+    {
+        var v = Fresh();
+        Select(v, KeyAction.TaskBoard);
+        v.Handle(K(ConsoleKey.NoName, 'u'), 5);                          // U = unbind
+        Assert.Empty(v.Chords(KeyAction.TaskBoard));
+        v.Handle(K(ConsoleKey.NoName, 'R', shift: true), 5);             // R = reset (either case)
+        Assert.False(v.Overrides().ContainsKey(KeyAction.TaskBoard));
+        v.Handle(K(ConsoleKey.NoName, 'a'), 5);                          // A = capture
+        Assert.True(v.Capturing);
+        v.Handle(K(ConsoleKey.NoName, 'x'), 5);
+        Assert.Contains(new KeyChord(ConsoleKey.X, 0), v.Chords(KeyAction.TaskBoard));
+        v.Handle(K(ConsoleKey.Enter, '\r'), 5);
+        v.Handle(K(ConsoleKey.NoName, '7'), 5);
+        Assert.Contains(new KeyChord(ConsoleKey.D7, 0), v.Chords(KeyAction.TaskBoard));
+    }
+
+    /// <summary>/keybinds re-reads Keybinds.json before opening the panel: the panel saves its complete set, so a
+    /// panel built from the last load would silently drop hand edits made since then.</summary>
+    [Fact]
+    public void KeybindsCommand_ReloadsTheFile_BeforeBuildingThePanel()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "MuxSwarm.csproj"))) dir = dir.Parent;
+        string src = File.ReadAllText(Path.Combine(dir!.FullName, "Engine", "CliCmdUtils.cs"));
+        int handler = src.IndexOf("public static void HandleKeybinds(", StringComparison.Ordinal);
+        int panel = src.IndexOf("new Tui.KeybindsPanelView(", handler, StringComparison.Ordinal);
+        Assert.True(handler > 0 && panel > handler);
+        Assert.Contains("Tui.KeyBinds.Load()", src[handler..panel]);
+        Assert.DoesNotContain("then run /keybinds.", src[handler..]);   // the hint names /keybinds reload
+    }
 }

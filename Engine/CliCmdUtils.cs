@@ -1129,6 +1129,12 @@ public static class CliCmdUtils
     {
         string path = Tui.KeyBinds.FilePath;
         bool init = sub == "init";
+        if (sub == "" && MuxConsole.CanUseSettingsPicker)
+        {
+            // The panel saves its complete set: start from the file as it is now, so hand edits made since the
+            // last load are shown (and kept) instead of being overwritten by F4.
+            foreach (var warning in Tui.KeyBinds.Load()) MuxConsole.WriteWarning(warning);
+        }
         var panel = new Tui.KeybindsPanelView();
         if (sub == "" && MuxConsole.TryKeybindsPanel(panel, out bool saved))
         {
@@ -1143,7 +1149,7 @@ public static class CliCmdUtils
         }
         if (init)
         {
-            if (File.Exists(path)) { MuxConsole.WriteWarning($"{path} already exists; edit it, then run /keybinds."); return; }
+            if (File.Exists(path)) { MuxConsole.WriteWarning($"{path} already exists; edit it, then run /keybinds reload."); return; }
             try { File.WriteAllText(path, Tui.KeyBinds.DefaultJson() + Environment.NewLine); }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { MuxConsole.WriteError($"Could not write {path}: {ex.Message}"); return; }
             MuxConsole.WriteSuccess($"Wrote {path}");
