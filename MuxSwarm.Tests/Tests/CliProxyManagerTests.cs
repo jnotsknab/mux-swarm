@@ -47,6 +47,37 @@ public class CliProxyManagerTests
         Assert.False(CliProxyManager.InstallDir.StartsWith(@"\\"), "install dir must not be a UNC path");
     }
 
+    /// <summary>A finished warm-up can be stale (the sidecar may have died since startup): the first caller waits
+    /// for it once, then still runs the normal health check, whose answer wins.</summary>
+    [Fact]
+    public async Task EnsureRunning_AfterWarmup_StillRunsTheHealthCheck_Once()
+    {
+        int checks = 0;
+        try
+        {
+            CliProxyManager.SetWarmupForTests(Task.FromResult("http://127.0.0.1:1/v1"));   // stale: that sidecar is gone
+            CliProxyManager.SetCoreForTests(_ => { checks++; return Task.FromResult("http://127.0.0.1:2/v1"); });
+            Assert.Equal("http://127.0.0.1:2/v1", await CliProxyManager.EnsureRunningAsync());
+            Assert.Equal(1, checks);
+            Assert.Equal("http://127.0.0.1:2/v1", await CliProxyManager.EnsureRunningAsync());   // warm-up consumed once
+            Assert.Equal(2, checks);
+        }
+        finally { CliProxyManager.SetWarmupForTests(null); CliProxyManager.SetCoreForTests(null); }
+    }
+
+    [Fact]
+    public async Task EnsureRunning_CancelledCaller_IsNotHeldByAPendingWarmup()
+    {
+        var pending = new TaskCompletionSource<string>();
+        try
+        {
+            CliProxyManager.SetWarmupForTests(pending.Task);
+            using var cts = new CancellationTokenSource(100);
+            await Assert.ThrowsAnyAsync<OperationCanceledException>(() => CliProxyManager.EnsureRunningAsync(cts.Token));
+        }
+        finally { CliProxyManager.SetWarmupForTests(null); pending.TrySetCanceled(); }
+    }
+
     [Fact]
     public void PreferredPort_IsInDynamicRange()
     {

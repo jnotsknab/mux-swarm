@@ -380,6 +380,42 @@ internal static class CliProxyManager
     /// </summary>
     public static async Task<string> EnsureRunningAsync(CancellationToken ct = default)
     {
+        // A startup warm-up (StartWarmup) already did the slow first adopt/spawn: wait for it once, but never
+        // trust its result as-is. The sidecar may have died since, so the normal check below still runs (its
+        // fast path is one loopback health probe once the warm-up found the port).
+        if (Interlocked.Exchange(ref _warmup, null) is { } warm)
+        {
+            try { await warm.WaitAsync(ct).ConfigureAwait(false); }
+            catch (OperationCanceledException) when (ct.IsCancellationRequested) { throw; }
+            catch { /* warm-up failed: the check below retries and surfaces the real error */ }
+        }
+        return await (_coreForTests ?? EnsureRunningCoreAsync)(ct).ConfigureAwait(false);
+    }
+
+    private static Task<string>? _warmup;
+    private static Func<CancellationToken, Task<string>>? _coreForTests;
+
+    /// <summary>
+    /// Starts <see cref="EnsureRunningAsync"/> in the background (idempotent), so the first session does not
+    /// wait on the binary check, sidecar adopt/spawn and first health probe. Call once the active provider is
+    /// known to be the sidecar. The next <see cref="EnsureRunningAsync"/> consumes the result.
+    /// </summary>
+    public static void StartWarmup()
+    {
+        if (Volatile.Read(ref _warmup) is not null || IsRunning) return;
+        var task = Task.Run(() => EnsureRunningCoreAsync(CancellationToken.None));
+        _ = task.ContinueWith(static t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);   // never unobserved
+        Interlocked.CompareExchange(ref _warmup, task, null);
+    }
+
+    /// <summary>Test seam: install a pending warm-up result.</summary>
+    internal static void SetWarmupForTests(Task<string>? warmup) => _warmup = warmup;
+
+    /// <summary>Test seam: replace the adopt/spawn/health check that runs after the warm-up (null = real one).</summary>
+    internal static void SetCoreForTests(Func<CancellationToken, Task<string>>? core) => _coreForTests = core;
+
+    private static async Task<string> EnsureRunningCoreAsync(CancellationToken ct)
+    {
         await EnsureBinaryAsync(ct).ConfigureAwait(false);
         EnsureKeysLoaded();
 
