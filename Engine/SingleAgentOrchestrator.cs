@@ -169,7 +169,7 @@ public static class SingleAgentOrchestrator
             "/cost"   => FirstTurnInputKind.Cost,
             "/init"   => FirstTurnInputKind.Init,
             "/review" => FirstTurnInputKind.Review,
-            _ => Tui.TuiCommands.IsSessionNative(cmd)
+            _ => Tui.TuiCommands.IsAvailableInSession(cmd)
                 ? FirstTurnInputKind.GuardedSessionNative
                 : FirstTurnInputKind.Goal,
         };
@@ -1002,7 +1002,7 @@ public static class SingleAgentOrchestrator
                 // without this every other known session command would silently become the
                 // opening LLM goal. Commands serviceable before the agent exists are dispatched
                 // here; the rest of the session-native surface gets a notice + re-prompt via the
-                // TuiCommands.IsSessionNative catch-all, so NO known command can leak as a goal.
+                // TuiCommands.IsAvailableInSession catch-all, so NO known command can leak as a goal.
                 switch (ClassifyFirstTurnInput(firstInput))
                 {
                     case FirstTurnInputKind.Shell:
@@ -2840,14 +2840,14 @@ public static class SingleAgentOrchestrator
                       || metaCmd.StartsWith("/workflows ", StringComparison.OrdinalIgnoreCase))
                 {
                     // Live workflow-run viewer (session-agnostic process-level state); MUST
-                    // precede the IsReplOnly slash-anywhere fallthrough now that the command
+                    // precede the IsAvailableInRepl slash-anywhere fallthrough now that the command
                     // is Scope.Both.
                     CliCmdUtils.HandleWorkflowsCommand(
                         metaCmd.Length > "/workflows".Length ? metaCmd.Substring("/workflows".Length).Trim() : "");
                 }
                 else if (metaCmd.Equals("/clear", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Clear the screen in place (Scope.Both; must precede the IsReplOnly fallthrough).
+                    // Clear the screen in place (Scope.Both; must precede the IsAvailableInRepl fallthrough).
                     if (MuxConsole.IsTui) MuxConsole.TuiClearScreen();
                     else if (!MuxConsole.StdioMode) Console.Clear();
                 }
@@ -2898,7 +2898,7 @@ public static class SingleAgentOrchestrator
                         MuxConsole.WriteMuted($"\u21bb Resumed session {interactiveHandle.Id} ({interactiveHandle.Label}).");
                     }
                 }
-                else if (Tui.TuiCommands.IsReplOnly(metaCmd.Split(' ', 2)[0]))
+                else if (Tui.TuiCommands.IsAvailableInRepl(metaCmd.Split(' ', 2)[0]))
                 {
                     // Slash-anywhere (web-UI parity): the user typed a REPL-only command inside a
                     // live session, where it does NOT work. Offer to end the session and run it at

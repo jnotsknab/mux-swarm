@@ -740,12 +740,12 @@ public class TuiDriverTests
     [Fact]
     public void TuiCommands_ScopeClassifiers_MatchCatalog()
     {
-        Assert.True(TuiCommands.IsSessionNative("/compact"));
-        Assert.True(TuiCommands.IsSessionNative("/EFFORT"));   // case-insensitive
-        Assert.False(TuiCommands.IsSessionNative("/agent"));
-        Assert.True(TuiCommands.IsReplOnly("/agent"));
-        Assert.True(TuiCommands.IsReplOnly("/skills"));
-        Assert.False(TuiCommands.IsReplOnly("/compact"));
+        Assert.True(TuiCommands.IsAvailableInSession("/compact"));
+        Assert.True(TuiCommands.IsAvailableInSession("/EFFORT"));   // case-insensitive
+        Assert.False(TuiCommands.IsAvailableInSession("/agent"));
+        Assert.True(TuiCommands.IsAvailableInRepl("/agent"));
+        Assert.True(TuiCommands.IsAvailableInRepl("/skills"));
+        Assert.False(TuiCommands.IsAvailableInRepl("/compact"));
     }
 
     // --- /shortcuts command + canonical keybind catalog ---------------------
@@ -756,7 +756,7 @@ public class TuiDriverTests
         // /shortcuts must be offered at the REPL menu (it has a handler in App.cs).
         Assert.Contains(TuiCommands.All, e => e.Cmd == "/shortcuts");
         Assert.Contains(TuiCommands.Repl, e => e.Cmd == "/shortcuts");
-        Assert.True(TuiCommands.IsReplOnly("/shortcuts"));
+        Assert.True(TuiCommands.IsAvailableInRepl("/shortcuts"));
     }
 
     [Fact]

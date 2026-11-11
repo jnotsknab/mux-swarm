@@ -20,8 +20,8 @@ public class DaemonScopeTests
     {
         // Scope.Both surfaces as true for BOTH classifiers, so the menu switch runs it AND the
         // in-session meta-loop treats it as native (no "needs a session" / "ends session" warning).
-        Assert.True(TuiCommands.IsReplOnly(cmd), $"{cmd} should be runnable at the menu");
-        Assert.True(TuiCommands.IsSessionNative(cmd), $"{cmd} should be native in-session");
+        Assert.True(TuiCommands.IsAvailableInRepl(cmd), $"{cmd} should be runnable at the menu");
+        Assert.True(TuiCommands.IsAvailableInSession(cmd), $"{cmd} should be native in-session");
     }
 
     [Fact]
@@ -48,7 +48,7 @@ public class DaemonScopeTests
     public void ModeLaunch_StillReplOnly_NotSessionNative()
     {
         // Sanity: the Both change didn't leak into ordinary REPL-only mode-launch commands.
-        Assert.True(TuiCommands.IsReplOnly("/agent"));
-        Assert.False(TuiCommands.IsSessionNative("/agent"));
+        Assert.True(TuiCommands.IsAvailableInRepl("/agent"));
+        Assert.False(TuiCommands.IsAvailableInSession("/agent"));
     }
 }

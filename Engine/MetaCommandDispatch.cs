@@ -118,7 +118,7 @@ internal static class MetaCommandDispatch
             }
         }
 
-        if (Tui.TuiCommands.IsReplOnly(cmd))
+        if (Tui.TuiCommands.IsAvailableInRepl(cmd))
         {
             // Slash-anywhere: a REPL-only command typed inside a live session does not work here.
             // Offer to end the session and run it at the top-level menu (the App menu consumes

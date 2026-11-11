@@ -221,8 +221,8 @@ internal static class TuiCommands
         return InteractivePicker.Contains(t);   // bare token only (no space/arg)
     }
 
-    /// <summary>True when <paramref name="cmd"/> is a session-native meta command.</summary>
-    public static bool IsSessionNative(string cmd)
+    /// <summary>True when <paramref name="cmd"/> can run inside a session (SessionOnly or Both scope).</summary>
+    public static bool IsAvailableInSession(string cmd)
     {
         var c = (cmd ?? "").Trim().ToLowerInvariant();
         foreach (var e in All)
@@ -230,8 +230,8 @@ internal static class TuiCommands
         return false;
     }
 
-    /// <summary>True when <paramref name="cmd"/> is a known REPL-only command.</summary>
-    public static bool IsReplOnly(string cmd)
+    /// <summary>True when <paramref name="cmd"/> can run at the main REPL menu (ReplOnly or Both scope).</summary>
+    public static bool IsAvailableInRepl(string cmd)
     {
         var c = (cmd ?? "").Trim().ToLowerInvariant();
         foreach (var e in All)

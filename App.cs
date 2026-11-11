@@ -1563,7 +1563,7 @@ internal class App
                         // no live session to act on. Warn that it needs an active session instead
                         // of the generic "unknown command", so the user knows to launch one first.
                         var menuCmd = userInput.Split(' ', 2)[0];
-                        if (TuiCommands.IsSessionNative(menuCmd))
+                        if (TuiCommands.IsAvailableInSession(menuCmd))
                             MuxConsole.WriteWarning($"'{menuCmd}' only runs inside an active session. Launch one first (e.g. /agent, /swarm, /teams).");
                         else
                         {

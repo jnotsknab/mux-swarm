@@ -80,7 +80,7 @@ public class TuiClearScreenTests
     [Fact]
     public void Clear_IsAvailableInsideSessions()
     {
-        Assert.True(TuiCommands.IsSessionNative("/clear"));
-        Assert.True(TuiCommands.IsReplOnly("/clear"));   // still handled at the main menu
+        Assert.True(TuiCommands.IsAvailableInSession("/clear"));
+        Assert.True(TuiCommands.IsAvailableInRepl("/clear"));   // still handled at the main menu
     }
 }

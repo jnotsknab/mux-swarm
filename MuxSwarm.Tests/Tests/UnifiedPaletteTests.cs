@@ -83,10 +83,10 @@ public class UnifiedPaletteTests
     [Fact]
     public void IsSessionNative_DetectsSessionOnlyCommands_ForMenuWarn()
     {
-        // The App menu uses IsSessionNative to warn instead of "unknown command".
-        Assert.True(TuiCommands.IsSessionNative("/compact"));
-        Assert.True(TuiCommands.IsSessionNative("/background"));
-        Assert.False(TuiCommands.IsSessionNative("/agent"));
-        Assert.False(TuiCommands.IsSessionNative("/notacmd"));
+        // The App menu uses IsAvailableInSession to warn instead of "unknown command".
+        Assert.True(TuiCommands.IsAvailableInSession("/compact"));
+        Assert.True(TuiCommands.IsAvailableInSession("/background"));
+        Assert.False(TuiCommands.IsAvailableInSession("/agent"));
+        Assert.False(TuiCommands.IsAvailableInSession("/notacmd"));
     }
 }
