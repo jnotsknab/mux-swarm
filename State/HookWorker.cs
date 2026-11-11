@@ -385,6 +385,18 @@ public static class HookWorker
         }
     }
 
+    /// <summary>Waits for the hook process itself to exit. <see cref="Process.WaitForExitAsync"/> also waits for the
+    /// redirected output to reach EOF, which never happens while a background child the hook started still holds
+    /// the pipes (e.g. <c>notify &amp;</c>), so a finished blocking hook would be held until its timeout.</summary>
+    internal static async Task WaitForProcessExitAsync(Process process, CancellationToken ct)
+    {
+        var exited = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        process.EnableRaisingEvents = true;
+        process.Exited += (_, _) => exited.TrySetResult();
+        if (process.HasExited) exited.TrySetResult();
+        await exited.Task.WaitAsync(ct).ConfigureAwait(false);
+    }
+
     private static async Task DispatchHook(HookConfig hook, string payload, CancellationToken ct)
     {
         Process? process = null;
@@ -408,7 +420,7 @@ public static class HookWorker
 
                 try
                 {
-                    await process.WaitForExitAsync(timeoutCts.Token);
+                    await WaitForProcessExitAsync(process, timeoutCts.Token);
                     ProcessCleanup.Instance.Untrack(process.Id);
 
                     if (process.ExitCode != 0)
@@ -427,7 +439,7 @@ public static class HookWorker
 
                 try
                 {
-                    await process.WaitForExitAsync(exitCheckCts.Token);
+                    await WaitForProcessExitAsync(process, exitCheckCts.Token);
                     ProcessCleanup.Instance.Untrack(process.Id);
 
                     if (process.ExitCode != 0)

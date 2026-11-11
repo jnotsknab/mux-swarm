@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Linq;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
@@ -127,5 +128,33 @@ public class HookHygieneTests
             return e;
         });
         Assert.Equal("goal-42", ev.GoalId);
+    }
+
+    /// <summary>A hook that exits while a background child it started still holds its output pipes counts as
+    /// finished as soon as the hook itself exits (Process.WaitForExitAsync would wait for pipe EOF, so a blocking
+    /// hook was held until its timeout and then reported as timed out).</summary>
+    [Fact]
+    public async Task WaitForProcessExit_ReturnsWhenTheHookExits_EvenIfABackgroundChildHoldsItsPipes()
+    {
+        var psi = OperatingSystem.IsWindows()
+            ? new ProcessStartInfo("cmd.exe", "/c start /b ping -n 8 127.0.0.1 >nul & exit 0")
+            : new ProcessStartInfo("/bin/sh", "-c \"sleep 8 & exit 0\"");
+        psi.UseShellExecute = false;
+        psi.RedirectStandardOutput = true;
+        psi.RedirectStandardError = true;
+        psi.RedirectStandardInput = true;
+        psi.CreateNoWindow = true;
+        using var p = new Process { StartInfo = psi };
+        p.OutputDataReceived += (_, _) => { };
+        p.ErrorDataReceived += (_, _) => { };
+        p.Start();
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+        p.StandardInput.Close();
+        var sw = Stopwatch.StartNew();
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(4));
+        await HookWorker.WaitForProcessExitAsync(p, cts.Token);   // throws (test fails) if it waits for the child
+        Assert.True(p.HasExited);
+        Assert.True(sw.Elapsed < TimeSpan.FromSeconds(4));
     }
 }
