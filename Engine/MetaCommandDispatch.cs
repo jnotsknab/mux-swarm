@@ -64,6 +64,12 @@ internal static class MetaCommandDispatch
                     ct);
                 return Result.Handled;
 
+            case "/clear":
+                // Session-agnostic: clear the screen in place (history stays in Ctrl+G); never ends the session.
+                if (MuxConsole.IsTui) MuxConsole.TuiClearScreen();
+                else if (!MuxConsole.StdioMode) Console.Clear();
+                return Result.Handled;
+
             case "/daemon":
             case "/da":
                 MuxSwarm.State.DaemonCommand.Run(line);
@@ -112,7 +118,7 @@ internal static class MetaCommandDispatch
             }
         }
 
-        if (Tui.TuiCommands.IsReplOnly(cmd))
+        if (Tui.TuiCommands.IsAvailableInRepl(cmd))
         {
             // Slash-anywhere: a REPL-only command typed inside a live session does not work here.
             // Offer to end the session and run it at the top-level menu (the App menu consumes

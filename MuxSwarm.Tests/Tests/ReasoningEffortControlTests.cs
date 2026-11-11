@@ -22,7 +22,7 @@ public class ReasoningEffortControlTests
     [InlineData("/effort max")]
     [InlineData("/effort custom future")]
     public void EffortCommands_AreSessionNative(string command)
-        => Assert.True(TuiCommands.IsSessionNative(command.Split(' ', 2)[0]));
+        => Assert.True(TuiCommands.IsAvailableInSession(command.Split(' ', 2)[0]));
 
     [Fact]
     public void Help_AdvertisesDistinctTiersAndCustomEscapeHatch()

@@ -89,7 +89,7 @@ public class ToolsBrowserTests
     [Fact]
     public void ToolsCommand_IsAvailableInSessionAndAcceptsQuery()
     {
-        Assert.True(TuiCommands.IsSessionNative("/tools"));
+        Assert.True(TuiCommands.IsAvailableInSession("/tools"));
         Assert.DoesNotContain("ends session", TuiCommands.SessionUnified.Single(e => e.Cmd == "/tools").Desc);
         Assert.True(TuiCommands.TakesArgument("/tools"));
     }

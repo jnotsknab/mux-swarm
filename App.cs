@@ -1163,9 +1163,9 @@ internal class App
                 case "/clear":
                     // In TUI mode a raw Console.Clear() wipes the terminal out from under the
                     // live region, desyncing its frame model and stranding ghost rows. Route
-                    // through the driver's managed clear+repaint (the Ctrl+L path); fall back to
-                    // a raw clear only in classic/stdio where there is no live region.
-                    if (MuxConsole.IsTui) MuxConsole.TuiForceRedraw();
+                    // through the driver's managed clear (the Ctrl+L path); fall back to a raw
+                    // clear only in classic/stdio where there is no live region.
+                    if (MuxConsole.IsTui) MuxConsole.TuiClearScreen();
                     else Console.Clear();
                     break;
 
@@ -1563,7 +1563,7 @@ internal class App
                         // no live session to act on. Warn that it needs an active session instead
                         // of the generic "unknown command", so the user knows to launch one first.
                         var menuCmd = userInput.Split(' ', 2)[0];
-                        if (TuiCommands.IsSessionNative(menuCmd))
+                        if (TuiCommands.IsAvailableInSession(menuCmd))
                             MuxConsole.WriteWarning($"'{menuCmd}' only runs inside an active session. Launch one first (e.g. /agent, /swarm, /teams).");
                         else
                         {
