@@ -5148,6 +5148,7 @@ const icons = {
   // /setmodel + /swap prompts. Nothing here touches the agent input stream, so
   // changing a model can never end or disturb a live session.
   let _modelSlots = [];
+  let _agentPaletteLoad = null;   // { done } of the one /api/agents fetch per /agent palette session
   let _modelCatalog = null;   // null = not fetched yet, [] = provider serves none
 
   async function loadModelSlots(force) {
@@ -6048,6 +6049,28 @@ const icons = {
   }
 
   function buildPalette(query) {
+    // ── /agent <name> sub-completion (lead agents from /api/agents; the engine picks the best match) ──
+    const agentMatch = query.match(/^\/agent\s+(.*)$/i);
+    if (agentMatch) {
+      const sub = (agentMatch[1] || '').trim();
+      if (!_modelSlots.length) {
+        // Fetch once per palette session: an empty or failed answer must not re-render into another fetch.
+        if (!_agentPaletteLoad) {
+          _agentPaletteLoad = { done: false };
+          const load = _agentPaletteLoad;
+          loadModelSlots(false).then(() => { load.done = true; if (paletteOpen && /^\/agent\s/i.test(input.value)) { paletteItems = buildPalette(input.value); paletteActive = 0; renderPalette(); } });
+        }
+        return [{ cmd: '/agent ' + sub, desc: _agentPaletteLoad.done
+          ? 'Agents not available \u2014 Enter picks the closest match'
+          : 'Loading agents\u2026 (Enter picks the closest match)' }];
+      }
+      const scored = _modelSlots
+        .filter(s => s && s.name)
+        .map(s => ({ cmd: '/agent ' + s.name, desc: s.role || '', score: fuzzyScore(sub.replace(/agent$/i, ''), s.name) }))
+        .filter(s => s.score >= 0)
+        .sort((a, b) => b.score - a.score);
+      return scored.length ? scored : [{ cmd: '/agent ' + sub, desc: 'No exact match \u2014 Enter picks the closest agent' }];
+    }
     // ── /skill <name> sub-completion ──
     // Match '/skill', '/skill ', or '/skill <partial>' and offer cached skills.
     const skillMatch = query.match(/^\/skill(?:\s+(.*))?$/i);
@@ -6103,6 +6126,7 @@ const icons = {
   function closePalette() {
     paletteOpen = false;
     cmdPalette.classList.remove('open');
+    _agentPaletteLoad = null;   // the next /agent palette may try /api/agents again
   }
 
   function shouldShowPalette() {
