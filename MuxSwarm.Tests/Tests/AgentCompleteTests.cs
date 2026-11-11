@@ -88,4 +88,23 @@ public class AgentCompleteTests
         foreach (var row in TuiComponents.AgentsPreview("", agents, 60, 2))
             Assert.InRange(TuiMarkup.MarkupWidth(row), 0, 60);
     }
+
+    /// <summary>Web palette: "/agent " fetches /api/agents at most once per palette session. An empty or failed
+    /// answer used to re-render into another fetch, looping requests back to back while the palette was open.</summary>
+    [Fact]
+    public void WebPalette_AgentFetch_IsOncePerPaletteSession()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "MuxSwarm.csproj"))) dir = dir.Parent;
+        string html = File.ReadAllText(Path.Combine(dir!.FullName, "Runtime", "mux-web-app", "index.html"));
+        int a = html.IndexOf("const agentMatch = query.match(", StringComparison.Ordinal);
+        int b = html.IndexOf("const scored = _modelSlots", a, StringComparison.Ordinal);
+        Assert.True(a > 0 && b > a, "/agent palette branch not found");
+        string branch = html[a..b];
+        int guard = branch.IndexOf("if (!_agentPaletteLoad)", StringComparison.Ordinal);
+        Assert.True(guard >= 0, "the /api/agents fetch must be guarded by the once-per-palette flag");
+        Assert.True(branch.IndexOf("loadModelSlots(", StringComparison.Ordinal) > guard, "fetch must sit inside the guard");
+        int close = html.IndexOf("function closePalette()", StringComparison.Ordinal);
+        Assert.Contains("_agentPaletteLoad = null", html[close..html.IndexOf('}', close)]);
+    }
 }
