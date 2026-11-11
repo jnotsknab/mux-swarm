@@ -11,10 +11,10 @@ namespace MuxSwarm.Tests.Tests;
 public class UncDriveMapperTests
 {
     [Theory]
-    [InlineData(@"\\banknas\Public\Jb\MuxSandboxV0.4.0", true)]
-    [InlineData(@"//banknas/Public/Jb", true)]
+    [InlineData(@"\\nas\share\team\sandbox", true)]
+    [InlineData(@"//nas/share/team", true)]
     [InlineData(@"C:\Users\jnots\proj", false)]
-    [InlineData(@"/home/dabsaint/proj", false)]
+    [InlineData(@"/home/user/proj", false)]
     [InlineData(@"relative\path", false)]
     public void IsUnc_DetectsUncPaths(string path, bool expected)
         => Assert.Equal(expected, UncDriveMapper.IsUnc(path));
@@ -22,9 +22,9 @@ public class UncDriveMapperTests
     [Fact]
     public void SplitUnc_SeparatesShareRootAndSubpath()
     {
-        var (root, sub) = UncDriveMapper.SplitUnc(@"\\banknas\Public\Jb\MuxSandboxV0.4.0");
-        Assert.Equal(@"\\banknas\Public", root);
-        Assert.Equal(@"Jb\MuxSandboxV0.4.0", sub);
+        var (root, sub) = UncDriveMapper.SplitUnc(@"\\nas\share\team\sandbox");
+        Assert.Equal(@"\\nas\share", root);
+        Assert.Equal(@"team\sandbox", sub);
     }
 
     [Fact]

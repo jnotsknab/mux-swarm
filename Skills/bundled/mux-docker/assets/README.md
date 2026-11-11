@@ -73,7 +73,7 @@ docker run -it --rm --network=bridge mux-swarm:latest
 
 | Container Path | Purpose | Host Path Example |
 |----------------|---------|-------------------|
-| `/app/sandbox` | Working directory for agent tasks | `C:\Users\...\MuxSandboxV0.4.0` |
+| `/app/sandbox` | Working directory for agent tasks | `C:\Users\<you>\sandbox` |
 | `/app/configs` | Mux Swarm configuration files | `C:\Users\...\Mux-Swarm\Configs` |
 | `/app/skills` | Bundled skills directory | `C:\Users\...\Mux-Swarm\Skills\bundled` |
 | `/app/sessions` | Session history | `C:\Users\...\Mux-Swarm\Sessions` |
@@ -82,8 +82,8 @@ docker run -it --rm --network=bridge mux-swarm:latest
 
 ```powershell
 docker run -it --rm `
-  -v C:\Users\suspiria\AppData\Local\Mux-Swarm:/app/mux-swarm `
-  -v \\banknas\Public\Jb\MuxSandboxV0.4.0:/app/sandbox `
+  -v $env:LOCALAPPDATA\Mux-Swarm:/app/mux-swarm `
+  -v C:\Users\<you>\sandbox:/app/sandbox `
   mux-swarm:latest
 ```
 
@@ -120,10 +120,10 @@ from mux_docker import MuxDocker
 
 # Build if needed and run
 with MuxDocker.ensure_image(
-    dockerfile_path="C:/Users/suspiria/AppData/Local/Mux-Swarm/Skills/bundled/mux-docker/assets",
+    dockerfile_path="C:/Users/<you>/AppData/Local/Mux-Swarm/Skills/bundled/mux-docker/assets",
     volumes={
-        r"C:\Users\suspiria\AppData\Local\Mux-Swarm\Configs": "/app/configs",
-        r"\\banknas\Public\Jb\MuxSandboxV0.4.0": "/app/sandbox"
+        r"C:\Users\<you>\AppData\Local\Mux-Swarm\Configs": "/app/configs",
+        r"C:\Users\<you>\sandbox": "/app/sandbox"
     },
     env_vars={
         "ANTHROPIC_API_KEY": "sk-..."

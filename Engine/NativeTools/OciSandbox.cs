@@ -34,7 +34,7 @@ internal sealed class OciSandbox : ISessionSandbox
     private string _containerName = "";
     private string _proxyName = "";
     private string _netName = "";
-    // Maps Windows UNC allowed-paths (e.g. \\banknas\...) to temp drive letters so Docker for Windows
+    // Maps Windows UNC allowed-paths (e.g. \\nas\...) to temp drive letters so Docker for Windows
     // can bind them; no-op on Linux/macOS and for non-UNC paths. Torn down with the sandbox.
     private readonly UncDriveMapper _uncMapper = new();
 

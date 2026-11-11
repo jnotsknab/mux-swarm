@@ -57,8 +57,8 @@ from mux_subprocess import MuxSubprocess
 
 # Launch with explicit paths
 mux = MuxSubprocess(
-    mux_exe="C:/Users/suspiria/AppData/Local/Mux-Swarm/MuxSwarm.exe",
-    cwd="C:/Users/suspiria/AppData/Local/Mux-Swarm"
+    mux_exe="C:/Users/<you>/AppData/Local/Mux-Swarm/MuxSwarm.exe",
+    cwd="C:/Users/<you>/AppData/Local/Mux-Swarm"
 )
 
 # Or auto-detect from allowed directories

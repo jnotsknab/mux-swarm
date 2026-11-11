@@ -259,11 +259,11 @@ The sentinel is:
 
 ```python
 volumes = {
-    r"C:\Users\suspiria\AppData\Local\Mux-Swarm": {
+    r"C:\Users\<you>\AppData\Local\Mux-Swarm": {
         "bind": "/app/mux-swarm",
         "mode": "rw"
     },
-    r"\\banknas\Public\Jb\MuxSandboxV0.4.0": {
+    r"C:\Users\<you>\sandbox": {
         "bind": "/app/sandbox",
         "mode": "rw"
     }

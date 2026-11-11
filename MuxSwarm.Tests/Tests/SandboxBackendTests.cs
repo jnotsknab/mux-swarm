@@ -293,7 +293,7 @@ public class SandboxBackendTests
     [Fact]
     public void SbxCreateArgs_ReadOnlyParentNeverFollowsAWritableChild()
     {
-        // sbx applies workspaces in order and the later one wins for the paths it covers. Jonathan's config:
+        // sbx applies workspaces in order and the later one wins for the paths it covers. A real config:
         // sandboxPath (rw) under the home dir (ro reference path), work dir also under home. Listed child-first,
         // `C:\Users\me:ro` made /work and the workspace read-only. Order must be shallowest first.
         var mounts = new[]
@@ -332,7 +332,7 @@ public class SandboxBackendTests
     public void ShQuoteForArgv_RoundTripsThroughTheCommandLine(string script)
     {
         // The guest shell must receive the script byte-for-byte. The old quoting escaped every $ and doubled
-        // every backslash, so `$d` arrived as `\$d` and never expanded (seen in Jonathan's session).
+        // every backslash, so `$d` arrived as `\$d` and never expanded (seen in a real session).
         string cmdline = "x " + OciSandbox.ShQuoteForArgv(script);
         var argv = CommandLineSplit(cmdline);
         Assert.Equal(2, argv.Count);

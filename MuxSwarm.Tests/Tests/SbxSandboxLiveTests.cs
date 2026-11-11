@@ -59,7 +59,7 @@ public class SbxSandboxLiveTests
         string root = Path.Combine(Path.GetTempPath(), "mux-sbx-live-" + Guid.NewGuid().ToString("N")[..6]);
         string rw = Directory.CreateDirectory(Path.Combine(root, "proj")).FullName;
         string ro = Directory.CreateDirectory(Path.Combine(root, "refs")).FullName;
-        // A read-only allowed path that is an ANCESTOR of the session work dir (Jonathan's config: the home
+        // A read-only allowed path that is an ANCESTOR of the session work dir (a real config: the home
         // dir as a reference path). It must not flip /work or the rw workspace read-only. The work dir lives
         // under %LOCALAPPDATA% / ~/.local/share, both inside the user profile.
         string localData = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);

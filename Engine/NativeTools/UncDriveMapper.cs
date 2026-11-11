@@ -4,7 +4,7 @@ using System.Runtime.InteropServices;
 namespace MuxSwarm.Engine.NativeTools;
 
 /// <summary>
-/// Windows-only helper that makes a UNC share (e.g. <c>\\banknas\Public\Jb\...</c>) bind-mountable by
+/// Windows-only helper that makes a UNC share (e.g. <c>\\nas\share\...</c>) bind-mountable by
 /// Docker Desktop. Docker for Windows cannot bind a raw UNC path to <c>-v</c>; it needs a drive-letter
 /// path. This maps the share's ROOT to a free temporary drive letter via <c>net use</c>, rewrites a UNC
 /// host path to its <c>&lt;Z&gt;:\subpath</c> equivalent, and tears the mapping down on dispose. On
