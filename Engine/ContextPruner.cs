@@ -100,7 +100,7 @@ internal static class ContextPruner
         return call.Name + "\n" + JsonSerializer.Serialize(args);
     }
 
-    private static bool ResultError(FunctionResultContent result)
+    internal static bool ResultError(FunctionResultContent result)
     {
         if (result.Exception is not null) return true;
         if (result.AdditionalProperties is { } props &&

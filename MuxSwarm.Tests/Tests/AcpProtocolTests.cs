@@ -114,9 +114,27 @@ public class AcpProtocolTests
     [InlineData("execute_command_async", "execute")]
     [InlineData("Fetch_fetch", "fetch")]
     [InlineData("some_random_tool", "other")]
+    [InlineData("wait_job_progress", "execute")]
+    [InlineData("Playwright_browser_network_requests", "fetch")]
     public void ToolKind_MapsKnownPrefixes(string tool, string expected)
     {
         Assert.Equal(expected, AcpProtocol.ToolKind(tool));
+    }
+
+    [Theory]
+    [InlineData("Filesystem_read_text_file", """{"path":"C:\\x\\a.txt"}""", "Read C:\\x\\a.txt")]
+    [InlineData("Filesystem_write_file", """{"path":"/a/b.cs","content":"x"}""", "Write /a/b.cs")]
+    [InlineData("Filesystem_move_file", """{"source":"/a","destination":"/b"}""", "Move /a -> /b")]
+    [InlineData("execute_command_async", """{"command":"git status\nmore"}""", "Run: git status ...")]
+    [InlineData("delegate_to_agent", """{"agentName":"WebAgent","task":"t"}""", "Delegate to WebAgent")]
+    [InlineData("BraveSearch_brave_web_search", """{"query":"zed acp"}""", "Search 'zed acp'")]
+    [InlineData("Fetch_fetch_html", """{"url":"https://x.dev"}""", "Fetch https://x.dev")]
+    [InlineData("some_tool", """{"n":1}""", "some_tool")]
+    [InlineData("some_tool", "not json", "some_tool")]
+    [InlineData("", null, "tool")]
+    public void ToolTitle_IsReadable(string tool, string? args, string expected)
+    {
+        Assert.Equal(expected, AcpProtocol.ToolTitle(tool, args));
     }
 
     [Fact]

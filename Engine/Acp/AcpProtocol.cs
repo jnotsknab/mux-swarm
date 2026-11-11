@@ -279,7 +279,59 @@ public static class AcpProtocol
         if (t.Contains("exec") || t.Contains("command") || t.Contains("shell") || t.Contains("run") || t.Contains("python") || t.Contains("bash")) return "execute";
         if (t.Contains("fetch") || t.Contains("http") || t.Contains("download") || t.Contains("url")) return "fetch";
         if (t.Contains("think") || t.Contains("reason")) return "think";
+        if (t.Contains("job") || t.Contains("wait")) return "execute";
+        if (t.Contains("browser") || t.Contains("playwright") || t.Contains("navigate")) return "fetch";
         return "other";
+    }
+
+    /// <summary>
+    /// A human-readable tool-call title from the tool name and its JSON arguments, e.g.
+    /// "Read C:\x\notes.txt", "Run: dir", "Search 'gamma'", "Delegate to WebAgent". Falls back
+    /// to the bare tool name when no useful argument is present. Single line, at most 120 chars.
+    /// </summary>
+    public static string ToolTitle(string tool, string? argsJson)
+    {
+        string name = string.IsNullOrEmpty(tool) ? "tool" : tool;
+        string t = name.ToLowerInvariant();
+        JsonElement a = default;
+        if (!string.IsNullOrWhiteSpace(argsJson))
+        {
+            try
+            {
+                using var doc = JsonDocument.Parse(argsJson);
+                if (doc.RootElement.ValueKind == JsonValueKind.Object) a = doc.RootElement.Clone();
+            }
+            catch (JsonException) { /* not JSON: bare name */ }
+        }
+        string? Arg(params string[] keys)
+        {
+            if (a.ValueKind != JsonValueKind.Object) return null;
+            foreach (var k in keys)
+                if (a.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String && !string.IsNullOrWhiteSpace(v.GetString()))
+                    return v.GetString();
+            return null;
+        }
+        string? path = Arg("path", "file_path", "filePath", "file", "filename");
+        string? title =
+            t.Contains("move") && Arg("source") is { } src ? $"Move {src} -> {Arg("destination") ?? "?"}"
+            : t.Contains("edit") && path is not null ? $"Edit {path}"
+            : t.Contains("write") && path is not null ? $"Write {path}"
+            : t.Contains("list") && path is not null ? $"List {path}"
+            : t.Contains("create_directory") && path is not null ? $"Create {path}"
+            : t.Contains("read") && path is not null ? $"Read {path}"
+            : t.Contains("delegate") && Arg("agentName", "agent") is { } ag ? $"Delegate to {ag}"
+            : t.Contains("ask_user") && Arg("question") is { } q ? $"Ask: {q}"
+            : (t.Contains("job") || t.Contains("wait")) && Arg("job_id", "jobId") is { } job ? $"Job {job}"
+            : Arg("command", "cmd") is { } cmd ? $"Run: {cmd}"
+            : (t.Contains("repl") || t.Contains("python")) && Arg("code") is { } code ? $"Python: {code}"
+            : Arg("query", "pattern") is { } qy ? $"Search '{qy}'"
+            : Arg("url") is { } url ? (t.Contains("fetch") ? $"Fetch {url}" : $"Open {url}")
+            : path is not null ? $"{name} {path}"
+            : null;
+        if (title is null) return name;
+        int nl = title.IndexOfAny(new[] { '\r', '\n' });
+        if (nl >= 0) title = title[..nl] + " ...";
+        return title.Length > 120 ? title[..117] + "..." : title;
     }
 
     /// <summary>
