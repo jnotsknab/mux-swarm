@@ -391,7 +391,7 @@ Optional tuning for orchestration budgets, iteration caps, retry behavior, and t
 | `delegationRetentionDays` | 30 | How long spilled delegation payloads (size-tiered context passing) are kept on disk. |
 | `activityTimeoutSeconds` | 3600 | Inactivity watchdog for long-running agent turns. |
 | `maxToolIterationsPerTurn` | 1000 | Max model-to-tool round-trips within a single turn before the tool loop stops. `<= 0` = unlimited. |
-| `maxAutoContinuesPerTurn` | 3 | Times a turn may transparently self-continue when a response is cut off by the output/reasoning cap (finish_reason=length). 0 disables. |
+| `maxAutoContinuesPerTurn` | 100 | Times a turn may transparently self-continue when a response is cut off by the output/reasoning cap (finish_reason=length). 0 disables. |
 | `taskClaimTtlSeconds` | 900 | Team taskboard: how long a claimed task may go without a heartbeat before it is reaped and requeued. |
 | `maxTaskAttempts` | 3 | Team taskboard: bounded retry cap per task before the circuit breaker marks it `Failed`. |
 | `midTurnCompaction` | `true` | Compact a single-agent turn *mid-turn* when it crosses the token checkpoint, instead of waiting for the next user message. |
