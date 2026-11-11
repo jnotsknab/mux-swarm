@@ -357,7 +357,7 @@ an existing keyboard path - nothing is reachable only by mouse.
 
 The inline engine never enables mouse tracking at the normal prompt (the terminal keeps native
 selection/scrollback); pickers opened from inline enable it for the modal lifetime only.
-See `/shortcuts` for the live keybind + mouse reference.
+See `/shortcuts` for the live keybind + mouse reference. Shortcuts can be rebound in `Configs/Keybinds.json` (`/keybinds init` writes the defaults; `/keybinds` reloads; format in DOCS.md `## Keybinds`).
 
 
 ## Swarm completion display (TUI)

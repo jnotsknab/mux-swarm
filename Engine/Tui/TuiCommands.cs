@@ -180,6 +180,8 @@ internal static class TuiCommands
         new("/status",       "View full system status", Scope.ReplOnly),
         new("/help",         "Full command reference", Scope.ReplOnly),
         new("/shortcuts",    "Show keyboard shortcuts (/keys)", Scope.ReplOnly),
+        new("/keybinds",     "Reload Configs/Keybinds.json and show its path + problems", Scope.ReplOnly),
+        new("/keybinds init", "Write Configs/Keybinds.json with every action and its default keys", Scope.ReplOnly),
         new("/exit",         "Exit Mux-Swarm", Scope.ReplOnly),
     };
 
@@ -301,8 +303,9 @@ internal static class TuiCommands
 
     /// <summary>A user-facing keyboard shortcut: the key chord, what it does, and where it
     /// applies (prompt = the input line; turn = while an agent turn is streaming; view = inside
-    /// the transcript/expand overlay).</summary>
-    public readonly record struct KeyBind(string Keys, string Desc, string Context);
+    /// the transcript/expand overlay). <paramref name="Action"/> names the rebindable
+    /// <see cref="KeyBinds"/> action the row documents, if any.</summary>
+    public readonly record struct Shortcut(string Keys, string Desc, string Context, string? Action = null);
 
     /// <summary>
     /// Canonical keyboard-shortcut catalog. Single source of truth for the /shortcuts command,
@@ -311,35 +314,49 @@ internal static class TuiCommands
     /// (prompt-level Ctrl+E / Ctrl+G), EscapeKeyListener (mid-turn Esc / Ctrl+E / Ctrl+G), and the
     /// EnterNavMode overlay loop (view navigation).
     /// </summary>
-    public static readonly KeyBind[] Keys =
+    public static Shortcut[] Keys => Catalog.Select(Live).ToArray();
+
+    /// <summary>A row bound to an action shows the user's chords once <c>Keybinds.json</c> changes them;
+    /// at defaults the hand-written text (with its aliases and notes) is kept.</summary>
+    private static Shortcut Live(Shortcut row)
+    {
+        if (row.Action is null || !KeyBinds.Current.TryGetValue(row.Action, out var bind)) return row;
+        var defaults = bind.Defaults.Select(d => KeyChord.TryParse(d, out var c) ? c : default);
+        return defaults.SequenceEqual(bind.Combination) ? row : row with { Keys = bind.Label };
+    }
+
+    private static readonly Shortcut[] Catalog =
     {
         // --- prompt (input line) ---
-        new("Enter",       "Submit the current message", "prompt"),
-        new("Ctrl+V / Alt+V", "Paste clipboard text or screenshot (terminal-dependent; /paste fallback)", "prompt"),
-        new("Ctrl+Z",      "Undo the last attachment insertion/removal before any further text edit", "prompt"),
-        new("F2",          "Focus paste cards; arrows select, Enter preview, Delete detach, Esc return", "prompt"),
-        new("Ctrl+J",      "Insert a newline (multi-line compose) without submitting; works in every terminal", "prompt"),
-        new("Ctrl+Enter",  "Insert a newline (same as Ctrl+J; also Shift+Enter where the terminal reports it)", "prompt"),
-        new("Alt+Enter",   "Insert a newline (often taken by the terminal, e.g. Windows Terminal fullscreen)", "prompt"),
-        new("Tab",         "Accept the top autocomplete (/command, @file, /skill, /resume)", "prompt"),
-        new("Shift+Tab",   "Cycle effort (low/med/high/xhigh/max; custom returns to low)", "prompt"),
+        new("Enter",       "Submit the current message", "prompt", KeyAction.Submit),
+        new("Ctrl+V / Alt+V", "Paste clipboard text or screenshot (terminal-dependent; /paste fallback)", "prompt", KeyAction.Paste),
+        new("Ctrl+Z",      "Undo the last attachment insertion/removal before any further text edit", "prompt", KeyAction.UndoAttachment),
+        new("F2",          "Focus paste cards; arrows select, Enter preview, Delete detach, Esc return", "prompt", KeyAction.Attachments),
+        new("Ctrl+J / Ctrl+Enter", "Insert a newline without submitting (Shift/Alt+Enter too where the terminal passes them; Windows Terminal takes Alt+Enter)", "prompt", KeyAction.Newline),
+        new("Tab",         "Accept the top autocomplete (/command, @file, /skill, /resume)", "prompt", KeyAction.Complete),
+        new("Shift+Tab",   "Cycle effort (low/med/high/xhigh/max; custom returns to low)", "prompt", KeyAction.CycleEffort),
         new("Up/Down",     "Browse command history (or move the autocomplete selection)", "prompt"),
-        new("Ctrl+A",      "Move cursor to start of line", "prompt"),
-        new("Ctrl+E",      "Move cursor to end of line (or expand latest tool result if collapsible)", "prompt"),
-        new("Ctrl+U",      "Delete to start of line", "prompt"),
-        new("Ctrl+K",      "Delete to end of line", "prompt"),
-        new("Ctrl+W",      "Delete the previous word", "prompt"),
-        new("Ctrl+C",      "Cancel the current input line", "prompt"),
+        new("Ctrl+A",      "Move cursor to start of line", "prompt", KeyAction.LineStart),
+        new("Ctrl+E",      "Move cursor to end of line", "prompt", KeyAction.LineEnd),
+        new("Ctrl+E",      "Expand the latest tool result / live panel when there is one (else end of line)", "prompt", KeyAction.Expand),
+        new("Ctrl+U",      "Delete to start of line", "prompt", KeyAction.KillToStart),
+        new("Ctrl+K",      "Delete to end of line", "prompt", KeyAction.KillToEnd),
+        new("Ctrl+W",      "Delete the previous word", "prompt", KeyAction.DeleteWord),
+        new("Ctrl+C",      "Cancel the current input line", "prompt", KeyAction.Cancel),
+        new("Ctrl+D",      "Exit (on an empty line)", "prompt", KeyAction.Exit),
+        new("Ctrl+R",      "Reverse-search command history", "prompt", KeyAction.Search),
         new("Esc",         "Empty prompt: open the transcript view; with text: enter vim Normal mode", "prompt"),
-        new("Ctrl+G",      "Open the transcript/expand view (does not cancel)", "prompt"),
-        new("Ctrl+L",      "Clear the screen (history stays in Ctrl+G)", "prompt"),
-        new("Ctrl+T",      "Toggle the team TaskBoard strip (in a team session)", "prompt"),
+        new("Ctrl+G",      "Open the transcript/expand view (does not cancel)", "prompt", KeyAction.View),
+        new("Ctrl+L",      "Clear the screen (history stays in Ctrl+G)", "prompt", KeyAction.Redraw),
+        new("Ctrl+T",      "Toggle the team TaskBoard strip (in a team session)", "prompt", KeyAction.TaskBoard),
 
         // --- during an agent turn (mid-stream) ---
-        new("Esc / q",     "Cancel the current turn (q = alternate when Esc is captured by the terminal)", "turn"),
-        new("Ctrl+E",      "Expand the latest large tool result inline without cancelling", "turn"),
-        new("Ctrl+G",      "Expand the latest large tool result inline (alias for Ctrl+E)", "turn"),
-        new("Ctrl+L",      "Clear the screen (does not cancel; history stays in Ctrl+G)", "turn"),
+        new("Esc / q",     "Cancel the current turn (q = alternate when Esc is captured by the terminal)", "turn", KeyAction.TurnCancel),
+        new("Ctrl+E",      "Expand the latest large tool result inline without cancelling", "turn", KeyAction.TurnExpand),
+        new("Ctrl+G",      "Expand the latest large tool result inline (alias for Ctrl+E)", "turn", KeyAction.TurnView),
+        new("Ctrl+L",      "Clear the screen (does not cancel; history stays in Ctrl+G)", "turn", KeyAction.TurnRedraw),
+        new("Ctrl+T",      "Toggle the team TaskBoard strip", "turn", KeyAction.TurnTaskBoard),
+        new("Ctrl+N",      "Open the steer compose box (the agent keeps working)", "turn", KeyAction.TurnSteer),
 
         // --- transcript / expand view (NAV overlay) ---
         new("j / k",       "Move cursor down / up one line", "view"),
