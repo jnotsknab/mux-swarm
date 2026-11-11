@@ -5754,8 +5754,10 @@ const icons = {
     // Anything that isn't /qc, /compact, /skill, or a screen-clear counts.
     let _suppressUserCmdEcho = false;
     // /resume goes straight to the engine, which switches sessions itself (and asks first only when
-    // console.confirmResume is on), so the web never ends the session on its own for it.
-    if (activeSessionMode && firstTok.startsWith('/') && !IN_SESSION_SAFE_CMDS.has(firstTok) && firstTok !== '/resume') {
+    // console.confirmResume is on), so the web never ends the session on its own for it. A /stateless
+    // session is not saved, so it keeps the warning before it is ended.
+    const resumeSwitches = firstTok === '/resume' && activeSessionMode !== '/stateless';
+    if (activeSessionMode && firstTok.startsWith('/') && !IN_SESSION_SAFE_CMDS.has(firstTok) && !resumeSwitches) {
       const settings = _muxGetSettings();
       const warn = settings.warnSessionSwitch !== false; // default true
       if (warn) {

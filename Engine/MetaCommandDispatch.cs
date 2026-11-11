@@ -139,8 +139,10 @@ internal static class MetaCommandDispatch
     /// Ask before ending a live session to run main-menu-only command <paramref name="cmd"/> there.
     /// <c>/resume</c> skips the question unless <c>console.confirmResume</c> is true: switching
     /// sessions is the whole point of typing it, and the current session is saved every turn.
+    /// A session that is not saved (<paramref name="persisted"/> false, e.g. <c>/stateless</c>) always
+    /// asks, because ending it loses the conversation.
     /// </summary>
-    internal static bool ConfirmEndSession(string cmd) =>
-        (cmd.Equals("/resume", StringComparison.OrdinalIgnoreCase) && !(App.Config?.Console.ConfirmResume ?? false))
+    internal static bool ConfirmEndSession(string cmd, bool persisted = true) =>
+        (persisted && cmd.Equals("/resume", StringComparison.OrdinalIgnoreCase) && !(App.Config?.Console.ConfirmResume ?? false))
         || MuxConsole.Confirm($"'{cmd}' only runs at the main menu. End this session and run it there?", false);
 }

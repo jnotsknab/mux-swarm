@@ -2942,7 +2942,7 @@ public static class SingleAgentOrchestrator
                     // live session, where it does NOT work. Offer to end the session and run it at
                     // the top-level menu. If they decline, stay in the session (treat as no-op).
                     string cmdName = metaCmd.Split(' ', 2)[0];
-                    if (MetaCommandDispatch.ConfirmEndSession(cmdName))
+                    if (MetaCommandDispatch.ConfirmEndSession(cmdName, persistSession))
                     {
                         PendingReplCommand = metaCmd;
                         quitSession = true;

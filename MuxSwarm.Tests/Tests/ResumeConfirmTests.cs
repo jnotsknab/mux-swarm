@@ -73,4 +73,28 @@ public sealed class ResumeConfirmTests : IDisposable
         var back = System.Text.Json.JsonSerializer.Deserialize<AppConfig>("{\"console\":{\"confirmResume\":true}}")!;
         Assert.True(back.Console.ConfirmResume);
     }
+
+    /// <summary>A /stateless session is not saved: /resume there would throw the conversation away, so it still asks.</summary>
+    [Fact]
+    public void Resume_InAStatelessSession_StillAsks()
+    {
+        App.Config = new AppConfig();
+        MuxConsole.InputOverride = new StringReader("n\n");
+        Assert.False(MetaCommandDispatch.ConfirmEndSession("/resume", persisted: false));
+        MuxConsole.InputOverride = new StringReader("y\n");
+        Assert.True(MetaCommandDispatch.ConfirmEndSession("/resume", persisted: false));
+    }
+
+    /// <summary>The in-session slash-anywhere path passes whether the session is saved, and the web app keeps
+    /// its end-session warning for /resume in a /stateless session.</summary>
+    [Fact]
+    public void StatelessSessions_KeepTheQuestion_InTuiAndWeb()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null && !File.Exists(Path.Combine(dir.FullName, "MuxSwarm.csproj"))) dir = dir.Parent;
+        string orch = File.ReadAllText(Path.Combine(dir!.FullName, "Engine", "SingleAgentOrchestrator.cs"));
+        Assert.Contains("MetaCommandDispatch.ConfirmEndSession(cmdName, persistSession)", orch);
+        string html = File.ReadAllText(Path.Combine(dir.FullName, "Runtime", "mux-web-app", "index.html"));
+        Assert.Contains("firstTok === '/resume' && activeSessionMode !== '/stateless'", html);
+    }
 }
