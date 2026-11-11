@@ -24,6 +24,13 @@
         <ApplicationIcon>Assets\mux.ico</ApplicationIcon>
     </PropertyGroup>
 
+    <!-- Release publishes for a runtime are precompiled (ReadyToRun): less JIT at startup. Measured on win-x64:
+         first paint 0.22 -> 0.14 s, input ready 0.61 -> 0.45 s, first-turn request build -70 ms; exe ~+50%.
+         Pass -p:PublishReadyToRun=false to opt out. -->
+    <PropertyGroup Condition="'$(Configuration)' == 'Release' And '$(RuntimeIdentifier)' != '' And '$(PublishReadyToRun)' == ''">
+        <PublishReadyToRun>true</PublishReadyToRun>
+    </PropertyGroup>
+
   <ItemGroup>
     <InternalsVisibleTo Include="MuxSwarm.Tests" />
   </ItemGroup>
