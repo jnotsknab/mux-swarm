@@ -48,12 +48,16 @@ internal static class TuiClipboard
                 }
                 return false;
             }
-            return TryPipe(file, args, text);
+            return TryPipe(file, args, text, file == "clip" ? ClipExePayload(text) : null);
         }
         catch { return false; }
     }
 
-    private static bool TryPipe(string file, string args, string text)
+    /// <summary>The bytes clip.exe needs to keep non-ASCII text intact: UTF-16LE with a BOM. Without the BOM
+    /// clip.exe reads its input in the OEM code page, so UTF-8 "──" pastes as "ΓöÇΓöÇ".</summary>
+    internal static byte[] ClipExePayload(string text) => Encoding.Unicode.GetBytes("\uFEFF" + (text ?? ""));
+
+    private static bool TryPipe(string file, string args, string text, byte[]? raw = null)
     {
         try
         {
@@ -64,7 +68,8 @@ internal static class TuiClipboard
             };
             using var p = Process.Start(psi);
             if (p is null) return false;
-            p.StandardInput.Write(text);
+            if (raw is not null) p.StandardInput.BaseStream.Write(raw);   // exact bytes (the writer would drop a BOM)
+            else p.StandardInput.Write(text);
             p.StandardInput.Close();
             p.WaitForExit(2000);
             return p.HasExited && p.ExitCode == 0;
