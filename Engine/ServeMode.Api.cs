@@ -267,6 +267,7 @@ public static partial class ServeMode
         {
             foreach (var dir in new DirectoryInfo(root)
                          .EnumerateDirectories()
+                         .Where(d => Common.HasSessionFile(d.FullName))   // not browser profiles / tool output
                          .OrderByDescending(d => d.LastWriteTimeUtc))
             {
                 var sessionFile = Path.Combine(dir.FullName, "agent_session.json");
@@ -339,8 +340,13 @@ public static partial class ServeMode
 
         try
         {
+            if (!Common.HasSessionFile(dir))
+            {
+                await WriteJson(context, 404, new { error = "Session not found" });
+                return;
+            }
             var jsonFiles = Directory.GetFiles(dir, "*.json");
-            var resumable = jsonFiles.Length is > 0 and <= 2; // single-agent session heuristic (matches CLI)
+            var resumable = Common.IsResumableSession(dir); // single-agent session (matches CLI /resume)
 
             var sessionFile = Path.Combine(dir, "agent_session.json");
             if (!File.Exists(sessionFile) && jsonFiles.Length > 0) sessionFile = jsonFiles[0];
