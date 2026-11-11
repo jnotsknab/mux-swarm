@@ -736,7 +736,8 @@ public static class CliCmdUtils
     public static void HandleHistory()
     {
         var sessions = GetResumableSessions();
-        if (sessions.Count == 0) { MuxConsole.WriteWarning("No saved sessions found."); return; }
+        // No resumable single-agent sessions: the list still shows swarm sessions (or says there are none).
+        if (sessions.Count == 0) { ListSessions(); return; }
         if (!MuxConsole.TryHistoryBrowser(sessions, LoadSessionRoot, resumePicker: false, out _))
             ListSessions();   // classic/stdio fallback: the existing readable session list
     }
