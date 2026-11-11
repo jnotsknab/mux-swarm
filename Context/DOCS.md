@@ -681,6 +681,7 @@ The per-member context ceiling lives on `compactionAgent` (next to `autoCompactT
   tokens, its history is summarized and reseeded (the same mechanism the single-agent loop uses).
   Members get their own knob so they can run tighter than the lead. `0` (default) falls back to
   200,000 tokens (never unbounded). Checked after each task, not mid-task.
+  Members on models with a context window under 200k should set this key lower.
 
 ### modelOpts
 
