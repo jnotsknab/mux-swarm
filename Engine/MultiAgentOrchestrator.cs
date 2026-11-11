@@ -183,6 +183,7 @@ public static class MultiAgentOrchestrator
         var retryRegistry = new Dictionary<string, RetryState>();
         _sessionDirty = false;
 
+        HookWorker.SetGoalId(goalId);
         HookWorker.Enqueue(new HookEvent
         {
             Event = "session_start",
@@ -536,6 +537,7 @@ public static class MultiAgentOrchestrator
         if (continuous)
         {
             goalId ??= Guid.NewGuid().ToString("N")[..8];
+            HookWorker.SetGoalId(goalId);
             state = ContinuousStateManager.Load(goalId, SessionDir)
                     ?? new CurrentStateMetadata(
                         goalId, incomingGoal!, 0, DateTime.MinValue,
@@ -1285,13 +1287,7 @@ public static class MultiAgentOrchestrator
                         {
                             lastToolName = fc.Name;
                             Telemetry.TelemetrySink.RecordToolCall(_orchestratorModelId, "Orchestrator", fc.Name);
-                            HookWorker.Enqueue(new HookEvent
-                            {
-                                Event = "tool_call",
-                                Agent = "Orchestrator",
-                                Tool = fc.Name,
-                                Timestamp = DateTimeOffset.UtcNow
-                            });
+                            HookWorker.Enqueue(HookWorker.ToolCallEvent("Orchestrator", fc));
 
                             var toolSpan = OtelTracer.GetSource().StartActivity("tool_call");
                             toolSpan?.SetTag("agent", "Orchestrator");
@@ -1316,13 +1312,7 @@ public static class MultiAgentOrchestrator
                         }
                         else if (content is FunctionResultContent fr)
                         {
-                            HookWorker.Enqueue(new HookEvent
-                            {
-                                Event = "tool_result",
-                                Agent = "Orchestrator",
-                                Summary = fr.Result?.ToString(),
-                                Timestamp = DateTimeOffset.UtcNow
-                            });
+                            HookWorker.Enqueue(HookWorker.ToolResultEvent("Orchestrator", fr));
 
                             var resultText = fr.Result?.ToString();
 
@@ -1674,13 +1664,7 @@ public static class MultiAgentOrchestrator
                             if (fc.Name == "ask_user") { pendingAskUser.Add(fc.CallId); activityTimeout.Suspend(); }
                             lastToolName = fc.Name;
                             Telemetry.TelemetrySink.RecordToolCall(specialist.Agent.Id, specialist.Def.Name, fc.Name);
-                            HookWorker.Enqueue(new HookEvent
-                            {
-                                Event = "tool_call",
-                                Agent = specialist.Def.Name,
-                                Tool = fc.Name,
-                                Timestamp = DateTimeOffset.UtcNow
-                            });
+                            HookWorker.Enqueue(HookWorker.ToolCallEvent(specialist.Def.Name, fc));
 
                             var toolSpan = OtelTracer.GetSource().StartActivity("tool_call");
                             toolSpan?.SetTag("agent", specialist.Def.Name);
@@ -1726,13 +1710,7 @@ public static class MultiAgentOrchestrator
                             pendingAskUser.Remove(fr.CallId);
                             if (pendingAskUser.Count == 0) activityTimeout.Resume();
 
-                            HookWorker.Enqueue(new HookEvent
-                            {
-                                Event = "tool_result",
-                                Agent = specialist.Def.Name,
-                                Summary = fr.Result?.ToString(),
-                                Timestamp = DateTimeOffset.UtcNow
-                            });
+                            HookWorker.Enqueue(HookWorker.ToolResultEvent(specialist.Def.Name, fr));
 
                             var resultText = fr.Result?.ToString();
 

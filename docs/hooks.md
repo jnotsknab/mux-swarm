@@ -43,7 +43,29 @@ The hook process receives the full event as **one JSON line on stdin** (camelCas
 - `persistent: true` - one long-lived process fed NDJSON events on stdin for the whole session
   (ideal for stateful consumers: TTS, live dashboards).
 
-**Matching** - filter by `event` (required), plus optional `agent` and `tool`.
+**Matching** - filter by `event` (required), plus optional `agent` and `tool`. `event` may be a
+single name or a list - `"when": { "event": ["turn_end", "task_complete"] }` fires once for each
+occurrence of any listed event.
+
+**Arguments** - by default `command` is split once at the first space into executable + argument
+string, so an executable path containing spaces cannot be expressed. Add an `args` array to pass
+arguments verbatim (no splitting, no re-quoting); `command` is then the executable only:
+
+```json
+{ "id": "notify", "command": "python", "args": ["C:/My Hooks/notify.py", "--quiet"],
+  "when": { "event": ["turn_end", "task_complete"] } }
+```
+
+**Output** - hook stdout/stderr are captured (never inherited, so they cannot corrupt the
+`--stdio`/`--acp` protocol stream or draw over the TUI) and surfaced as muted/debug lines
+`[Hook:<id>] ...`.
+
+**Crashed persistent hooks** restart on their next event. Repeated crashes back off (1s, doubling,
+max 60s) and events for that hook are skipped while it waits; staying up 60s resets the backoff.
+
+**Payload fields** - `tool_call` carries `args` (the call arguments as JSON); `tool_result` carries
+`tool` and the result text in `summary`; `goalId` is set when the run has one (`--goal-id`, or the id
+a continuous run generates).
 
 Hooks execute arbitrary commands with your user permissions, so on startup the runtime prompts for
 confirmation before enabling them. Toggle live with `/hooks on|off`; scaffold one with
