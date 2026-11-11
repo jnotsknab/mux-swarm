@@ -79,6 +79,21 @@ public class AcpSessionListTests : IDisposable
     }
 
     [Fact]
+    public void Titles_Are_Read_Only_For_The_Requested_Page()
+    {
+        var t0 = new DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        for (int i = 0; i < 55; i++) Session($"s{i:D2}", "q" + i, ProjA, t0.AddMinutes(i));
+        AcpServer.ListTitleReads = 0;
+        var p1 = Reparse(AcpServer.ListSessions(_root, ProjA, null, ProjA));
+        Assert.Equal(50, AcpServer.ListTitleReads);   // not 55: off-page session files are never parsed
+        Assert.Equal("q54", p1.GetProperty("sessions")[0].GetProperty("title").GetString());
+        AcpServer.ListTitleReads = 0;
+        var p2 = Reparse(AcpServer.ListSessions(_root, ProjA, p1.GetProperty("nextCursor").GetString(), ProjA));
+        Assert.Equal(5, AcpServer.ListTitleReads);
+        Assert.Equal("q0", p2.GetProperty("sessions")[4].GetProperty("title").GetString());
+    }
+
+    [Fact]
     public void Empty_Or_Missing_Dir_Is_Empty_Array()
     {
         var r = Reparse(AcpServer.ListSessions(Path.Combine(_root, "nope"), null, null, ProjA));

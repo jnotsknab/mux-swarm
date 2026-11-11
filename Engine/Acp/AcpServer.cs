@@ -825,7 +825,10 @@ public sealed class AcpServer
     /// </summary>
     internal static object ListSessions(string sessionsDir, string? cwdFilter, string? cursor, string fallbackCwd)
     {
-        var rows = new List<(string Id, string Cwd, string? Title, DateTime Updated)>();
+        // Cheap pass over every folder (file metadata + the small cwd sidecar); session files are
+        // parsed for titles only for the rows on the requested page, so a list call stays fast on
+        // large histories (it runs on the dispatch thread, ahead of session/cancel).
+        var rows = new List<(string Dir, string File, string Cwd, DateTime Updated)>();
         if (Directory.Exists(sessionsDir))
         {
             foreach (var d in Directory.GetDirectories(sessionsDir))
@@ -837,27 +840,34 @@ public sealed class AcpServer
                 try { recorded = File.ReadAllText(Path.Combine(d, CwdFileName)).Trim(); } catch { /* none */ }
                 if (!string.IsNullOrEmpty(recorded) && cwdFilter is not null && !SamePath(recorded, cwdFilter)) continue;
                 string cwd = !string.IsNullOrEmpty(recorded) ? recorded : cwdFilter ?? fallbackCwd;
-                string? title = SessionTags.TagLabel(d);
-                if (string.IsNullOrEmpty(title))
-                {
-                    string first = Common.GetFirstUserMessage(file, int.MaxValue);
-                    title = first == "No preview" ? null : Title(first);
-                }
-                rows.Add((Path.GetFileName(d), cwd, title, File.GetLastWriteTimeUtc(file)));
+                rows.Add((d, file, cwd, File.GetLastWriteTimeUtc(file)));
             }
         }
         rows.Sort((a, b) => b.Updated.CompareTo(a.Updated));
         int start = int.TryParse(cursor, out var c) && c > 0 ? c : 0;
         var page = rows.Skip(start).Take(ListPageSize).Select(r => new Dictionary<string, object?>
         {
-            ["sessionId"] = r.Id,
+            ["sessionId"] = Path.GetFileName(r.Dir),
             ["cwd"] = r.Cwd,
-            ["title"] = r.Title,
+            ["title"] = ListTitle(r.Dir, r.File),
             ["updatedAt"] = new DateTimeOffset(r.Updated, TimeSpan.Zero).ToString("o")
         }).ToArray();
         var result = new Dictionary<string, object?> { ["sessions"] = page };
         if (start + ListPageSize < rows.Count) result["nextCursor"] = (start + ListPageSize).ToString();
         return result;
+    }
+
+    /// <summary>Session files parsed for list titles on this thread (test observability).</summary>
+    [ThreadStatic] internal static int ListTitleReads;
+
+    /// <summary>List-row title: the session tag, else the first user message (null when neither).</summary>
+    private static string? ListTitle(string dir, string file)
+    {
+        string? title = SessionTags.TagLabel(dir);
+        if (!string.IsNullOrEmpty(title)) return title;
+        ListTitleReads++;
+        string first = Common.GetFirstUserMessage(file, int.MaxValue);
+        return first == "No preview" ? null : Title(first);
     }
 
     private static bool SamePath(string a, string b) =>
