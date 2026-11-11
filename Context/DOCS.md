@@ -1,4 +1,4 @@
-# Mux-Swarm System Reference
+﻿# Mux-Swarm System Reference
 
 Source repository: https://github.com/jnotsknab/mux-swarm
 
