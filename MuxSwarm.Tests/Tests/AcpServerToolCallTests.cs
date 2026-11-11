@@ -30,14 +30,16 @@ public class AcpServerToolCallTests
         private readonly MethodInfo _dispatch;
         private readonly MethodInfo _onEvent;
         private AcpInputReader? _reader;
+        public AcpServer.AcpResume? LastResume { get; private set; }
         private readonly ManualResetEventSlim _promptRead = new(false);
 
         public Harness()
         {
             Console.SetOut(TextWriter.Synchronized(_out));
-            _server = new AcpServer("test", async (reader, _) =>
+            _server = new AcpServer("test", async (reader, resume) =>
             {
                 _reader = reader;
+                LastResume = resume;
                 while (true)
                 {
                     string? line = await Task.Run(reader.ReadLine);
@@ -170,6 +172,22 @@ public class AcpServerToolCallTests
         var wait = h.Updates().Single(u => u.GetProperty("sessionUpdate").GetString() == "tool_call" && u.GetProperty("toolCallId").GetString() == "c2");
         Assert.Equal("execute", wait.GetProperty("kind").GetString());
         Assert.Equal("Job job_9", wait.GetProperty("title").GetString());
+    }
+
+    [Fact]
+    public void SessionNew_IdIsTheSessionsFolderName_AndFirstPromptSendsTitle()
+    {
+        using var h = new Harness();
+        h.StartTurn();
+        var resp = h.Messages().Single(m => m.TryGetProperty("id", out var i) && i.ValueKind == JsonValueKind.Number && i.GetInt32() == 1);
+        string sid = resp.GetProperty("result").GetProperty("sessionId").GetString()!;
+        Assert.Matches(@"^\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(-\d+)?$", sid);
+        Assert.Equal(Path.Combine(PlatformContext.SessionsDirectory, sid), h.LastResume?.Dir);
+        Assert.Null(h.LastResume?.Data);
+        var info = h.Updates().Single(u => u.GetProperty("sessionUpdate").GetString() == "session_info_update");
+        Assert.Equal("go", info.GetProperty("title").GetString());
+        h.EndTurn();
+        try { Directory.Delete(Path.Combine(PlatformContext.SessionsDirectory, sid), true); } catch { }
     }
 
     [Fact]
