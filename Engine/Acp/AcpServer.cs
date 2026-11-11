@@ -149,8 +149,7 @@ public sealed class AcpServer
             _reader?.CloseSession();
             MuxConsole.AcpSink = null;
             AskUserHandler = null;
-            foreach (var key in _pendingOutbound.Keys)   // client gone: release waiting requests
-                if (_pendingOutbound.TryRemove(key, out var t)) t.TrySetResult(default);
+            ReleasePendingRequests();   // client gone: release waiting requests
             try { if (_sessionTask is not null) await _sessionTask; } catch { /* session teardown best-effort */ }
         }
     }
@@ -219,12 +218,12 @@ public sealed class AcpServer
                     _cancelRequested = true;
                     // The client should answer open permission prompts with "cancelled"; release
                     // them here too so an ask_user can never outlive its cancelled turn.
-                    foreach (var key in _pendingOutbound.Keys)
-                        if (_pendingOutbound.TryRemove(key, out var pending)) pending.TrySetResult(default);
+                    ReleasePendingRequests();
                     StdinCancelMonitor.Instance?.FireCancel();
                     break;            // notification: no response
 
                 case "session/close":
+                    ReleasePendingRequests();   // an open ask_user would keep the loop from reaching /qc
                     _reader?.CloseSession();
                     Respond(id, new Dictionary<string, object?>());
                     break;
@@ -453,6 +452,14 @@ public sealed class AcpServer
         return $"User selected: {labels[idx]}";
     }
 
+    /// <summary>Complete every outstanding agent-to-client request with an empty result, so a
+    /// waiting ask_user returns instead of blocking a turn that is ending.</summary>
+    internal void ReleasePendingRequests()
+    {
+        foreach (var key in _pendingOutbound.Keys)
+            if (_pendingOutbound.TryRemove(key, out var pending)) pending.TrySetResult(default);
+    }
+
     private void StartSession(string sid, AcpResume? resume)
     {
         // One active session per process. A new session/new (e.g. the client's "/new") must
@@ -468,6 +475,7 @@ public sealed class AcpServer
         if (prevReader is not null)
         {
             prevReader.ReadEntered -= OnTurnBoundary;   // stop stale turn-boundary ticks
+            ReleasePendingRequests();                   // an open ask_user must not pin the old turn
             StdinCancelMonitor.Instance?.FireCancel();  // abort any in-flight turn so it can quit
             prevReader.CloseSession();                  // queue /qc so the loop exits
         }

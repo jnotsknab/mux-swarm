@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -257,6 +257,19 @@ public class AcpServerToolCallTests
         WaitPermissionRequest(h);
         h.Send("""{"jsonrpc":"2.0","method":"session/cancel","params":{"sessionId":"x"}}""");
         Assert.True(task.Wait(5000), "session/cancel must release the pending ask");
+        Assert.Contains("cancelled", task.Result);
+        h.EndTurn();
+    }
+
+    [Fact]
+    public void AskUser_Released_By_SessionClose()
+    {
+        using var h = new Harness();
+        h.StartTurn();
+        var task = Ask(h, "Go?", "confirm", Array.Empty<string>());
+        WaitPermissionRequest(h);
+        h.Send("""{"jsonrpc":"2.0","id":77,"method":"session/close","params":{"sessionId":"x"}}""");
+        Assert.True(task.Wait(5000), "session/close must release the pending ask");
         Assert.Contains("cancelled", task.Result);
         h.EndTurn();
     }
