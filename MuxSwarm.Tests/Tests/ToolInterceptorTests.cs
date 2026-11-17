@@ -162,6 +162,22 @@ public sealed class ToolInterceptorTests : IDisposable
     }
 
     [Fact]
+    public async Task DeadGuardProcess_AppliesOnTimeout_DenyBlocks_AllowRuns()
+    {
+        StartGuard(Rule("guarded", deny: true), Rule("open"));
+        var guard = Assert.Single(ExtensionHost.Running);
+        System.Diagnostics.Process.GetProcessById(guard.ProcessId).Kill();
+        for (int i = 0; i < 50 && guard.IsRunning; i++) await Task.Delay(100);
+        Assert.False(guard.IsRunning);
+
+        int runs = 0;
+        var guarded = AIFunctionFactory.Create(() => { runs++; return "ran"; }, "guarded");
+        Assert.StartsWith("[BLOCKED by extension guard]", (await Invoke(guarded))?.ToString());   // fails closed
+        Assert.Equal(0, runs);
+        Assert.Equal("ran", (await Invoke(AIFunctionFactory.Create(() => "ran", "open")))?.ToString());
+    }
+
+    [Fact]
     public async Task Pipeline_ModelSeesTheDenial()
     {
         StartGuard(Rule("Shell_*"));

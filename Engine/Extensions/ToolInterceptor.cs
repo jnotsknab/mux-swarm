@@ -23,8 +23,9 @@ internal static class ToolInterceptor
     internal static async ValueTask<object?> InvokeAsync(FunctionInvocationContext context, CancellationToken ct)
     {
         var tool = context.Function.Name;
+        // Exited processes stay in the chain: their requests return no answer, so each rule's onTimeout
+        // applies (a crashed deny guard keeps blocking until /refresh instead of silently letting calls through).
         var chain = ExtensionHost.Running
-            .Where(p => p.IsRunning)
             .SelectMany(p => p.Intercepts.Where(i => i.Matches(tool)).Select(i => (Process: p, Rule: i)))
             .ToList();
         if (chain.Count == 0) return await context.Function.InvokeAsync(context.Arguments, ct);
