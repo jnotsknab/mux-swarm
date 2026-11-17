@@ -745,7 +745,7 @@ public static class Setup
         MuxConsole.WriteLine();
 
         // Swatch gallery so the user can SEE each theme before choosing.
-        foreach (var t in Theme.Presets)
+        foreach (var t in Theme.All)
         {
             string swatch =
                 $"[{t.Banner}]\u2588\u2588[/]" +
@@ -759,7 +759,7 @@ public static class Setup
         }
         MuxConsole.WriteLine();
 
-        var choice = MuxConsole.Select("Theme:", Theme.Presets
+        var choice = MuxConsole.Select("Theme:", Theme.All
             .Select(t => $"{t.Name}").ToList());
         var picked = Theme.Find(choice) ?? Theme.Default;
 

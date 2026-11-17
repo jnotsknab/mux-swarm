@@ -22,7 +22,7 @@ internal sealed class ThemePickerView
 
     internal ThemePickerView(IReadOnlyList<Theme>? themes = null, string? activeName = null)
     {
-        _themes = themes ?? Theme.Presets;
+        _themes = themes ?? Theme.All;
         _matches = Enumerable.Range(0, _themes.Count).ToList();
         // Start on the active theme so Enter with no navigation is a no-op re-apply.
         if (activeName is { Length: > 0 })
