@@ -1986,6 +1986,12 @@ public static class CliCmdUtils
             var markdown = ext.Markdown ? "  markdown" : "";
             MuxConsole.WriteBody($"  {ext.Name}{version}{themes}{overrides}{markdown}");
             if (!string.IsNullOrWhiteSpace(ext.Description)) MuxConsole.WriteMuted($"    {ext.Description}");
+            if (ext.Process is null) continue;
+            var proc = Extensions.ExtensionHost.Running.FirstOrDefault(p => p.Name == ext.Name);
+            var state = proc is null ? "not running" : proc.IsRunning ? "running" : "exited";
+            var events = ext.Events.Count == 0 ? "" : $", events: {string.Join(", ", ext.Events)}";
+            MuxConsole.WriteMuted($"    process: {state}{events}");
+            foreach (var line in proc?.StderrTail.TakeLast(5) ?? []) MuxConsole.WriteMuted($"      {line}");
         }
         foreach (var problem in loaded.Problems) MuxConsole.WriteWarning(problem);
     }

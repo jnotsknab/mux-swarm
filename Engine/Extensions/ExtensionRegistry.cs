@@ -16,11 +16,16 @@ internal static partial class ExtensionRegistry
 
     private const long MaxManifestBytes = 256 * 1024;
 
-    /// <summary>One successfully loaded extension, for listing. <see cref="Overrides"/> names the
-    /// cosmetic manifest keys it applied (spinner, quips, toolLabels, splash).</summary>
+    /// <summary>One successfully loaded extension, for listing.</summary>
     internal sealed record Extension(string Name, string? Version, string? Description, string Dir, IReadOnlyList<string> Themes)
     {
-        /// <summary>Cosmetic manifest keys this extension applied.</summary>
+        /// <summary>The declared process, when the manifest has a valid one.</summary>
+        internal ExtensionProcessSpec? Process { get; init; }
+
+        /// <summary>Lifecycle events the process subscribes to.</summary>
+        internal IReadOnlyList<string> Events { get; init; } = [];
+
+        /// <summary>Cosmetic manifest keys this extension applied (spinner, quips, toolLabels, splash).</summary>
         internal IReadOnlyList<string> Overrides { get; init; } = [];
 
         /// <summary>True when this extension's markdown style is the one applied.</summary>
@@ -197,6 +202,12 @@ internal static partial class ExtensionRegistry
                     overrides.Add("toolLabels");
                 }
             }
+            var process = manifest.Process;
+            if (process is not null && string.IsNullOrWhiteSpace(process.Command))
+            {
+                problems.Add($"{name}: process.command is empty; process ignored.");
+                process = null;
+            }
             bool hasMarkdown = false;
             if (manifest.Markdown is { } md && BuildMarkdown(md, problems, name) is { } style)
             {
@@ -204,7 +215,13 @@ internal static partial class ExtensionRegistry
                 markdown = style;
                 hasMarkdown = true;
             }
-            extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine) { Overrides = overrides, Markdown = hasMarkdown });
+            extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine)
+            {
+                Markdown = hasMarkdown,
+                Overrides = overrides,
+                Process = process,
+                Events = (manifest.Events ?? []).Where(e => !string.IsNullOrWhiteSpace(e)).Select(e => e.Trim()).ToList(),
+            });
         }
         var cosmetics = new Cosmetics(spinner, quips, splash, labels.Count == 0 ? null : labels) { Timing = timing };
         return new Result(extensions, themes, problems) { Cosmetics = cosmetics, Markdown = markdown };

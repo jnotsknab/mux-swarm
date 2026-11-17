@@ -33,6 +33,20 @@ internal sealed class ExtensionManifest
     public List<Dictionary<string, string>> Themes { get; set; } = [];
 
     /// <summary>
+    /// Optional long-running process Mux talks to with JSON-RPC 2.0 over stdin/stdout. Started
+    /// only when the extension is listed in <c>extensions.trusted</c>.
+    /// </summary>
+    [JsonPropertyName("process")]
+    public ExtensionProcessSpec? Process { get; set; }
+
+    /// <summary>
+    /// Lifecycle events the process receives as <c>event</c> notifications (the same names and
+    /// payload as hooks: <c>tool_call</c>, <c>turn_end</c>, ...; <c>*</c> = all).
+    /// </summary>
+    [JsonPropertyName("events")]
+    public List<string> Events { get; set; } = [];
+
+    /// <summary>
     /// Thinking-indicator spinner frames, replacing the built-in ones: 1-64 frames, each 1-8 terminal
     /// cells (any text: multi-character, emoji, ZWJ sequences). Shorthand for <c>thinking.frames</c>.
     /// </summary>
@@ -92,6 +106,18 @@ internal sealed class ThinkingManifest
     /// <summary>Text after the quip (default <c>...</c>, max 8 chars, may be empty).</summary>
     [JsonPropertyName("suffix")]
     public string? Suffix { get; set; }
+}
+
+/// <summary>How to start an extension process. Never run through a shell.</summary>
+internal sealed class ExtensionProcessSpec
+{
+    /// <summary>Executable: a bare name looked up on PATH, or a path relative to the extension folder.</summary>
+    [JsonPropertyName("command")]
+    public string Command { get; set; } = "";
+
+    /// <summary>Arguments, passed one-for-one (no quoting or splitting).</summary>
+    [JsonPropertyName("args")]
+    public List<string> Args { get; set; } = [];
 }
 
 /// <summary>The <c>markdown</c> block of an extension manifest. Omitted keys keep the built-in glyph.</summary>
