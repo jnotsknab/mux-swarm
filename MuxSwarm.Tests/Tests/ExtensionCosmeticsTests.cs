@@ -102,6 +102,19 @@ public sealed class ExtensionCosmeticsTests : IDisposable
     }
 
     [Fact]
+    public void ThinkingLine_FramesWithSpaces_ShowOneSpinner()
+    {
+        AddExtension("spaced", """{ "spinner": ["[=  ]", "[ = ]", "[  =]", " ."] }""");
+        Assert.Empty(LoadEnabled().Problems);
+        foreach (var frame in ThinkingIndicator.ExtensionFrames!)
+        {
+            string raw = $"  {frame} Agent Thinking...";   // what the indicator hands the TUI
+            string expected = System.Text.RegularExpressions.Regex.Replace(raw.Trim(), @"\s+", " ");
+            Assert.Equal(expected, TuiMarkup.Plain(TuiComponents.ThinkingLine(raw, 1)).Trim());
+        }
+    }
+
+    [Fact]
     public void Spinner_AcceptsMultiCellAndEmojiFrames_PaddedToTheWidest()
     {
         AddExtension("wide", """{ "spinner": ["\u2588", "\u2588\u2588", "\uD83D\uDE80", "\uD83D\uDC68\u200D\uD83D\uDCBB", "[=  ]"] }""");
