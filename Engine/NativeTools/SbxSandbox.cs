@@ -107,10 +107,10 @@ internal sealed class SbxSandbox : ISessionSandbox
     }
 
     /// <inheritdoc/>
-    public (string File, string Args) ExecInteractive(IReadOnlyList<string> argv)
+    public (string File, string Args) ExecInteractive(IReadOnlyList<string> argv, string workDir)
     {
         if (!_started) EnsureStarted();
-        return (_spec.Binary, OciSandbox.InteractiveArgs(_name, argv));
+        return (_spec.Binary, OciSandbox.InteractiveArgs(_name, argv, workDir));
     }
 
     /// <summary>

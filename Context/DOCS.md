@@ -1323,14 +1323,15 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 **Sandboxing.** When a sandbox backend is configured (`sandbox.backend` other than `host`), every
 extension process runs inside it, so it gets the same confinement as the agent's shell:
 
-- The extension folder is read-only. The process works in its own writable folder,
-  `<local data>/Mux-Swarm/extensions/<name>` (`%LOCALAPPDATA%` on Windows, `~/.local/share` elsewhere),
-  passed as `dataDir` in `initialize`.
+- The process starts in the extension folder (so relative paths such as `main.py` resolve there), but
+  that folder is read-only. It writes only to its own folder, `<local data>/Mux-Swarm/extensions/<name>`
+  (`%LOCALAPPDATA%` on Windows, `~/.local/share` elsewhere), passed as `dataDir` in `initialize`.
 - Wrapper backends (`bwrap`, `firejail`, `sandbox-exec`) wrap the process. Container and microVM
   backends (`docker`, `docker-container`, `podman`, `gvisor`, ...) start one sandbox per extension: the
-  data folder at `/work`, the extension folder at `/ext` (read-only), plus the usual allowed-path mounts.
-  The process then runs in Linux, so the image needs its runtime (e.g. python). The sandbox is removed
-  when the process stops. `custom` needs `sandbox.replStdio: true`.
+  data folder at `/work` (`dataDir`), the extension folder at `/ext` (read-only, the working directory),
+  plus the usual allowed-path mounts. The process then runs in Linux, so the image needs its runtime
+  (e.g. python). The sandbox is removed when the process stops. `custom` needs `sandbox.replStdio: true`
+  (its template runs from the extension folder; `{workdir}` is the data folder).
 - If the sandbox cannot be used, the process is not started (never a silent host fallback) and
   `/extensions` says why. `/extensions` also shows where each process runs.
 - Exempt a trusted extension with `"extensions": { "unsandboxed": ["name"] }`. Only your config can do

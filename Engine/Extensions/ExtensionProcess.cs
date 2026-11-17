@@ -102,7 +102,7 @@ internal sealed class ExtensionProcess : IDisposable
         // dir = the extension folder as the process sees it; dataDir = where it may write (sandboxed only).
         string seenDir = sandbox is { Kind: NativeTools.SandboxKind.Oci or NativeTools.SandboxKind.Sbx } ? GuestExtensionDir : dir;
         string? dataDir = sandbox is null ? null
-            : sandbox.Kind is NativeTools.SandboxKind.Oci or NativeTools.SandboxKind.Sbx ? NativeTools.OciSandbox.GuestWorkDir : workDir;
+            : sandbox.Kind is NativeTools.SandboxKind.Oci or NativeTools.SandboxKind.Sbx ? NativeTools.OciSandbox.GuestWorkDir : DataDirectory(name);
         ext.Notify("initialize", new { protocolVersion = ProtocolVersion, muxVersion = App.Version, name, dir = seenDir, dataDir });
         return ext;
     }
@@ -112,7 +112,7 @@ internal sealed class ExtensionProcess : IDisposable
 
     /// <summary>
     /// The private writable folder of a sandboxed extension: <c>&lt;local data&gt;/Mux-Swarm/extensions/&lt;name&gt;</c>
-    /// (<c>%LOCALAPPDATA%</c> on Windows, <c>~/.local/share</c> elsewhere). Its working directory in the sandbox.
+    /// (<c>%LOCALAPPDATA%</c> on Windows, <c>~/.local/share</c> elsewhere), sent as <c>dataDir</c> in <c>initialize</c>.
     /// </summary>
     internal static string DataDirectory(string name)
     {
@@ -123,9 +123,10 @@ internal sealed class ExtensionProcess : IDisposable
     }
 
     /// <summary>
-    /// How to start the process. Host: the command itself in the extension folder (args via
-    /// ArgumentList, <c>Args</c> null). Sandboxed: the extension folder is read-only and the process
-    /// works in its private <see cref="DataDirectory"/>. Wrapper backends (bwrap, firejail,
+    /// How to start the process. It always starts in the extension folder, so relative paths in the
+    /// manifest (e.g. <c>main.py</c>) resolve there. Host: the command itself (args via ArgumentList,
+    /// <c>Args</c> null). Sandboxed: the extension folder is read-only and the process may write only its
+    /// private <see cref="DataDirectory"/>. Wrapper backends (bwrap, firejail,
     /// sandbox-exec) wrap the command; container/microVM backends get a dedicated sandbox for this
     /// extension (data dir at /work, extension folder at <see cref="GuestExtensionDir"/>, plus the usual
     /// allowed-path mounts) and <c>exec -i</c> into it. A custom backend needs <c>sandbox.replStdio</c>.
@@ -142,14 +143,14 @@ internal sealed class ExtensionProcess : IDisposable
         {
             case NativeTools.SandboxKind.Wrapper:
             {
-                var (file, wrapped) = NativeTools.SandboxBackend.WrapProcess(sandbox, argv, data, [dir]);
-                return (file, wrapped, data, null);
+                var (file, wrapped) = NativeTools.SandboxBackend.WrapProcess(sandbox, argv, data, [dir], chdir: dir);
+                return (file, wrapped, dir, null);
             }
             case NativeTools.SandboxKind.Custom when sandbox.CustomReplStdio:
             {
                 var (file, wrapped) = NativeTools.SandboxBackend.WrapShellCommand(sandbox,
                     string.Join(' ', argv.Select(NativeTools.SandboxBackend.ArgvToken)), data);
-                return (file, wrapped, data, null);
+                return (file, wrapped, dir, null);   // the template runs from the extension folder; {workdir} = data dir
             }
             case NativeTools.SandboxKind.Custom:
                 throw new NativeTools.SandboxException("the custom sandbox backend cannot host a long-running stdio process; " +
@@ -166,8 +167,8 @@ internal sealed class ExtensionProcess : IDisposable
                 try
                 {
                     session.EnsureStarted();
-                    var (file, exec) = session.ExecInteractive(argv.Select(Guest).ToList());
-                    return (file, exec, data, session);
+                    var (file, exec) = session.ExecInteractive(argv.Select(Guest).ToList(), GuestExtensionDir);
+                    return (file, exec, dir, session);
                 }
                 catch { session.Dispose(); throw; }
             }

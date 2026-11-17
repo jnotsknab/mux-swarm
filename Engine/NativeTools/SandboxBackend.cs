@@ -381,8 +381,10 @@ internal static class SandboxBackend
     /// </summary>
     /// <param name="readOnlyPaths">Extra host paths the process must be able to read (e.g. the Python
     /// installation behind a venv). bwrap binds / read-only and re-binds these after its private /tmp.</param>
+    /// <param name="chdir">Directory the process starts in (default <paramref name="workDir"/>). bwrap gets
+    /// <c>--chdir</c>; firejail and sandbox-exec inherit the caller's working directory, so set that too.</param>
     public static (string File, string Args) WrapProcess(SandboxSpec spec, IReadOnlyList<string> innerArgv, string workDir,
-        IReadOnlyList<string>? readOnlyPaths = null)
+        IReadOnlyList<string>? readOnlyPaths = null, string? chdir = null)
     {
         readOnlyPaths ??= Array.Empty<string>();
         if (spec.Kind != SandboxKind.Wrapper)
@@ -396,7 +398,7 @@ internal static class SandboxBackend
         switch (spec.Backend)
         {
             case "bwrap":
-                argv.AddRange(new[] { "--ro-bind", "/", "/", "--bind", workDir, workDir, "--chdir", workDir,
+                argv.AddRange(new[] { "--ro-bind", "/", "/", "--bind", workDir, workDir, "--chdir", chdir ?? workDir,
                     "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--unshare-all" });
                 // / is already read-only, but the fresh /tmp hides anything under it: re-bind the extra paths.
                 foreach (var p in readOnlyPaths) argv.AddRange(new[] { "--ro-bind-try", p, p });

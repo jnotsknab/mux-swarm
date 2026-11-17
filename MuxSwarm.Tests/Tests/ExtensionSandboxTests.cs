@@ -32,14 +32,15 @@ public sealed class ExtensionSandboxTests : IDisposable
     }
 
     [Fact]
-    public void Wrapper_WrapsTheCommand_WorksInTheDataDir_ExtensionFolderReadOnly()
+    public void Wrapper_WrapsTheCommand_RunsInTheExtensionFolder_WritesOnlyTheDataDir()
     {
         if (OperatingSystem.IsWindows()) return;   // wrapper backends are Linux/macOS only (Windows paths are refused)
         var (file, args, work, session) = ExtensionProcess.BuildStart("sbxtest", _dir, "/usr/bin/python3", ["-u", "main.py"],
             Spec(SandboxKind.Wrapper, "bwrap"));
         string data = ExtensionProcess.DataDirectory("sbxtest");
         Assert.Equal("bwrap", file);
-        Assert.Equal(data, work);
+        Assert.Equal(_dir, work);                                                          // starts in the extension folder
+        Assert.Contains($"--chdir {SandboxBackend.ArgvToken(_dir)}", args);
         Assert.Null(session);
         Assert.Contains($"--bind {SandboxBackend.ArgvToken(data)} {SandboxBackend.ArgvToken(data)}", args);
         Assert.DoesNotContain($"--bind {SandboxBackend.ArgvToken(_dir)}", args);   // extension folder stays read-only
@@ -59,10 +60,10 @@ public sealed class ExtensionSandboxTests : IDisposable
     }
 
     [Fact]
-    public void ContainerExec_IsInteractive_InWork_WithQuotedArgv()
+    public void ContainerExec_IsInteractive_InTheExtensionFolder_WithQuotedArgv()
     {
-        Assert.Equal("exec -i -w /work mux_sbx_x python -u /ext/main.py \"a b\"",
-            OciSandbox.InteractiveArgs("mux_sbx_x", ["python", "-u", "/ext/main.py", "a b"]));
+        Assert.Equal("exec -i -w /ext mux_sbx_x python -u main.py \"a b\"",
+            OciSandbox.InteractiveArgs("mux_sbx_x", ["python", "-u", "main.py", "a b"], ExtensionProcess.GuestExtensionDir));
     }
 
     [Fact]
@@ -88,7 +89,7 @@ public sealed class ExtensionSandboxTests : IDisposable
     public async Task Bwrap_ProcessWritesItsDataDir_ButNotTheExtensionFolderOrHome()
     {
         if (!OperatingSystem.IsLinux() || SandboxBackend.Validate(new SandboxConfig { Backend = "bwrap" }) is not null) return;
-        // Writes a file in its cwd (the data dir), then tries the extension folder and $HOME; reports via a request.
+        // Writes a file in dataDir, then tries the extension folder and $HOME; reports its cwd too, via a request.
         File.WriteAllText(Path.Combine(_dir, "main.py"), """
             import sys, json, os
             def attempt(p):
@@ -100,8 +101,8 @@ public sealed class ExtensionSandboxTests : IDisposable
                 msg = json.loads(line)
                 if msg.get("method") == "initialize": init = msg["params"]
                 if "id" in msg:
-                    r = {"cwd": attempt("data.txt"), "ext": attempt(os.path.join(init["dir"], "x.txt")),
-                         "home": attempt(os.path.expanduser("~/mux-ext-escape.txt")), "dataDir": init.get("dataDir")}
+                    r = {"data": attempt(os.path.join(init["dataDir"], "data.txt")), "ext": attempt(os.path.join(init["dir"], "x.txt")),
+                         "home": attempt(os.path.expanduser("~/mux-ext-escape.txt")), "dataDir": init.get("dataDir"), "cwd": os.getcwd()}
                     print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": r}), flush=True)
             """);
         var ext = new ExtensionRegistry.Extension("sbxtest", null, null, _dir, [])
@@ -115,11 +116,35 @@ public sealed class ExtensionSandboxTests : IDisposable
 
         var reply = await proc.RequestAsync("probe", null, TimeSpan.FromSeconds(20));
         var r = reply.GetProperty("result");
-        Assert.Equal("wrote", r.GetProperty("cwd").GetString());
+        Assert.Equal("wrote", r.GetProperty("data").GetString());
+        Assert.Equal(_dir, r.GetProperty("cwd").GetString());                               // runs in the extension folder
         Assert.NotEqual("wrote", r.GetProperty("ext").GetString());
         Assert.NotEqual("wrote", r.GetProperty("home").GetString());
         Assert.Equal(ExtensionProcess.DataDirectory("sbxtest"), r.GetProperty("dataDir").GetString());
         Assert.True(File.Exists(Path.Combine(ExtensionProcess.DataDirectory("sbxtest"), "data.txt")));
         Assert.False(File.Exists(Path.Combine(_dir, "x.txt")));
+    }
+
+    [Fact]
+    public async Task Bwrap_DocumentedManifest_RelativeScriptResolvesInTheExtensionFolder()
+    {
+        if (!OperatingSystem.IsLinux() || SandboxBackend.Validate(new SandboxConfig { Backend = "bwrap" }) is not null) return;
+        // The documented shape: "command": "python", "args": ["-u", "main.py"] (relative script).
+        File.WriteAllText(Path.Combine(_dir, "main.py"), """
+            import sys, json
+            for line in sys.stdin:
+                msg = json.loads(line)
+                if "id" in msg:
+                    print(json.dumps({"jsonrpc": "2.0", "id": msg["id"], "result": {"ok": True}}), flush=True)
+            """);
+        var ext = new ExtensionRegistry.Extension("sbxtest", null, null, _dir, [])
+        {
+            Process = new ExtensionProcessSpec { Command = Python, Args = ["-u", "main.py"] },
+        };
+        var problems = ExtensionHost.Restart([ext], new HashSet<string> { "sbxtest" }, null, new SandboxConfig { Backend = "bwrap", Network = false });
+        Assert.Empty(problems);
+        var reply = await Assert.Single(ExtensionHost.Running).RequestAsync("probe", null, TimeSpan.FromSeconds(20));
+        Assert.Equal(System.Text.Json.JsonValueKind.Object, reply.ValueKind);   // default (no answer) when main.py was not found
+        Assert.True(reply.GetProperty("result").GetProperty("ok").GetBoolean());
     }
 }
