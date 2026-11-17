@@ -2969,6 +2969,32 @@ const icons = {
     }
   });
 
+  // Extension themes from the runtime (GET /api/themes). Appended to the bundled list; an older
+  // binary 404s and the bundled list stays as is. A saved extension theme is re-applied once loaded.
+  (async () => {
+    try {
+      const r = await fetch(_apiUrl('/api/themes'), { headers: { 'Accept': 'application/json' } });
+      if (!r.ok) return;
+      const data = await r.json();
+      const container = document.getElementById("themePresets");
+      for (const t of (data.items || [])) {
+        if (!t || !t.id || !t.vars || themes.some(x => x.id === t.id)) continue;
+        themes.push({ id: t.id, name: t.name, dot: t.dot, vars: t.vars });
+        const btn = document.createElement('button');
+        btn.className = 'theme-preset-btn';
+        btn.dataset.id = t.id;
+        const dot = document.createElement('div');
+        dot.className = 'preset-color-dot';
+        dot.style.background = t.dot;
+        btn.appendChild(dot);
+        btn.appendChild(document.createTextNode(t.name));
+        btn.addEventListener('click', () => { currentThemeId = t.id; customOverrides = {}; applyThemeState(); });
+        if (container) container.appendChild(btn);
+      }
+      if (themes.some(x => x.id === currentThemeId)) applyThemeState();
+    } catch (_) {}
+  })();
+
   // Load saved state on boot
   try {
     const saved = JSON.parse(localStorage.getItem('mux-theme-state'));

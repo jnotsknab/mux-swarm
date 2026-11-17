@@ -22,6 +22,9 @@ internal static partial class ExtensionRegistry
     {
         /// <summary>Cosmetic manifest keys this extension applied.</summary>
         internal IReadOnlyList<string> Overrides { get; init; } = [];
+
+        /// <summary>True when this extension's markdown style is the one applied.</summary>
+        internal bool Markdown { get; init; }
     }
 
     /// <summary>Merged cosmetic overrides. Null members leave the built-ins in place.</summary>
@@ -36,6 +39,9 @@ internal static partial class ExtensionRegistry
     {
         /// <summary>Merged cosmetic overrides; all-null members = built-ins.</summary>
         internal Cosmetics Cosmetics { get; init; } = new(null, null, null, null);
+
+        /// <summary>Markdown glyph style; null = built-in.</summary>
+        internal Tui.MarkdownStyle? Markdown { get; init; }
     }
 
     private static readonly Result Empty = new([], [], []);
@@ -62,6 +68,7 @@ internal static partial class ExtensionRegistry
         ThinkingIndicator.SetExtensionCosmetics(c.Spinner, c.Quips, c.Timing);
         Tui.ToolActionLabel.SetExtensionVerbs(c.ToolLabels);
         SplashMessages.SetExtensionLines(c.Splash);
+        Tui.MarkdownStyle.Set(Loaded.Markdown);
         return Loaded;
     }
 
@@ -136,6 +143,7 @@ internal static partial class ExtensionRegistry
         string[]? spinner = null, quips = null, splash = null;
         ThinkingIndicator.Timing? timing = null;
         var labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        Tui.MarkdownStyle? markdown = null;
         foreach (var (name, dir, manifest) in found.OrderBy(f => f.Name, StringComparer.Ordinal))
         {
             var mine = new List<string>();
@@ -189,10 +197,44 @@ internal static partial class ExtensionRegistry
                     overrides.Add("toolLabels");
                 }
             }
-            extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine) { Overrides = overrides });
+            bool hasMarkdown = false;
+            if (manifest.Markdown is { } md && BuildMarkdown(md, problems, name) is { } style)
+            {
+                if (markdown is not null) problems.Add($"{name}: markdown style replaces the one from an earlier extension.");
+                markdown = style;
+                hasMarkdown = true;
+            }
+            extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine) { Overrides = overrides, Markdown = hasMarkdown });
         }
         var cosmetics = new Cosmetics(spinner, quips, splash, labels.Count == 0 ? null : labels) { Timing = timing };
-        return new Result(extensions, themes, problems) { Cosmetics = cosmetics };
+        return new Result(extensions, themes, problems) { Cosmetics = cosmetics, Markdown = markdown };
+    }
+
+    /// <summary>
+    /// Validate a <c>markdown</c> block over the built-in style. Invalid keys are reported and keep
+    /// their built-in glyph; null when nothing valid was set.
+    /// </summary>
+    internal static Tui.MarkdownStyle? BuildMarkdown(MarkdownManifest md, List<string> problems, string extension)
+    {
+        var style = Tui.MarkdownStyle.Default;
+        bool any = false;
+        if (md.TableBorder is { } border)
+        {
+            var b = border.Trim().ToLowerInvariant();
+            if (Tui.MarkdownStyle.BorderStyles.Contains(b)) { style = style with { Border = b }; any = true; }
+            else problems.Add($"{extension}: markdown.tableBorder '{border}' is not one of {string.Join(", ", Tui.MarkdownStyle.BorderStyles)}; ignored.");
+        }
+        if (md.Bullet is { } bullet)
+        {
+            if (Tui.MarkdownStyle.IsOneCell(bullet)) { style = style with { Bullet = bullet }; any = true; }
+            else problems.Add($"{extension}: markdown.bullet must be one visible terminal cell; ignored.");
+        }
+        if (md.Rule is { } rule)
+        {
+            if (Tui.MarkdownStyle.IsOneCell(rule)) { style = style with { Rule = rule }; any = true; }
+            else problems.Add($"{extension}: markdown.rule must be one visible terminal cell; ignored.");
+        }
+        return any ? style : null;
     }
 
     // Theme color roles settable from a manifest: every string property except Name.

@@ -1983,7 +1983,8 @@ public static class CliCmdUtils
             var version = string.IsNullOrWhiteSpace(ext.Version) ? "" : $" {ext.Version}";
             var themes = ext.Themes.Count == 0 ? "" : $"  themes: {string.Join(", ", ext.Themes)}";
             var overrides = ext.Overrides.Count == 0 ? "" : $"  overrides: {string.Join(", ", ext.Overrides)}";
-            MuxConsole.WriteBody($"  {ext.Name}{version}{themes}{overrides}");
+            var markdown = ext.Markdown ? "  markdown" : "";
+            MuxConsole.WriteBody($"  {ext.Name}{version}{themes}{overrides}{markdown}");
             if (!string.IsNullOrWhiteSpace(ext.Description)) MuxConsole.WriteMuted($"    {ext.Description}");
         }
         foreach (var problem in loaded.Problems) MuxConsole.WriteWarning(problem);
