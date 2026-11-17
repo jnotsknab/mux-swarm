@@ -31,7 +31,7 @@ internal sealed class ExtensionsPanelView
     private string _query = "";
     private bool _searching;
     private int _detailScroll;
-    private bool _trustPending;   // first 't' on an untrusted extension arms; the second trusts it
+    private string? _trustArmed;   // extension a first 't' armed; the second trusts it only while it is still selected
 
     internal ExtensionsPanelView(IReadOnlyList<ExtensionCatalog.Item> items, IReadOnlyList<string>? other = null, string? select = null)
     {
@@ -110,18 +110,18 @@ internal sealed class ExtensionsPanelView
     internal Action Trust()
     {
         if (Selected is not { HasProcess: true } sel) return Action.None;
-        if (sel.Trusted || _trustPending) { _trustPending = false; return Action.Trust; }
-        _trustPending = true;
+        if (sel.Trusted || _trustArmed == sel.Name) { _trustArmed = null; return Action.Trust; }
+        _trustArmed = sel.Name;   // arming names the extension, so a click or search that moves the selection can't trust another
         Message = $"Trusting '{sel.Name}' lets its process run with your user permissions. Press t again to trust it.";
         return Action.None;
     }
 
     internal Action Handle(ConsoleKeyInfo key, int pageSize)
     {
-        bool armed = _trustPending;
-        _trustPending = false;
-        if (armed && key.KeyChar is 't' or 'T' && !_searching) { _trustPending = true; return Trust(); }
-        if (armed) Message = "";
+        string? armed = _trustArmed;
+        _trustArmed = null;
+        if (armed is not null && key.KeyChar is 't' or 'T' && !_searching) { _trustArmed = armed; return Trust(); }
+        if (armed is not null) Message = "";
         bool ctrl = key.Modifiers.HasFlag(ConsoleModifiers.Control);
         if (ctrl && key.Key is ConsoleKey.Q or ConsoleKey.C) return Action.Close;
         if (key.Key == ConsoleKey.Escape)
@@ -294,7 +294,7 @@ internal sealed class ExtensionsPanelView
                 _ => true,
             };
             string text = action == Action.Trust && Selected is { Trusted: true } ? "t untrust"
-                : action == Action.Trust && _trustPending ? "t again to trust"
+                : action == Action.Trust && _trustArmed is not null && _trustArmed == Selected?.Name ? "t again to trust"
                 : action == Action.Toggle && Selected is { Enabled: false } ? "Space enable" : label;
             if (b > 0) { bar.Append($"[{TuiComponents.Muted}] \u00b7 [/]"); col += 3; }
             int w = TuiMarkup.Width(text);

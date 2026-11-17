@@ -112,6 +112,19 @@ public sealed class ExtensionsPanelTests
     }
 
     [Fact]
+    public void View_TrustArmedForOneExtension_DoesNotTrustAnotherAfterAClickOrSearch()
+    {
+        var view = new ExtensionsPanelView([Item("aaa", process: true), Item("bbb", process: true)]);
+        Assert.Equal(ExtensionsPanelView.Action.None, view.Handle(Key(ConsoleKey.T, 't'), 5));   // arms aaa
+        view.ClickItem(1);                                                                          // select bbb with the mouse
+        Assert.Equal("bbb", view.Selected!.Name);
+        Assert.Equal(ExtensionsPanelView.Action.None, view.Handle(Key(ConsoleKey.T, 't'), 5));   // arms bbb, does not trust it
+        Assert.Contains("'bbb'", view.Message);
+        Assert.Equal(ExtensionsPanelView.Action.Trust, view.Handle(Key(ConsoleKey.T, 't'), 5));  // second t on bbb trusts bbb
+        Assert.Equal("bbb", view.Selected!.Name);
+    }
+
+    [Fact]
     public void View_TrustArmsThenTrusts_UntrustIsImmediate_OtherKeysDisarm()
     {
         var view = new ExtensionsPanelView([Item("a", process: true), Item("b", process: true, trusted: true)]);
