@@ -258,6 +258,9 @@ internal sealed class ExtensionProcess : IDisposable
     /// </summary>
     private void OnMessage(JsonElement msg)
     {
+        // Stopped (Dispose ran): ignore late messages, or a chip set while the process winds down
+        // would come back after Dispose cleared it and never go away.
+        if (!IsRunning) return;
         if (msg.ValueKind != JsonValueKind.Object || !msg.TryGetProperty("method", out var m) || m.ValueKind != JsonValueKind.String) return;
         msg.TryGetProperty("params", out var p);
         string? Str(string key) => p.ValueKind == JsonValueKind.Object && p.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;

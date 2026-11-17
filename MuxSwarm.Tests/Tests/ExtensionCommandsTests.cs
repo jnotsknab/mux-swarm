@@ -51,6 +51,23 @@ public sealed class ExtensionCommandsTests : IDisposable
     private string Proc => $$"""{ "command": "{{Python}}", "args": ["-u", "main.py"] }""";
 
     [Fact]
+    public void Dispose_ChipSentWhileStopping_DoesNotComeBack()
+    {
+        // Sends footer/set after stdin closes, i.e. while Dispose waits for the process to exit.
+        AddExtension("late", $$"""{ "process": {{Proc}} }""", """
+            import sys, json, time
+            for line in sys.stdin: pass
+            print(json.dumps({"jsonrpc": "2.0", "method": "footer/set", "params": {"id": "x", "text": "stale"}}), flush=True)
+            time.sleep(1)
+            """);
+        var ext = Assert.Single(ExtensionRegistry.Scan([_root]).Extensions);
+        var proc = ExtensionProcess.Start(ext.Name, ext.Dir, ext.Process!, []);
+        proc.Dispose();
+        Thread.Sleep(300);   // the stdout reader may still deliver the late message
+        Assert.DoesNotContain(ExtensionFooter.Snapshot(), c => c.Id.StartsWith("late.", StringComparison.Ordinal));
+    }
+
+    [Fact]
     public void Scan_ValidatesCommands_NeverShadowsBuiltIns_FirstNameWins()
     {
         AddExtension("a", $$"""{ "process": {{Proc}}, "commands": [ { "name": "stats", "description": "Repo  stats" }, { "name": "help" }, { "name": "bg" }, { "name": "Bad Name" }, { "name": "slow", "timeoutSeconds": 99999 } ] }""");
