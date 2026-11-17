@@ -21,6 +21,10 @@ internal sealed class ExtensionTool : AIFunction
         Name = $"{process.Name}_{spec.Name}";
     }
 
+    // The extension's process now: a session keeps the tools it was built with, and /extensions changes or
+    // /refresh restart every process, so the one captured at build time may be gone. Falls back to it.
+    private ExtensionProcess Process => ExtensionHost.Running.FirstOrDefault(p => p.Name == _process.Name && p.IsRunning) ?? _process;
+
     /// <inheritdoc/>
     public override string Name { get; }
 
@@ -60,7 +64,7 @@ internal sealed class ExtensionTool : AIFunction
         JsonElement reply;
         try
         {
-            reply = await _process.RequestAsync("tool/call", new { name = _spec.Name, arguments = args },
+            reply = await Process.RequestAsync("tool/call", new { name = _spec.Name, arguments = args },
                 TimeSpan.FromSeconds(Timeout), cancellationToken);
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException)
@@ -68,7 +72,7 @@ internal sealed class ExtensionTool : AIFunction
             return Fail(ex.Message);
         }
         if (reply.ValueKind != JsonValueKind.Object)
-            return Fail(_process.IsRunning ? $"no answer within {Timeout}s" : "the extension process is not running");
+            return Fail(Process.IsRunning ? $"no answer within {Timeout}s" : "the extension process is not running");
         if (reply.TryGetProperty("error", out var error))
             return Fail(error.ValueKind == JsonValueKind.Object && error.TryGetProperty("message", out var m) ? m.ToString() : error.ToString());
         if (reply.TryGetProperty("result", out var result) && result.ValueKind == JsonValueKind.Object

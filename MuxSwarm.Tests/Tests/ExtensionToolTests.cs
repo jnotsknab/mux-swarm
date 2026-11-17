@@ -64,6 +64,18 @@ public sealed class ExtensionToolTests : IDisposable
     }
 
     [Fact]
+    public async Task ToolBuiltBeforeARestart_KeepsWorking_AfterTheHostRestarts()
+    {
+        // A session builds its tools once; /extensions changes in a session restart the host.
+        AddExtension("my-ext", Manifest, Script);
+        var echo = StartTools()["my-ext_echo"];
+        var result = ExtensionRegistry.Load(new ExtensionsConfig { Enabled = true, Dirs = [_root] });
+        Assert.Empty(ExtensionHost.Restart(result.Extensions, new HashSet<string> { "my-ext" }));
+
+        Assert.Equal("echo:again", await echo.InvokeAsync(new AIFunctionArguments { ["text"] = "again" }));
+    }
+
+    [Fact]
     public async Task ToolCall_ReturnsContent_ErrorMessage_OrTimeout()
     {
         AddExtension("my-ext", Manifest, Script);
