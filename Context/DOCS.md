@@ -1400,8 +1400,10 @@ or a JSON-RPC `error`). Requests are answered while a command, tool or event is 
 - `surface` is `tui`, `classic`, `web` (`--serve`), `stdio` or `acp`. `mode` is the running mode
   (`agent`, `swarm`, `pswarm`, `interactive` at the menu, ...).
 - `prompt/submit` and `command/run` queue the line as input: it runs when the session is idle (after the
-  current turn), and in the TUI only while your draft is empty. The transcript shows
-  `sent by extension <name>`. Not available in the classic renderer or over ACP.
+  current turn), and in the TUI only while your draft is empty. It is never taken as the answer to a
+  confirm, a choice or an `ask_user` question. Requests are handled in the order they arrive. The
+  transcript shows `sent by extension <name>`. Not available in the classic renderer or over ACP.
+- `command/run` also works at the main menu: the allowed command runs there like a typed one.
 - `prompt/submit` needs a running session (`/agent`, `/swarm`, `/pswarm`), max 64,000 characters, and
   cannot start with `/` (use `command/run`) or `!`.
 - `command/run` takes one line: any extension command, or one of these built-ins: `/compact`,

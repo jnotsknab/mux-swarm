@@ -34,6 +34,34 @@ public sealed class ExtensionHostApiTests : IDisposable
     private static JsonElement P(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
     [Fact]
+    public async Task Serve_ExtensionLine_IsNeverTakenAsAConfirmAnswer_AndRunsAtTheNextIdleRead()
+    {
+        bool stdio = MuxConsole.StdioMode;
+        ExtensionHostApi.Inject = _inject;   // the real path: MuxConsole.TryInjectInput -> ServeMode
+        ServeMode.UseWebInputForTests(true);
+        MuxConsole.StdioMode = true;
+        try
+        {
+            // A confirm is pending (as during a turn); the extension's line arrives first, the user answers "n".
+            var confirm = Task.Run(() => MuxConsole.Confirm("Overwrite AGENTS.md?", false));
+            await Task.Delay(200);
+            Assert.Null(MuxConsole.TryInjectInput("x", "/compact"));
+            await Task.Delay(200);
+            Assert.False(confirm.IsCompleted);                  // the extension line did not answer it
+            ServeMode.WebLineForTests("n");
+            Assert.False(await confirm.WaitAsync(TimeSpan.FromSeconds(5)));
+
+            // The session's next idle read gets the extension line.
+            Assert.Equal("/compact", MuxConsole.ReadInput());
+        }
+        finally
+        {
+            MuxConsole.StdioMode = stdio;
+            ServeMode.UseWebInputForTests(false);
+        }
+    }
+
+    [Fact]
     public void PromptSubmit_QueuesInSession_RefusesAtMenu_AndRefusesCommandsAndShellEscapes()
     {
         ServeMode.ActiveMode = "interactive";

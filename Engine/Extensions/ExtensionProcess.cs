@@ -268,7 +268,10 @@ internal sealed class ExtensionProcess : IDisposable
         {
             // Never handled on the stdout reader: a handler may wait on the console lock.
             var (id, method, args) = (reqId.Clone(), m.GetString()!, p.ValueKind == JsonValueKind.Undefined ? default : p.Clone());
-            _ = Task.Run(() => Respond(id, ExtensionHostApi.Handle(Name, method, args)));
+            // prompt/submit and command/run only queue a line: handle them here, in arrival order, so
+            // back-to-back requests reach the session in the order the extension sent them.
+            if (method is "prompt/submit" or "command/run") Respond(id, ExtensionHostApi.Handle(Name, method, args));
+            else _ = Task.Run(() => Respond(id, ExtensionHostApi.Handle(Name, method, args)));
             return;
         }
         string? Str(string key) => p.ValueKind == JsonValueKind.Object && p.TryGetProperty(key, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
