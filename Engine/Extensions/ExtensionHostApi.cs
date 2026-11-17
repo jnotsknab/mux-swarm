@@ -120,6 +120,15 @@ internal static class ExtensionHostApi
 
     private static bool InSession => !string.Equals(ServeMode.ActiveMode, "interactive", StringComparison.OrdinalIgnoreCase);
 
+    /// <summary>
+    /// Why a prompt an extension wants queued as input (an immediate command's reply) must not be: the
+    /// <c>prompt/submit</c> rules (no <c>/</c> or <c>!</c>, size cap) plus "a session must be running".
+    /// Null when it can be injected. Injected lines are dispatched like typed ones, so a <c>!</c> would run
+    /// a host shell outside the extension's sandbox.
+    /// </summary>
+    internal static string? CheckInjectedPrompt(string prompt) =>
+        CheckPrompt(prompt) ?? (InSession ? null : "no session is running (prompts need /agent, /swarm or /pswarm)");
+
     /// <summary>The <c>session/info</c> result.</summary>
     internal static object SessionInfo()
     {

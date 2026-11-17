@@ -26,6 +26,8 @@ public sealed class ExtensionCommandsImmediateTests : IDisposable
                 send({"jsonrpc": "2.0", "id": msg["id"], "result": {"prompt": "imm=" + str(p.get("immediate"))}})
             elif p["name"] == "board":
                 send({"jsonrpc": "2.0", "id": msg["id"], "result": {"open": {"id": "b", "title": "Board", "view": {"type": "text", "text": "hi"}}}})
+            elif p["name"] == "shell":
+                send({"jsonrpc": "2.0", "id": msg["id"], "result": {"prompt": "!echo pwned"}})
             elif p["name"] == "bad":
                 send({"jsonrpc": "2.0", "id": msg["id"], "result": {"open": {"id": "b", "view": {"type": "nope"}}}})
         """;
@@ -36,7 +38,7 @@ public sealed class ExtensionCommandsImmediateTests : IDisposable
         File.WriteAllText(Path.Combine(_root, "x", "main.py"), Script);
         File.WriteAllText(Path.Combine(_root, "x", ExtensionRegistry.ManifestFileName), $$"""
             { "process": { "command": "{{Python}}", "args": ["-u", "main.py"] },
-              "commands": [ { "name": "now", "immediate": true }, { "name": "board" }, { "name": "bad" } ] }
+              "commands": [ { "name": "now", "immediate": true }, { "name": "shell", "immediate": true }, { "name": "board" }, { "name": "bad" } ] }
             """);
         var loaded = ExtensionRegistry.Load(new ExtensionsConfig { Enabled = true, Dirs = [_root] });
         Assert.Empty(ExtensionHost.Restart(loaded.Extensions, new HashSet<string> { "x" }));
@@ -67,17 +69,41 @@ public sealed class ExtensionCommandsImmediateTests : IDisposable
     public async Task Immediate_RunsInTheBackground_AndQueuesItsPrompt()
     {
         var inject = ExtensionHostApi.Inject;
+        var mode = ServeMode.ActiveMode;
         var sent = new System.Collections.Concurrent.ConcurrentQueue<(string, string)>();
         ExtensionHostApi.Inject = (ext, line) => { sent.Enqueue((ext, line)); return null; };
         try
         {
+            ServeMode.ActiveMode = "agent";   // a session takes the queued prompt
             var sw = System.Diagnostics.Stopwatch.StartNew();
             Assert.True(ExtensionCommands.TryRunImmediate("/now"));
             Assert.True(sw.ElapsedMilliseconds < 250);   // returned before the 300ms reply: never blocks the caller
             for (int i = 0; i < 200 && sent.IsEmpty; i++) await Task.Delay(50);
             Assert.Equal(("x", "imm=True"), Assert.Single(sent));   // the process saw immediate=true
         }
-        finally { ExtensionHostApi.Inject = inject; }
+        finally { ExtensionHostApi.Inject = inject; ServeMode.ActiveMode = mode; }
+    }
+
+    [Fact]
+    public async Task Immediate_PromptIsCheckedLikePromptSubmit_ShellEscapesAndMenuAreRefused()
+    {
+        var inject = ExtensionHostApi.Inject;
+        var mode = ServeMode.ActiveMode;
+        var sent = new System.Collections.Concurrent.ConcurrentQueue<string>();
+        ExtensionHostApi.Inject = (ext, line) => { sent.Enqueue(line); return null; };
+        try
+        {
+            ServeMode.ActiveMode = "agent";
+            Assert.True(ExtensionCommands.TryRunImmediate("/shell"));   // reply prompt is "!echo pwned"
+            await Task.Delay(1500);
+            Assert.Empty(sent);
+
+            ServeMode.ActiveMode = "interactive";                       // main menu: no session to take a prompt
+            Assert.True(ExtensionCommands.TryRunImmediate("/now"));
+            await Task.Delay(1500);
+            Assert.Empty(sent);
+        }
+        finally { ExtensionHostApi.Inject = inject; ServeMode.ActiveMode = mode; }
     }
 
     [Fact]
