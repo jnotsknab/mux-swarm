@@ -174,7 +174,7 @@ internal static class ExtensionPanels
         bool Bool(string name) => e.TryGetProperty(name, out var v) && v.ValueKind == JsonValueKind.True;
         string Text(string name, int max)
         {
-            var s = Str(name, max) ?? "";
+            var s = Multiline(Str(name, max) ?? "");
             if ((b.Chars += s.Length) > MaxTextChars) throw new FormatException($"the tree has more than {MaxTextChars} characters of text");
             return s;
         }
@@ -249,6 +249,12 @@ internal static class ExtensionPanels
             }
         }
     }
+
+    // Multi-line text (text/code/markdown/input value): keeps line breaks, tabs become spaces, every
+    // other control character is dropped so an extension cannot emit a live terminal escape (ESC/BEL).
+    private static string Multiline(string text) =>
+        !text.Any(char.IsControl) ? text
+        : new string(text.Replace("\r\n", "\n").Replace('\t', ' ').Where(c => c == '\n' || !char.IsControl(c)).ToArray());
 
     // One line of plain text: control characters become spaces, capped length.
     private static string? Clean(string? text, int max)

@@ -54,6 +54,23 @@ public sealed class ExtensionPanelsTests : IDisposable
     }
 
     [Fact]
+    public void Parse_StripsControlCharacters_FromText_KeepsLineBreaks()
+    {
+        string esc = "\\u001b", bel = "\\u0007";   // JSON escapes: the extension sends them over the wire
+        var json = $$"""
+            { "type": "box", "children": [
+              { "type": "text", "text": "a{{esc}}]52;c;eA=={{bel}}b\nnext" },
+              { "type": "code", "text": "{{esc}}[2Jx\ty" },
+              { "type": "markdown", "text": "**m**{{esc}}[31m" },
+              { "type": "input", "key": "i", "value": "v{{esc}}[31mw" } ] }
+            """;
+        Assert.Null(ExtensionPanels.Parse(J(json), out var root));
+        var texts = root!.Kids.Select(k => k.Text).ToList();
+        Assert.Equal(["a]52;c;eA==b\nnext", "[2Jx y", "**m**[31m", "v[31mw"], texts);
+        Assert.DoesNotContain(texts, t => t!.Any(c => char.IsControl(c) && c != '\n'));
+    }
+
+    [Fact]
     public void Parse_EnforcesDepthAndNodeCaps()
     {
         string deep = string.Concat(Enumerable.Repeat("""{ "type": "box", "children": [""", 40)) + """{ "type": "text" }""" + string.Concat(Enumerable.Repeat("]}", 40));
