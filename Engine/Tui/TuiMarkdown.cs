@@ -233,18 +233,25 @@ internal static class TuiMarkdown
     // CommonMark code span content: one leading and trailing space are stripped when both are present.
     private static string CodeText(string s) => s.Length >= 2 && s[0] == ' ' && s[^1] == ' ' && s.Trim().Length > 0 ? s[1..^1] : s;
 
-    // HTML entities decoded outside the code/escape slots. Decoded text is stripped of sentinels again,
-    // so an entity such as &#xE004; can neither revive a slot placeholder nor forge a markup bracket.
+    // HTML entities decoded outside the code/escape slots. Decoded text is stripped of sentinels and
+    // control characters, so an entity such as &#xE004; cannot revive a slot or forge a markup bracket,
+    // and &#x1b; / &#7; cannot become a live terminal escape (clear screen, title, clipboard write).
     private static string DecodeEntities(string s)
     {
         var sb = new System.Text.StringBuilder();
         int last = 0;
         foreach (Match m in Slot.Matches(s))
         {
-            sb.Append(StripSentinels(System.Net.WebUtility.HtmlDecode(s[last..m.Index]))).Append(m.Value);
+            sb.Append(Decode(s[last..m.Index])).Append(m.Value);
             last = m.Index + m.Length;
         }
-        return sb.Append(StripSentinels(System.Net.WebUtility.HtmlDecode(s[last..]))).ToString();
+        return sb.Append(Decode(s[last..])).ToString();
+
+        static string Decode(string text)
+        {
+            string d = StripSentinels(System.Net.WebUtility.HtmlDecode(text));
+            return d.Any(char.IsControl) ? new string(d.Where(c => !char.IsControl(c) || c is '\t').ToArray()) : d;
+        }
     }
 
     // A slot placeholder's content; an unknown index stays as its digits (never throws).

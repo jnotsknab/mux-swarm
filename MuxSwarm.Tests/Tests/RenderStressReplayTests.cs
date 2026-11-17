@@ -184,11 +184,14 @@ public class RenderStressReplayTests
     [Theory]
     [InlineData("a &#xE004;7&#xE005; b", "a 7 b")]                    // decodes to a slot placeholder with no slot
     [InlineData("&#xE000;red&#xE001;hi&#xE000;/&#xE001;", "redhi/")]  // decodes to protected markup brackets
+    [InlineData("a&#x1b;]0;X&#x07;b", "a]0;Xb")]                       // decodes to a terminal OSC escape
+    [InlineData("a&#27;[2Jb", "a[2Jb")]                                // decodes to clear-screen
     public void EntityEncodedSentinels_AreStripped_NotRevived(string md, string plain)
     {
         Assert.Equal(plain, TuiMarkup.Plain(TuiMarkdown.ToMarkup(md)));
         Assert.Equal(plain, TuiMarkdown.StripInline(md));
         Assert.Contains(TuiTable.Render(["| h |", "|---|", $"| {md} |"], 60), row => TuiMarkup.Plain(row).Contains(plain));
+        Assert.DoesNotContain('\u001b', TuiMarkup.ToAnsi(TuiMarkdown.ToMarkup(md)).Replace("\u001b[", ""));   // only SGR, no raw ESC
     }
 
 }
