@@ -266,6 +266,17 @@ internal sealed class OciSandbox : ISessionSandbox
         return (_spec.Binary, args);
     }
 
+    /// <inheritdoc/>
+    public (string File, string Args) ExecInteractive(IReadOnlyList<string> argv, string workDir)
+    {
+        EnsureStarted();
+        return (_spec.Binary, InteractiveArgs(_containerName, argv, workDir));
+    }
+
+    /// <summary><c>exec -i -w {workDir} {name} argv...</c>, each argv token quoted for <see cref="System.Diagnostics.ProcessStartInfo.Arguments"/>.</summary>
+    internal static string InteractiveArgs(string name, IReadOnlyList<string> argv, string workDir) =>
+        $"exec -i -w {SandboxBackend.ArgvToken(workDir)} {name} " + string.Join(' ', argv.Select(SandboxBackend.ArgvToken));
+
     /// <summary>True when the session container exists AND is in the running state. Cheap docker inspect.</summary>
     private bool ContainerRunning() => IsRunning(_containerName);
 

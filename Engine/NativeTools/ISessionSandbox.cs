@@ -14,4 +14,8 @@ internal interface ISessionSandbox : IDisposable
 
     /// <summary>The (file, args) that run the Python worker with interactive stdio.</summary>
     (string File, string Args) ExecPythonWorker(string guestWorkerPath);
+
+    /// <summary>The (file, args) that run <paramref name="argv"/> in the guest folder <paramref name="workDir"/>
+    /// with interactive stdio (extension processes).</summary>
+    (string File, string Args) ExecInteractive(IReadOnlyList<string> argv, string workDir);
 }
