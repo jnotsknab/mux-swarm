@@ -91,6 +91,10 @@ internal sealed class ExtensionManifest
     /// <summary>Markdown glyphs (table border style, bullet, rule). Null = built-in style.</summary>
     [JsonPropertyName("markdown")]
     public MarkdownManifest? Markdown { get; set; }
+
+    /// <summary>TUI footer layout. Null = leave the built-in footer alone.</summary>
+    [JsonPropertyName("footer")]
+    public FooterManifest? Footer { get; set; }
 }
 
 /// <summary>
@@ -198,4 +202,16 @@ internal sealed class MarkdownManifest
     /// <summary>Glyph repeated for horizontal rules: one terminal cell (default <c>─</c>).</summary>
     [JsonPropertyName("rule")]
     public string? Rule { get; set; }
+}
+
+/// <summary>The <c>footer</c> block of an extension manifest.</summary>
+internal sealed class FooterManifest
+{
+    /// <summary>
+    /// Segment ids in braces, in display order, e.g. <c>"{mode} {context} {model}"</c>. Only the
+    /// placeholders matter: text between them is ignored and chips keep the standard separator.
+    /// Segments not named are hidden, except <c>share</c>, which always shows.
+    /// </summary>
+    [JsonPropertyName("template")]
+    public string? Template { get; set; }
 }
