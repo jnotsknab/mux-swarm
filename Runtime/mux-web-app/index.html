@@ -6293,7 +6293,7 @@ const icons = {
 
 
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && ws && ws.readyState === WebSocket.OPEN && isAgentBusy) {
+    if (e.key === 'Escape' && !e.defaultPrevented && ws && ws.readyState === WebSocket.OPEN && isAgentBusy) {
       sendRaw('__CANCEL__');
       appendHTML(`<div class="event event-warning" style="display:flex;align-items:flex-start;gap:8px"><span style="margin-top:2px">${icons.stop}</span> <span>Cancel signal sent</span></div>`);
     }
@@ -14522,7 +14522,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   }
   root.querySelector('.mux-xp-x').addEventListener('click', function(){ if (active) close(active, true); });
   root.addEventListener('keydown', function(e){
-    if (e.key === 'Escape') { e.preventDefault(); if (active) close(active, true); return; }
+    if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); if (active) close(active, true); return; }
     var t = e.target; if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') || e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1) return;
     var b = body.querySelector('.mux-xp-btn[data-hotkey="' + CSS.escape(e.key.toLowerCase()) + '"]');
     if (b) { e.preventDefault(); b.click(); }

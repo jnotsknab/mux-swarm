@@ -82,5 +82,9 @@ public sealed class ExtensionPanelsWebTests : IDisposable
         Assert.All(ExtensionPanels.Types, t => Assert.Contains($"case '{t}':", block));
         Assert.All(ExtensionPanels.Colors.Where(c => c != "text"), c => Assert.Contains($".c-{c}", block));
         Assert.DoesNotContain("innerHTML = n.", block);   // extension text is never parsed as HTML
+        // Esc that closes a panel must not also reach the page's Esc-cancels-the-turn handler.
+        var esc = block[block.IndexOf("if (e.key === 'Escape')", StringComparison.Ordinal)..];
+        esc = esc[..esc.IndexOf('}')];
+        Assert.Contains("e.stopPropagation()", esc);
     }
 }
