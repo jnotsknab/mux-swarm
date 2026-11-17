@@ -178,6 +178,27 @@ public sealed class ToolInterceptorTests : IDisposable
     }
 
     [Fact]
+    public async Task Restart_InFlight_StoppedDenyGuardStillBlocks()
+    {
+        StartGuard(Rule("guarded", deny: true));
+        var ext = new ExtensionRegistry.Extension("guard", null, null, _dir, [])
+        {
+            Process = new ExtensionProcessSpec { Command = Python, Args = ["-u", "guard.py"] },
+            Intercepts = [Rule("guarded", deny: true)],
+        };
+        int runs = 0;
+        var guarded = AIFunctionFactory.Create(() => { runs++; return "ran"; }, "guarded");
+        object? during = null;
+        ExtensionHost.BeforeStart = () => during = Invoke(guarded).GetAwaiter().GetResult();   // old stopped, new not started
+        try { Assert.Empty(ExtensionHost.Restart([ext], new HashSet<string> { "guard" })); }
+        finally { ExtensionHost.BeforeStart = null; }
+
+        Assert.StartsWith("[BLOCKED by extension guard]", during?.ToString());
+        Assert.Equal(0, runs);
+        Assert.Null(ExtensionHost.Restarting);   // cleared once the new set is installed
+    }
+
+    [Fact]
     public async Task Pipeline_ModelSeesTheDenial()
     {
         StartGuard(Rule("Shell_*"));

@@ -1338,7 +1338,9 @@ A trusted process can gate tool calls for every agent, team and daemon run:
 - `tool/after` request, params `{ tool, arguments, result }`. Reply `result: { "result": "<text>" }`
   to replace what the model sees (e.g. redact secrets); any other reply keeps the original.
 - No answer within `timeoutMs` (default 2000, max 30000), an `error` reply, or a dead process applies
-  `onTimeout`: `allow` (default) or `deny`. Interceptors from several extensions run in name order.
+  `onTimeout`: `allow` (default) or `deny`. During `/refresh` (old processes stopped,
+  new ones not started yet) matching calls get the same `onTimeout`, so a `deny` guard has no gap.
+  Interceptors from several extensions run in name order.
 - Match the real tool names: the native shell tools are `execute_command_async` and `repl_shell_exec`
   (MCP tools are `{server}_{tool}`). `/extensions` warns about patterns that match no loaded tool.
 

@@ -28,6 +28,12 @@ internal static class ToolInterceptor
         var chain = ExtensionHost.Running
             .SelectMany(p => p.Intercepts.Where(i => i.Matches(tool)).Select(i => (Process: p, Rule: i)))
             .ToList();
+        // During /refresh the old guards are stopped and the new ones not started yet: apply each stopped
+        // rule's onTimeout, exactly as for a dead process, so a deny guard has no gap.
+        foreach (var (name, rules) in ExtensionHost.Restarting ?? [])
+            foreach (var rule in rules.Where(r => r.Before && r.Matches(tool)))
+                if (Decide(default, rule, out var why, out _) == Decision.Deny)
+                    return $"[BLOCKED by extension {name}] {why}";
         if (chain.Count == 0) return await context.Function.InvokeAsync(context.Arguments, ct);
 
         foreach (var (process, rule) in chain.Where(c => c.Rule.Before))
