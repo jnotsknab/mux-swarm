@@ -38,6 +38,9 @@ internal sealed class ExtensionProcess : IDisposable
     /// <summary>True until the process exits or is disposed.</summary>
     internal bool IsRunning { get; private set; } = true;
 
+    /// <summary>OS process id (diagnostics and tests).</summary>
+    internal int ProcessId => _process.Id;
+
     private ExtensionProcess(string name, Process process, IEnumerable<string> events)
     {
         Name = name;
@@ -182,9 +185,12 @@ internal sealed class ExtensionProcess : IDisposable
         IsRunning = false;
         _outbox.Writer.TryComplete();
         _rpc.CancelAll();
+        // Close stdin on its own: it throws when a write to a process that stopped reading is in flight,
+        // and that must not skip the wait/kill below (the process would outlive /refresh).
+        try { _process.StandardInput.Close(); }
+        catch (Exception ex) when (ex is InvalidOperationException or IOException or ObjectDisposedException) { }
         try
         {
-            _process.StandardInput.Close();
             if (!_process.WaitForExit(2000)) _process.Kill(entireProcessTree: true);
             ProcessCleanup.Instance.Untrack(_process.Id);
         }

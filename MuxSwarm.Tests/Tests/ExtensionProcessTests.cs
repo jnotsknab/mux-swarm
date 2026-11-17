@@ -49,6 +49,8 @@ public sealed class RpcCorrelatorTests
     }
 }
 
+// ConsoleState: Host_StartsOnlyTrusted_AndStopAllClears drives the process-global ExtensionHost.
+[Collection("ConsoleState")]
 public sealed class ExtensionProcessTests : IDisposable
 {
     // Echo extension: records notifications, answers "ping" requests, prints junk to stderr.
@@ -119,6 +121,25 @@ public sealed class ExtensionProcessTests : IDisposable
         for (int i = 0; i < 50 && ext.IsRunning; i++) await Task.Delay(100);
         Assert.False(ext.IsRunning);
         Assert.Equal(JsonValueKind.Undefined, (await ext.RequestAsync("ping", null, TimeSpan.FromSeconds(20))).ValueKind);
+    }
+
+    [Fact]
+    public async Task Dispose_KillsAProcessThatStoppedReadingStdin()
+    {
+        // Never reads stdin: once the pipe buffer fills, the outbox writer blocks mid-write and closing stdin throws.
+        var spec = new ExtensionProcessSpec { Command = Python, Args = ["-c", "import time; time.sleep(120)"] };
+        var ext = ExtensionProcess.Start("stuck", _dir, spec, ["*"]);
+        var payload = new string('x', 10_000);
+        for (int i = 0; i < 200; i++) ext.PostEvent(new HookEvent { Event = "tool_call", Summary = payload });
+        await Task.Delay(500);   // let the writer block on the full pipe
+        int pid = ext.ProcessId;
+
+        ext.Dispose();
+
+        bool alive;
+        try { alive = !System.Diagnostics.Process.GetProcessById(pid).WaitForExit(5000); }
+        catch (ArgumentException) { alive = false; }   // already gone
+        Assert.False(alive);
     }
 
     [Fact]
