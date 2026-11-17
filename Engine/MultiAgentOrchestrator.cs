@@ -81,7 +81,8 @@ public static class MultiAgentOrchestrator
                 tools: mcpTools,
                 mcpServers: orch.McpServers,
                 toolPatterns: orch.ToolPatterns,
-                includeAllWhenEmpty: false
+                includeAllWhenEmpty: false,
+                agentName: "Orchestrator"
             );
         }
         catch
