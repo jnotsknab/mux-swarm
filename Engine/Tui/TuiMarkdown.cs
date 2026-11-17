@@ -195,7 +195,7 @@ internal static class TuiMarkdown
         string Hold(string markup) { slots.Add(markup); return $"\uE004{slots.Count - 1}\uE005"; }
         s = InlineCode.Replace(s, m => Hold(Tag($"on {(TuiComponents.ContentBackgrounds ? Theme.Active.InlineCodeBg : "default")}", Code, Protect(CodeText(m.Groups[2].Value)))));
         s = Escaped.Replace(s, m => Hold(Protect(m.Groups[1].Value)));
-        s = System.Net.WebUtility.HtmlDecode(s);
+        s = DecodeEntities(s);
 
         // 1b) Links/images [text](url) -> styled label (the URL is dropped in the terminal; an
         //     image ![alt](url) renders its alt text). Emitted with protected tags so the later
@@ -225,13 +225,31 @@ internal static class TuiMarkdown
         // 3) Escape any remaining literal Spectre brackets in the plain runs, then restore
         //    the protected sentinel brackets to real markup brackets.
         s = s.Replace("[", "[[").Replace("]", "]]");
-        s = Slot.Replace(s, m => slots[int.Parse(m.Groups[1].Value)]);
+        s = Slot.Replace(s, m => SlotText(slots, m));
         s = s.Replace(LB, "[").Replace(RB, "]").Replace(ELB, "[[").Replace(ERB, "]]");
         return s;
     }
 
     // CommonMark code span content: one leading and trailing space are stripped when both are present.
     private static string CodeText(string s) => s.Length >= 2 && s[0] == ' ' && s[^1] == ' ' && s.Trim().Length > 0 ? s[1..^1] : s;
+
+    // HTML entities decoded outside the code/escape slots. Decoded text is stripped of sentinels again,
+    // so an entity such as &#xE004; can neither revive a slot placeholder nor forge a markup bracket.
+    private static string DecodeEntities(string s)
+    {
+        var sb = new System.Text.StringBuilder();
+        int last = 0;
+        foreach (Match m in Slot.Matches(s))
+        {
+            sb.Append(StripSentinels(System.Net.WebUtility.HtmlDecode(s[last..m.Index]))).Append(m.Value);
+            last = m.Index + m.Length;
+        }
+        return sb.Append(StripSentinels(System.Net.WebUtility.HtmlDecode(s[last..]))).ToString();
+    }
+
+    // A slot placeholder's content; an unknown index stays as its digits (never throws).
+    private static string SlotText(List<string> slots, Match m)
+        => int.TryParse(m.Groups[1].Value, out int i) && i >= 0 && i < slots.Count ? slots[i] : m.Groups[1].Value;
 
     private static string StripSentinels(string s)
     {
@@ -255,7 +273,7 @@ internal static class TuiMarkdown
         string Hold(string text) { slots.Add(text); return $"\uE004{slots.Count - 1}\uE005"; }
         s = InlineCode.Replace(s, m => Hold(CodeText(m.Groups[2].Value)));
         s = Escaped.Replace(s, m => Hold(m.Groups[1].Value));
-        s = System.Net.WebUtility.HtmlDecode(s);
+        s = DecodeEntities(s);
         s = MdLink.Replace(s, m => string.IsNullOrEmpty(m.Groups[2].Value) ? m.Groups[3].Value : m.Groups[2].Value);
         s = AutoLink.Replace(s, m => m.Groups[1].Value);
         s = BoldItalicStar.Replace(s, m => m.Groups[1].Value);
@@ -263,7 +281,7 @@ internal static class TuiMarkdown
         s = BoldUnder.Replace(s, m => m.Groups[1].Value);
         s = ItalicStar.Replace(s, m => m.Groups[1].Value);
         s = Strike.Replace(s, m => m.Groups[1].Value);
-        return Slot.Replace(s, m => slots[int.Parse(m.Groups[1].Value)]);
+        return Slot.Replace(s, m => SlotText(slots, m));
     }
 
     private static string Escape(string s) => (s ?? "").Replace("[", "[[").Replace("]", "]]");
