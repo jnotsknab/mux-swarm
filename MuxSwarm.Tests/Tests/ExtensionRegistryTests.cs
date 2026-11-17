@@ -99,6 +99,20 @@ public sealed class ExtensionRegistryTests : IDisposable
     }
 
     [Fact]
+    public void Scan_NullOrCaseDuplicateThemeEntries_AreProblems_NotExceptions()
+    {
+        AddExtension("nulls", """{ "themes": [ null, { "name": "fine-a", "accent": "#111111" } ] }""");
+        AddExtension("dupes", """{ "themes": [ { "name": "fine-b", "accent": "#111111", "Accent": "#222222" } ] }""");
+        AddExtension("other", """{ "themes": [ { "name": "fine-c" } ] }""");
+
+        var result = ExtensionRegistry.Scan([_root]);
+
+        Assert.Equal(["fine-a", "fine-c"], result.Themes.Select(t => t.Name).Order());
+        Assert.Contains(result.Problems, p => p.StartsWith("nulls:") && p.Contains("must be an object"));
+        Assert.Contains(result.Problems, p => p.StartsWith("dupes:") && p.Contains("repeats the key"));
+    }
+
+    [Fact]
     public void Scan_DuplicateNames_FirstSearchDirWins()
     {
         var second = Path.Combine(_root, "second");

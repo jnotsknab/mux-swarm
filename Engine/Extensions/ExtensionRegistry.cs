@@ -70,7 +70,14 @@ internal static partial class ExtensionRegistry
         foreach (var root in searchDirs)
         {
             if (!Directory.Exists(root)) continue;
-            foreach (var dir in Directory.GetDirectories(root).Order(StringComparer.Ordinal))
+            string[] dirs;
+            try { dirs = Directory.GetDirectories(root); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                problems.Add($"could not list {root}: {ex.Message}");
+                continue;
+            }
+            foreach (var dir in dirs.Order(StringComparer.Ordinal))
             {
                 var manifestPath = Path.Combine(dir, ManifestFileName);
                 if (!File.Exists(manifestPath)) continue;
@@ -140,9 +147,14 @@ internal static partial class ExtensionRegistry
     /// Build a theme from a manifest entry: <c>name</c> (required, must not shadow a built-in),
     /// optional <c>base</c> preset, and color-role overrides. Null + <paramref name="error"/> when invalid.
     /// </summary>
-    internal static Theme? BuildTheme(Dictionary<string, string> spec, out string error)
+    internal static Theme? BuildTheme(Dictionary<string, string>? spec, out string error)
     {
-        var values = new Dictionary<string, string>(spec, StringComparer.OrdinalIgnoreCase);
+        if (spec is null) { error = "theme entry must be an object; skipped."; return null; }
+        var values = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (key, value) in spec)
+        {
+            if (!values.TryAdd(key, value)) { error = $"theme entry repeats the key '{key}' (keys are case-insensitive); skipped."; return null; }
+        }
         values.TryGetValue("name", out var name);
         name = name?.Trim() ?? "";
         if (!IdPattern().IsMatch(name)) { error = $"theme name '{name}' is invalid (use a-z, 0-9 and '-')."; return null; }
