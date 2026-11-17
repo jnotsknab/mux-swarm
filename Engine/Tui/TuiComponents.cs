@@ -148,6 +148,10 @@ internal static class TuiComponents
         if (string.IsNullOrEmpty(s)) return false;
         int i = 0;
         while (i < s.Length && char.IsWhiteSpace(s[i])) i++;
+        // Compare the frame as the caller's text was normalized (CollapseWs: trimmed, whitespace runs
+        // collapsed), or frames with spaces such as "[=  ]" never match and a second spinner is added.
+        if (ThinkingIndicator.ExtensionFrames is { } custom && custom.Any(f => s.AsSpan(i).StartsWith(CollapseWs(f), StringComparison.Ordinal)))
+            return true;   // an extension spinner frame (ExtensionRegistry) leads the text
         return i < s.Length && s[i] >= '\u2800' && s[i] <= '\u28FF';
     }
 
@@ -166,7 +170,8 @@ internal static class TuiComponents
         // activity, not an alert.
         if (HasLeadingSpinner(body))
             return $"  [{Think} italic]{Esc(body)}[/]";
-        string spin = ThinkFrames[((frame % ThinkFrames.Length) + ThinkFrames.Length) % ThinkFrames.Length];
+        var frames = ThinkingIndicator.ExtensionFrames ?? ThinkFrames;
+        string spin = Esc(frames[((frame % frames.Count) + frames.Count) % frames.Count]);
         return $"  [{Think}]{spin}[/] [{Think} italic]{Esc(body)}[/]";
     }
 

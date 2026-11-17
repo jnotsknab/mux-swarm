@@ -199,6 +199,13 @@ internal static class SplashMessages
         "Every expert was once a beginner who refused to quit.",
     };
 
+    // Extension override (ExtensionRegistry): when set, it replaces the whole pool. Null = built-ins.
+    private static string[]? _extensionLines;
+
+    /// <summary>Replace every built-in splash line with <paramref name="lines"/> (null = built-ins).
+    /// Called by the extension loader.</summary>
+    internal static void SetExtensionLines(string[]? lines) => _extensionLines = lines;
+
     /// <summary>
     /// Pick one splash line at random from the whole pool. Returns (label, text): label is a short
     /// dim category prefix for taglines/tips/nudges, or the author for a quote, or empty for a bare
@@ -207,6 +214,8 @@ internal static class SplashMessages
     /// </summary>
     public static (string Label, string Text) Pick()
     {
+        if (_extensionLines is { Length: > 0 } custom)
+            return ("", custom[_rng.Next(custom.Length)]);
         // Weighted bucket selection (out of 100): quotes 40, facts 34, tips 14, nudges 8, tagline 4.
         int roll = _rng.Next(100);
         if (roll < 40)

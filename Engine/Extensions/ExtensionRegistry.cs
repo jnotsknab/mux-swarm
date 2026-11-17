@@ -16,11 +16,27 @@ internal static partial class ExtensionRegistry
 
     private const long MaxManifestBytes = 256 * 1024;
 
-    /// <summary>One successfully loaded extension, for listing.</summary>
-    internal sealed record Extension(string Name, string? Version, string? Description, string Dir, IReadOnlyList<string> Themes);
+    /// <summary>One successfully loaded extension, for listing. <see cref="Overrides"/> names the
+    /// cosmetic manifest keys it applied (spinner, quips, toolLabels, splash).</summary>
+    internal sealed record Extension(string Name, string? Version, string? Description, string Dir, IReadOnlyList<string> Themes)
+    {
+        /// <summary>Cosmetic manifest keys this extension applied.</summary>
+        internal IReadOnlyList<string> Overrides { get; init; } = [];
+    }
+
+    /// <summary>Merged cosmetic overrides. Null members leave the built-ins in place.</summary>
+    internal sealed record Cosmetics(string[]? Spinner, string[]? Quips, string[]? Splash, IReadOnlyDictionary<string, string>? ToolLabels)
+    {
+        /// <summary>Thinking-indicator timing from a <c>thinking</c> block; null = built-in.</summary>
+        internal ThinkingIndicator.Timing? Timing { get; init; }
+    }
 
     /// <summary>Result of a scan: what loaded, the merged contributions, and human-readable problems.</summary>
-    internal sealed record Result(IReadOnlyList<Extension> Extensions, IReadOnlyList<Theme> Themes, IReadOnlyList<string> Problems);
+    internal sealed record Result(IReadOnlyList<Extension> Extensions, IReadOnlyList<Theme> Themes, IReadOnlyList<string> Problems)
+    {
+        /// <summary>Merged cosmetic overrides; all-null members = built-ins.</summary>
+        internal Cosmetics Cosmetics { get; init; } = new(null, null, null, null);
+    }
 
     private static readonly Result Empty = new([], [], []);
 
@@ -42,6 +58,10 @@ internal static partial class ExtensionRegistry
     {
         Loaded = cfg is { Enabled: true } ? Scan(SearchDirectories(cfg)) : Empty;
         Theme.SetExtensionThemes(Loaded.Themes);
+        var c = Loaded.Cosmetics;
+        ThinkingIndicator.SetExtensionCosmetics(c.Spinner, c.Quips, c.Timing);
+        Tui.ToolActionLabel.SetExtensionVerbs(c.ToolLabels);
+        SplashMessages.SetExtensionLines(c.Splash);
         return Loaded;
     }
 
@@ -113,6 +133,9 @@ internal static partial class ExtensionRegistry
 
         var extensions = new List<Extension>();
         var themes = new List<Theme>();
+        string[]? spinner = null, quips = null, splash = null;
+        ThinkingIndicator.Timing? timing = null;
+        var labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (name, dir, manifest) in found.OrderBy(f => f.Name, StringComparer.Ordinal))
         {
             var mine = new List<string>();
@@ -132,9 +155,44 @@ internal static partial class ExtensionRegistry
                 themes.Add(theme);
                 mine.Add(theme.Name);
             }
-            extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine));
+            var overrides = new List<string>();
+            // List overrides: the last extension (by name) that sets one wins.
+            void TakeList(string key, List<string>? items, int maxItems, int maxChars, bool frames, ref string[]? slot)
+            {
+                if (items is null) return;
+                if (CheckTexts(items, maxItems, maxChars, frames) is { } err) { problems.Add($"{name}: {key} {err}; skipped."); return; }
+                if (slot is not null) problems.Add($"{name}: {key} replaces the one from an earlier extension.");
+                slot = [.. items];
+                overrides.Add(key);
+            }
+            // thinking.frames / thinking.quips win over the top-level spinner / quips of the same extension.
+            TakeList("spinner", manifest.Thinking?.Frames ?? manifest.Spinner, 64, 32, frames: true, ref spinner);
+            TakeList("quips", manifest.Thinking?.Quips ?? manifest.Quips, 200, 80, frames: false, ref quips);
+            if (manifest.Thinking is { } thinking)
+            {
+                var (t, err) = BuildTiming(thinking);
+                if (err is not null) problems.Add($"{name}: thinking {err}; timing skipped.");
+                else
+                {
+                    if (timing is not null) problems.Add($"{name}: thinking replaces the one from an earlier extension.");
+                    timing = t;
+                    overrides.Add("thinking");
+                }
+            }
+            TakeList("splash", manifest.Splash, 200, 80, frames: false, ref splash);
+            if (manifest.ToolLabels is { } toolLabels)
+            {
+                if (CheckToolLabels(toolLabels) is { } err) problems.Add($"{name}: toolLabels {err}; skipped.");
+                else
+                {
+                    foreach (var (verb, label) in toolLabels) labels[verb.Trim()] = label.Trim();
+                    overrides.Add("toolLabels");
+                }
+            }
+            extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine) { Overrides = overrides });
         }
-        return new Result(extensions, themes, problems);
+        var cosmetics = new Cosmetics(spinner, quips, splash, labels.Count == 0 ? null : labels) { Timing = timing };
+        return new Result(extensions, themes, problems) { Cosmetics = cosmetics };
     }
 
     // Theme color roles settable from a manifest: every string property except Name.
@@ -176,6 +234,47 @@ internal static partial class ExtensionRegistry
         }
         error = "";
         return theme;
+    }
+
+    /// <summary>Validate the timing keys of a <c>thinking</c> block over the built-in timing. Error = the first bad key.</summary>
+    internal static (ThinkingIndicator.Timing Timing, string? Error) BuildTiming(ThinkingManifest m)
+    {
+        var d = ThinkingIndicator.Timing.Default;
+        if (m.IntervalMs is < 40 or > 1000) return (d, "intervalMs must be 40-1000");
+        if (m.QuipIntervalMs is < 500 or > 60000) return (d, "quipIntervalMs must be 500-60000");
+        if (m.Suffix is { } s && (s.Length > 8 || s.Any(char.IsControl))) return (d, "suffix must be at most 8 characters without control characters");
+        return (new(m.IntervalMs ?? d.IntervalMs, m.QuipIntervalMs ?? d.QuipIntervalMs, m.Shuffle ?? d.Shuffle, m.Suffix ?? d.Suffix), null);
+    }
+
+    // Plain-text list check: 1..maxItems non-blank items, no control chars, at most maxChars each.
+    // Spinner frames must also be 1-8 terminal cells wide. Null = valid, else the reason.
+    private static string? CheckTexts(List<string> items, int maxItems, int maxChars, bool frames)
+    {
+        if (items.Count == 0 || items.Count > maxItems) return $"needs 1-{maxItems} entries";
+        foreach (var item in items)
+        {
+            if (string.IsNullOrWhiteSpace(item)) return "has an empty entry";
+            if (item.Any(char.IsControl)) return "has an entry with control characters";
+            if (item.Length > maxChars) return $"has an entry longer than {maxChars} characters";
+            if (frames && Tui.TuiMarkup.Width(item) is < 1 or > 8) return $"frame '{item}' must be 1-8 terminal cells wide";
+        }
+        return null;
+    }
+
+    [GeneratedRegex("^[a-z0-9]{1,32}$", RegexOptions.IgnoreCase)]
+    private static partial Regex VerbPattern();
+
+    // toolLabels check: keys are single verb stems (letters/digits), labels are short plain text.
+    private static string? CheckToolLabels(Dictionary<string, string> labels)
+    {
+        if (labels.Count == 0 || labels.Count > 200) return "needs 1-200 entries";
+        foreach (var (verb, label) in labels)
+        {
+            if (!VerbPattern().IsMatch(verb.Trim())) return $"key '{verb}' must be a single word of letters or digits";
+            if (string.IsNullOrWhiteSpace(label) || label.Any(char.IsControl) || label.Trim().Length > 40)
+                return $"label for '{verb}' must be 1-40 characters without control characters";
+        }
+        return null;
     }
 
     // A single Spectre color token (hex, named color or "default"); rejects styles and markup.
