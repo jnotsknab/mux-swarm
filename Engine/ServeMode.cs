@@ -672,8 +672,9 @@ public static partial class ServeMode
     // Extension input (prompt/submit, command/run) waits here, apart from the web input channel, so a
     // Confirm, Prompt, Select or ask_user answer (read from InputOverride) can never take it. Only the
     // idle read (MuxConsole.ReadInput -> ReadIdleLine) drains it, like the TUI's TryTakeInjected.
-    private static readonly ConcurrentQueue<string> _injected = new();
-    private static readonly SemaphoreSlim _inputSignal = new(0);   // released per extension line
+    // A channel, not a queue + semaphore: WaitToReadAsync never consumes, so a wait abandoned when a web
+    // line wins cannot swallow the wake-up of a later extension line.
+    private static readonly Channel<string> _extChannel = Channel.CreateUnbounded<string>();
 
     /// <summary>Test seam: route MuxConsole input through the web channel as <see cref="StartAsync"/> does,
     /// without Kestrel. <paramref name="on"/> false restores the console.</summary>
@@ -681,7 +682,7 @@ public static partial class ServeMode
     {
         IsServing = on;
         MuxConsole.InputOverride = on ? new WsChannelReader(_inputChannel.Reader) : Console.In;
-        while (_injected.TryDequeue(out _)) { }
+        while (_extChannel.Reader.TryRead(out _)) { }
         while (_inputChannel.Reader.TryRead(out _)) { }
     }
 
@@ -697,8 +698,7 @@ public static partial class ServeMode
     /// </summary>
     internal static void InjectInput(string line)
     {
-        _injected.Enqueue(line);
-        _inputSignal.Release();
+        _extChannel.Writer.TryWrite(line);
     }
 
     /// <summary>
@@ -709,7 +709,7 @@ public static partial class ServeMode
     {
         while (true)
         {
-            if (_injected.TryDequeue(out var line))
+            if (_extChannel.Reader.TryRead(out var line))
             {
                 BroadcastLine(JsonSerializer.Serialize(new { type = "user_input", text = line }));
                 return line;
@@ -717,7 +717,7 @@ public static partial class ServeMode
             if (_inputChannel.Reader.TryRead(out var web)) return web;
             if (_inputChannel.Reader.Completion.IsCompleted) return null;
             // Wake on a web line or an extension line, whichever comes first.
-            Task.WaitAny(_inputChannel.Reader.WaitToReadAsync().AsTask(), _inputSignal.WaitAsync());
+            Task.WaitAny(_inputChannel.Reader.WaitToReadAsync().AsTask(), _extChannel.Reader.WaitToReadAsync().AsTask());
         }
     }
 

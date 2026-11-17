@@ -34,6 +34,32 @@ public sealed class ExtensionHostApiTests : IDisposable
     private static JsonElement P(string json) => JsonDocument.Parse(json).RootElement.Clone();
 
     [Fact]
+    public async Task Serve_IdleRead_WokenByAWebLine_DoesNotLoseTheNextExtensionWakeUp()
+    {
+        bool stdio = MuxConsole.StdioMode;
+        ExtensionHostApi.Inject = _inject;
+        ServeMode.UseWebInputForTests(true);
+        MuxConsole.StdioMode = true;
+        try
+        {
+            var first = Task.Run(() => MuxConsole.ReadInput());
+            await Task.Delay(200);
+            ServeMode.WebLineForTests("hello");                       // read #1 is woken by a web line
+            Assert.Equal("hello", await first.WaitAsync(TimeSpan.FromSeconds(5)));
+
+            var second = Task.Run(() => MuxConsole.ReadInput());     // read #2 waits
+            await Task.Delay(200);
+            Assert.Null(MuxConsole.TryInjectInput("x", "/compact"));  // an extension line, no further web line
+            Assert.Equal("/compact", await second.WaitAsync(TimeSpan.FromSeconds(2)));
+        }
+        finally
+        {
+            MuxConsole.StdioMode = stdio;
+            ServeMode.UseWebInputForTests(false);
+        }
+    }
+
+    [Fact]
     public async Task Serve_ExtensionLine_IsNeverTakenAsAConfirmAnswer_AndRunsAtTheNextIdleRead()
     {
         bool stdio = MuxConsole.StdioMode;
