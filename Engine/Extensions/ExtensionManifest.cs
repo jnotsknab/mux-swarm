@@ -113,7 +113,7 @@ internal sealed class ExtensionManifest
 /// <c>{ "notice": { "okMark": "+", "ok": "accent" }, "reasoning": { "italic": false } }</c>.
 /// Every key is validated; one bad key skips the whole block (the rest of the extension still loads).
 /// </summary>
-internal sealed class TuiManifest
+public sealed class TuiManifest
 {
     /// <summary>Glyph set applied under the region keys: <c>unicode</c> (built-in) or <c>ascii</c> (plain ASCII for
     /// limited terminals or fonts).</summary>

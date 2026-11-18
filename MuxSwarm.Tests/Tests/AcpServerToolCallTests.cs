@@ -25,6 +25,7 @@ public class AcpServerToolCallTests
     {
         private readonly TextWriter _prevOut = Console.Out;
         private readonly StringWriter _out = new();
+        private readonly TextWriter _syncOut;   // TextWriter.Synchronized locks on itself
         private readonly SemaphoreSlim _turnDone = new(0);
         private readonly AcpServer _server;
         public AcpServer Server => _server;
@@ -36,7 +37,8 @@ public class AcpServerToolCallTests
 
         public Harness()
         {
-            Console.SetOut(TextWriter.Synchronized(_out));
+            _syncOut = TextWriter.Synchronized(_out);
+            Console.SetOut(_syncOut);
             _server = new AcpServer("test", async (reader, resume) =>
             {
                 _reader = reader;
@@ -75,11 +77,16 @@ public class AcpServerToolCallTests
                 Thread.Sleep(10);
         }
 
-        public List<JsonElement> Messages() =>
-            // Console.Out is process-global; tests in other collections may write to it in parallel.
-            _out.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries)
+        public List<JsonElement> Messages()
+        {
+            // Console.Out is process-global; tests in other collections may write to it in parallel. Snapshot under
+            // the synchronized writer's own lock: StringBuilder.ToString races a concurrent append otherwise.
+            string text;
+            lock (_syncOut) text = _out.ToString();
+            return text.Split('\n', StringSplitOptions.RemoveEmptyEntries)
                 .Where(l => l.StartsWith("{\"jsonrpc\""))
                 .Select(l => JsonDocument.Parse(l).RootElement.Clone()).ToList();
+        }
 
         public List<JsonElement> Updates() =>
             Messages().Where(m => m.TryGetProperty("method", out var me) && me.GetString() == "session/update")
