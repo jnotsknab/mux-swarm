@@ -83,6 +83,7 @@ public static partial class ServeMode
         Console.SetOut(new BroadcastWriter(originalOut));
 
         MuxConsole.InputOverride = new WsChannelReader(_inputChannel.Reader);
+        WirePanels();
 
         var wwwroot = ResolveWwwroot();
 

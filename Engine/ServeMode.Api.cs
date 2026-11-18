@@ -36,6 +36,8 @@ namespace MuxSwarm.Engine;
 ///   GET /api/commands                slash command catalog (from TuiCommands.All) + keybinds
 ///   GET /api/themes                  extension themes mapped to the web UI's CSS variables
 ///   POST /api/voice/transcribe       raw audio body -> { text, ms, model } via local whisper.cpp
+///   GET  /api/ext/panels             open extension panels (element trees, see DOCS Extension panels)
+///   POST /api/ext/panels/event       { extension, id, key?, type, value? } -> a user action on a panel (ui/event)
 /// </summary>
 public static partial class ServeMode
 {
@@ -81,6 +83,8 @@ public static partial class ServeMode
         app.MapGet("/api/status", HandleStatus);
         app.MapGet("/api/commands", HandleCommands);
         app.MapGet("/api/themes", HandleThemes);
+        app.MapGet("/api/ext/panels", HandleExtPanels);
+        app.MapPost("/api/ext/panels/event", HandleExtPanelEvent);
         app.MapPost("/api/save/{type}/{**path}", HandleSave);
         app.MapPost("/api/fs", HandleFs);
         app.MapPost("/api/hook/{id}", HandleWebhook);
