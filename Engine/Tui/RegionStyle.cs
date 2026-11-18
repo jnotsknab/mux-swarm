@@ -83,6 +83,7 @@ internal static class RegionStyle
         ["footer.separator"] = "|", ["footer.rule"] = "-", ["input.prompt"] = ">", ["input.continuation"] = "|", ["input.rail"] = "|",
         ["palette.selected"] = ">", ["palette.titleMark"] = "|", ["palette.up"] = "^", ["palette.down"] = "v",
         ["modal.title"] = ">", ["modal.selected"] = ">", ["modal.checked"] = "*", ["modal.unchecked"] = "o", ["panel.rule"] = "-",
+        ["compose.rule"] = "-", ["compose.capLeft"] = "[", ["compose.capRight"] = "]", ["compose.rail"] = "|", ["compose.border"] = "ascii",
     };
 
     /// <summary>Glyph set names for <c>tui.glyphs</c>.</summary>

@@ -119,6 +119,27 @@ public sealed class TuiComposeShapeTests : IDisposable
     }
 
     [Theory]
+    [InlineData("rule")]
+    [InlineData("bracket")]
+    [InlineData("box")]
+    [InlineData("bubble")]
+    [InlineData("rail")]
+    public void AsciiGlyphSet_DrawsEveryShapeInAscii(string shape)
+    {
+        var dir = Path.Combine(_root, "plain");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, ExtensionRegistry.ManifestFileName),
+            "{ \"tui\": { \"glyphs\": \"ascii\", \"regions\": { \"compose\": { \"shape\": \"" + shape + "\" } } } }");
+        Assert.Empty(ExtensionRegistry.Load(new ExtensionsConfig { Enabled = true, Dirs = [_root] }).Problems);
+        var (d, _) = AtPrompt("hello");
+        var lines = Pinned(d);
+        int input = lines.FindIndex(l => l.Contains("hello"));
+        // The shape's own chrome rows (rule/border above and below, and the input row's sides) are plain ASCII.
+        foreach (var l in lines.Skip(Math.Max(0, input - 1)).Take(3))
+            Assert.True(l.Replace("\u203a", "").All(c => c < 0x80), $"non-ASCII chrome: '{l}'");
+    }
+
+    [Theory]
     [InlineData("""{ "shape": "pill" }""", "'compose.shape' must be one of classic, rule, bracket, box, bubble, rail, bare")]
     [InlineData("""{ "border": "dotted" }""", "'compose.border' must be one of rounded, square, double, thick, ascii")]
     [InlineData("""{ "padX": 4 }""", "'compose.padX' must be a whole number from 0 to 3")]
