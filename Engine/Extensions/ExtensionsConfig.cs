@@ -38,4 +38,11 @@ public class ExtensionsConfig
     /// </summary>
     [JsonPropertyName("unsandboxed")]
     public List<string> Unsandboxed { get; set; } = [];
+
+    /// <summary>
+    /// Names of installed extensions to skip: they are listed by <c>/extensions</c> but contribute
+    /// nothing and their process does not start. Toggle them in the <c>/extensions</c> panel.
+    /// </summary>
+    [JsonPropertyName("disabled")]
+    public List<string> Disabled { get; set; } = [];
 }
