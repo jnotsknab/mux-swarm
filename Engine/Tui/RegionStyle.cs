@@ -61,7 +61,9 @@ internal static class RegionStyle
         ["panel.focusFg"] = C("black"), ["panel.focusBg"] = C("accent"),
         ["splash.show"] = F(true), ["splash.art"] = A(), ["splash.artFg"] = C("banner"), ["splash.accentFg"] = C("success"),
         // Layout (shape) properties: where the footer sits relative to the compose box, and blank rows above them.
-        ["footer.position"] = O("above", "below", "hidden"),
+        ["footer.position"] = O("above", "below", "hidden", "border"),
+        ["footer.style"] = O("dot", "pipe", "space", "powerline", "ascii"),
+        ["footer.strip"] = F(false), ["footer.bg"] = C("cardBg"), ["footer.fill"] = O("space", "rule"),
         ["compose.gap"] = N(0, 0, 2),
         ["compose.shape"] = O("classic", "rule", "bracket", "box", "bubble", "rail", "bare"),
         ["compose.border"] = O("rounded", "square", "double", "thick", "ascii"),

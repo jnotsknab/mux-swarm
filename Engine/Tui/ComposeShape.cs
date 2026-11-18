@@ -26,7 +26,13 @@ internal static class ComposeShape
 
     /// <summary>A shaped compose block: all lines, which of them are input rows, and the columns the
     /// shape adds before each input row's own lead.</summary>
-    internal sealed record Frame(List<string> Lines, List<int> InputLines, int LeftCols);
+    internal sealed record Frame(List<string> Lines, List<int> InputLines, int LeftCols, int TitleLine = -1, int TitleCol = 0);
+
+    /// <summary>True when <paramref name="shape"/> has a top edge a footer can sit in.</summary>
+    internal static bool HasTitleEdge(string shape) => shape is "box" or "rule" or "bracket";
+
+    /// <summary>Columns available for a title in the top edge of <paramref name="shape"/> at <paramref name="width"/>.</summary>
+    internal static int TitleWidth(string shape, int width) => Math.Max(8, width - (shape == "box" ? 7 : 5));
 
     /// <summary>The active shape, or <c>classic</c>.</summary>
     internal static string Active => RegionStyle.Choice("compose.shape");
@@ -61,7 +67,14 @@ internal static class ComposeShape
     /// Shape <paramref name="rows"/> (input rows already built for <c>width - left - right</c> columns, each
     /// starting with the stock two-space lead). <paramref name="width"/> is the full band width.
     /// </summary>
-    internal static Frame Wrap(string shape, List<string> rows, int width)
+    internal static Frame Wrap(string shape, List<string> rows, int width) => Wrap(shape, rows, width, null, 0);
+
+    /// <summary>
+    /// As <see cref="Wrap(string, List{string}, int)"/>, embedding <paramref name="title"/> (the footer row, built for
+    /// <see cref="TitleWidth"/> columns) in the top border of <c>box</c> or on the top rule of <c>rule</c>/<c>bracket</c>.
+    /// <see cref="Frame.TitleLine"/>/<see cref="Frame.TitleCol"/> report where it landed (title columns start there).
+    /// </summary>
+    internal static Frame Wrap(string shape, List<string> rows, int width, string? title, int titleCols)
     {
         var lines = new List<string>();
         var input = new List<int>();
@@ -85,14 +98,23 @@ internal static class ComposeShape
             for (int p = 0; p < padY; p++) lines.Add(frame(new string(' ', inner)));
         }
         string ruleGlyph = RegionStyle.PlainGlyph("compose.rule");
+        int titleLine = -1, titleCol = 0;
+        // A top edge of `n` rule cells, optionally carrying the title after a short lead-in: "── title ─────".
+        string Edge(string glyph, int n, int lead)
+        {
+            if (title is null || titleCols <= 0 || n < lead + titleCols + 3) return Rule(glyph, n);
+            titleLine = lines.Count;
+            titleCol = (width - n) / 2 + lead + 1;   // 0-based column of the title: corner (box) + lead-in + one space
+            return Rule(glyph, lead) + " " + title + Rule(glyph, n - lead - titleCols - 1);
+        }
         switch (shape)
         {
             case "rule":
-                lines.Add(Rule(ruleGlyph, width));
+                lines.Add(Edge(ruleGlyph, width, 2));
                 Body(r => r);
                 break;
             case "bracket":
-                lines.Add(Rule(ruleGlyph, width));
+                lines.Add(Edge(ruleGlyph, width, 2));
                 Body(r => r);
                 lines.Add(Rule(ruleGlyph, width));
                 break;
@@ -100,7 +122,7 @@ internal static class ComposeShape
             {
                 var g = Borders[RegionStyle.Choice("compose.border")];
                 string pad = new(' ', left - 1);
-                lines.Add($"[{border}]{Spectre.Console.Markup.Escape(g[0])}[/]" + Rule(g[4], width - 2) + $"[{border}]{Spectre.Console.Markup.Escape(g[1])}[/]");
+                lines.Add($"[{border}]{Spectre.Console.Markup.Escape(g[0])}[/]" + Edge(g[4], width - 2, 1) + $"[{border}]{Spectre.Console.Markup.Escape(g[1])}[/]");
                 string side = $"[{border}]{Spectre.Console.Markup.Escape(g[5])}[/]";
                 Body(r => side + pad + r + pad + side);
                 lines.Add($"[{border}]{Spectre.Console.Markup.Escape(g[2])}[/]" + Rule(g[4], width - 2) + $"[{border}]{Spectre.Console.Markup.Escape(g[3])}[/]");
@@ -128,6 +150,6 @@ internal static class ComposeShape
                 Body(r => r);
                 break;
         }
-        return new Frame(lines, input, left - dropLead);
+        return new Frame(lines, input, left - dropLead, titleLine, titleCol);
     }
 }
