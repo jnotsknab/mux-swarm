@@ -64,7 +64,7 @@ internal static class ExtensionHostApi
                 {
                     if (Str("id") is not { Length: > 0 } id) return Fail("id");
                     var view = p.ValueKind == JsonValueKind.Object && p.TryGetProperty("view", out var v) ? v : default;
-                    int? Int(string k) => p.TryGetProperty(k, out var n) && n.TryGetInt32(out var i) ? i : null;
+                    int? Int(string k) => p.TryGetProperty(k, out var n) && n.ValueKind == JsonValueKind.Number && n.TryGetInt32(out var i) ? i : null;
                     var err = method == "ui/open"
                         ? ExtensionPanels.Open(ext, id, Str("title"), view, Str("placement"), Int("columns"), Int("rows"))
                         : ExtensionPanels.Update(ext, id, view);

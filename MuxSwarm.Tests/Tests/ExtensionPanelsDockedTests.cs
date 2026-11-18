@@ -188,4 +188,51 @@ public sealed class ExtensionPanelsDockedTests : IDisposable
         Assert.Equal(119, d.Width);
         Assert.Contains(rows, r => r.Contains("Auto") && r.Contains("F6 focus"));
     }
+
+    private sealed class Sink(int w, int h) : ITuiTerminal
+    {
+        public int Width { get; set; } = w;
+        public int Height { get; set; } = h;
+        public System.Text.StringBuilder Output { get; } = new();
+        public void Write(string text) => Output.Append(text);
+        public void Flush() { }
+    }
+
+    [Fact]
+    public void DragCopy_WithASidePane_CopiesOnlyTheTranscript()
+    {
+        ExtensionPanels.Open("x", "side", "Usage", J(Tree), "side", columns: 40);
+        var t = new Sink(150, 24);
+        var d = new TuiDriver(t, frameEngine: true);
+        d.SetMouseTrackingPreset("buttons");
+        for (int i = 0; i < 30; i++) d.CommitLine($"history line {i}");
+        var rows = d.ComposeFrameRows().Select(Plain).ToList();
+        int r0 = rows.FindIndex(r => r.Contains("history line 20")) + 1, r2 = rows.FindIndex(r => r.Contains("history line 22")) + 1;
+        Assert.True(r0 > 0 && r2 == r0 + 2);
+        int c0 = rows[r0 - 1].IndexOf("line 20", StringComparison.Ordinal) + 1, c2 = rows[r2 - 1].IndexOf("history", StringComparison.Ordinal) + 1;
+        t.Output.Clear();
+        void Mouse(int b, int c, int r, bool up = false) => d.RouteMouse(ConsoleInputPump.InputEvent.OfMouse(b, c, r, up));
+        Mouse(0, c0, r0); Mouse(32, c2 + 6, r2); d.ComposeFrameRows(); Mouse(0, c2 + 6, r2, up: true);
+        string output = t.Output.ToString();
+        int at = output.LastIndexOf("]52;c;", StringComparison.Ordinal);
+        Assert.True(at >= 0, "expected an OSC 52 copy");
+        string copied = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(output[(at + 6)..output.IndexOf('\a', at)]));
+        Assert.Equal("line 20\nhistory line 21\nhistory", copied);   // no divider, no pane text
+    }
+
+    [Fact]
+    public void NonNumericSizeHints_FallBackToTheDefault()
+    {
+        // ui/open: a string or null size is ignored, not an InvalidOperationException.
+        var reply = ExtensionHostApi.Handle("x", "ui/open", J($$"""{ "id": "a", "view": {{Tree}}, "placement": "side", "columns": "48", "rows": null }"""));
+        Assert.Null(reply.Error);
+        Assert.NotNull(ExtensionPanels.Get("x", "a"));
+        // A command's "open" reply: same fallback, the panel still opens and the prompt is kept.
+        var cmd = new ExtensionRegistry.ExtensionCommand("x", "b", "", 5);
+        var outcome = ExtensionCommands.Interpret(cmd,
+            J($$"""{ "id": 1, "result": { "open": { "id": "b", "view": {{Tree}}, "placement": "band", "rows": "3", "columns": true }, "prompt": "go" } }"""),
+            cancelled: false, running: true);
+        Assert.Equal("go", outcome.Prompt);
+        Assert.NotNull(ExtensionPanels.Get("x", "b"));
+    }
 }

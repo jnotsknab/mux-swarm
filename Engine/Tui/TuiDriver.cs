@@ -2617,8 +2617,9 @@ internal sealed partial class TuiDriver
         _frameHits = hits;
         // Selection support: remember THIS frame's rows + pane bounds (same publish cadence as
         // the map). The overlay pass below reads the live drag state; the copy on release reads
-        // the snapshot, so what you highlighted is exactly what you copy.
-        _dragRowsSnapshot = rows;
+        // the snapshot, so what you highlighted is exactly what you copy. A copy, taken before the
+        // side pane's cells are appended below, so a copy never picks up the divider or the pane.
+        _dragRowsSnapshot = rows.ToList();
         _dragPaneTop = 1;
         _dragPaneBottom = transcriptRoom;
         // Reverse-video overlay for the active drag selection: post-process the composed ANSI

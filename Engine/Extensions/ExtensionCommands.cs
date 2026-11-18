@@ -126,7 +126,7 @@ internal static class ExtensionCommands
         {
             string? Str(string k) => open.TryGetProperty(k, out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
             var view = open.TryGetProperty("view", out var v) ? v : default;
-            int? Int(string k) => open.TryGetProperty(k, out var n) && n.TryGetInt32(out var i) ? i : null;
+            int? Int(string k) => open.TryGetProperty(k, out var n) && n.ValueKind == JsonValueKind.Number && n.TryGetInt32(out var i) ? i : null;
             if (ExtensionPanels.Open(cmd.Extension, Str("id") ?? "", Str("title"), view, Str("placement"), Int("columns"), Int("rows")) is { } err)
                 MuxConsole.WriteWarning($"{cmd.Cmd}: panel not opened: {err}");
         }
