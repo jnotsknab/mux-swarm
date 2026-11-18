@@ -96,6 +96,9 @@ internal static class ModelSelectionStore
             {
                 if (File.Exists(temporary)) File.Delete(temporary);
             }
+            var prior = snapshot.Slots.First(s => s.Id == slotId);
+            if (prior.Model != model)
+                State.HookWorker.Emit("model_changed", prior.Label, summary: model, data: [("slot", slotId), ("from", prior.Model), ("to", model)]);
             return config;
         }
     }

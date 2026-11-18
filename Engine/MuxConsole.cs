@@ -1909,7 +1909,8 @@ public static partial class MuxConsole
         }, clearIndicator: false);
     }
 
-    public static void WriteDelegation(string fromAgent, string toAgent, string task, int truncLength = 800)
+    /// <summary>Show a delegation and emit <c>delegation</c>; <paramref name="flowId"/> pairs it with its <c>delegation_end</c>.</summary>
+    public static void WriteDelegation(string fromAgent, string toAgent, string task, int truncLength = 800, string? flowId = null)
     {
         WithConsole(() =>
         {
@@ -1931,6 +1932,8 @@ public static partial class MuxConsole
             Event = "delegation",
             Agent = fromAgent,
             Summary = task.Length > truncLength ? task[..truncLength] + "..." : task,
+            FlowId = flowId,
+            Data = new() { ["to"] = toAgent },
             Timestamp = DateTimeOffset.UtcNow
         });
     }
@@ -2065,7 +2068,8 @@ public static partial class MuxConsole
             ("callId", callId), ("isError", isError ? true : null)));
     }
 
-    public static void WriteTaskComplete(string agent, string summary)
+    /// <summary>Show an agent's completion signal and emit <c>task_complete</c> (with <paramref name="status"/> when known).</summary>
+    public static void WriteTaskComplete(string agent, string summary, string? status = null)
     {
         WithConsole(() =>
         {
@@ -2086,6 +2090,7 @@ public static partial class MuxConsole
             Event = "task_complete",
             Agent = agent,
             Summary = summary,
+            Data = status is null ? null : new() { ["status"] = status },
             Timestamp = DateTimeOffset.UtcNow
         });
     }

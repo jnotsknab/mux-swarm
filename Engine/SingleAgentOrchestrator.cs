@@ -847,7 +847,56 @@ public static class SingleAgentOrchestrator
         MuxConsole.WritePanelMarkdown("/review - diff findings", findings);
     }
 
+    /// <summary>The <c>turn_complete</c> outcome: <c>ok</c>, <c>interrupted</c>, <c>timeout</c> or <c>failed</c>.</summary>
+    internal static string TurnOutcome(bool interrupted, bool timedOut, bool failed) =>
+        timedOut ? "timeout" : interrupted ? "interrupted" : failed ? "failed" : "ok";
+
+    /// <summary>
+    /// Run a single-agent session. <c>session_end</c> fires exactly once on every exit (completed,
+    /// <c>/qc</c>, Esc/Ctrl+C cancellation or an error), carrying how it ended.
+    /// </summary>
     public static async Task ChatAgentAsync(
+        IChatClient? client,
+        CancellationToken cancellationToken,
+        int maxIterations = 15,
+        IList<McpClientTool>? mcpTools = null,
+        bool showToolResultCalls = false,
+        bool shouldPlan = false,
+        string? systemPromptOverride = null,
+        Func<string, IChatClient>? chatClientFactory = null,
+        int? autoCompactTokenThreshold = 80_000,
+        bool persistSession = true,
+        string? incomingGoal = null,
+        bool continuous = false,
+        string? goalId = null,
+        uint minDelaySeconds = 0,
+        uint persistIntervalSeconds = 0,
+        uint sessionRetention = 0,
+        JsonElement? resumedSession = null,
+        string? resumedSessionDir = null,
+        bool allowSubAgents = false,
+        bool allowParallelSubAgents = false,
+        TeamScope? teamScope = null,
+        InteractiveSession? interactiveHandle = null,
+        Common.AgentDefinition? agentDef = null,
+        bool deferMcp = false)
+    {
+        string outcome = "complete";
+        try
+        {
+            await ChatAgentCoreAsync(client, cancellationToken, maxIterations: maxIterations, mcpTools: mcpTools, showToolResultCalls: showToolResultCalls, shouldPlan: shouldPlan, systemPromptOverride: systemPromptOverride, chatClientFactory: chatClientFactory, autoCompactTokenThreshold: autoCompactTokenThreshold, persistSession: persistSession, incomingGoal: incomingGoal, continuous: continuous, goalId: goalId, minDelaySeconds: minDelaySeconds, persistIntervalSeconds: persistIntervalSeconds, sessionRetention: sessionRetention, resumedSession: resumedSession, resumedSessionDir: resumedSessionDir, allowSubAgents: allowSubAgents, allowParallelSubAgents: allowParallelSubAgents, teamScope: teamScope, interactiveHandle: interactiveHandle, agentDef: agentDef, deferMcp: deferMcp);
+            if (cancellationToken.IsCancellationRequested) outcome = "interrupted";
+        }
+        catch (OperationCanceledException) { outcome = "interrupted"; throw; }
+        catch { outcome = "error"; throw; }
+        finally
+        {
+            var agentName = (teamScope?.LeadDef ?? agentDef ?? GetCurrSingleAgentDef())?.Name;
+            HookWorker.Enqueue(new HookEvent { Event = "session_end", Agent = agentName, Summary = outcome, Timestamp = DateTimeOffset.UtcNow });
+        }
+    }
+
+    private static async Task ChatAgentCoreAsync(
         IChatClient? client,
         CancellationToken cancellationToken,
         int maxIterations = 15,
@@ -920,15 +969,6 @@ public static class SingleAgentOrchestrator
                     a.Name != null && a.Name.Equals(singleAgentDef.Name, StringComparison.OrdinalIgnoreCase))
                 : null;
 
-            HookWorker.Enqueue(new HookEvent
-            {
-                Event = "session_start",
-                Agent = singleAgentDef?.Name,
-                Summary = persistSession ? "agent" : "stateless",
-                Text = incomingGoal,
-                Timestamp = DateTimeOffset.UtcNow
-            });
-
             resolvedModelId = match?.Model ?? swarm?.SingleAgent?.Model ?? "";
 
             sessionSpan?.SetTag("agent", singleAgentDef?.Name);
@@ -939,6 +979,17 @@ public static class SingleAgentOrchestrator
 
         }
         catch { /* fall through */ }
+
+        // After the swarm read (which may fail) so it fires on every path; session_end pairs with it.
+        HookWorker.Enqueue(new HookEvent
+        {
+            Event = "session_start",
+            Agent = singleAgentDef?.Name,
+            Summary = persistSession ? "agent" : "stateless",
+            Text = incomingGoal,
+            Data = new() { ["model"] = resolvedModelId, ["resumed"] = resumedSessionDir is not null },
+            Timestamp = DateTimeOffset.UtcNow
+        });
 
         // Merge the native in-house tools (Filesystem + shell/REPL) into the PRE-FILTER pool so
         // the per-agent ToolFilter gates them exactly like MCP tools: an agent gets them only if
@@ -1056,6 +1107,7 @@ public static class SingleAgentOrchestrator
                     return;
                 }
 
+                HookWorker.CommandExecuted(firstInput, "agent", singleAgentDef?.Name);
                 // Any real first input (a goal or a command that may build sub-agents from McpTools) waits for MCP.
                 await ResolveMcpAsync();
 
@@ -1237,9 +1289,12 @@ public static class SingleAgentOrchestrator
             delegationSpan?.SetTag("to", agentName);
             var delegationSw = Stopwatch.StartNew();
 
-            MuxConsole.WriteDelegation(callerName, agentName, task);
-
-
+            var flowId = HookWorker.NextFlowId("d");
+            MuxConsole.WriteDelegation(callerName, agentName, task, flowId: flowId);
+            string? endStatus = null;
+            using var flowScope = HookWorker.BeginFlow(callerName, flowId);
+            try
+            {
             int attempts = 0;
             // Link to the invoking execution owner in every transport, including native TUI.
             using var delLinked = ExecutionCancellation.Link(cancellationToken);
@@ -1247,6 +1302,7 @@ public static class SingleAgentOrchestrator
             delLinked.Token.ThrowIfCancellationRequested();
             var (rawResult, status, summary, artifacts) = await MultiAgentOrchestrator.RunSubAgentAsync(
                 specialist, task, ExecutionLimits.Current.MaxSubTaskRetries, delLinked.Token, prodMode: false, cleanSession: true);
+            endStatus = status;
 
             bool succeeded = status == "success";
             attempts += 1;
@@ -1304,6 +1360,9 @@ public static class SingleAgentOrchestrator
             return string.IsNullOrWhiteSpace(compacted)
                 ? $"[{agentName} completed but returned no output]"
                 : compacted;
+            }
+            catch (OperationCanceledException) { endStatus ??= "cancelled"; throw; }
+            finally { HookWorker.DelegationEnd(callerName, agentName, flowId, endStatus, delegationSw.ElapsedMilliseconds); }
         }
 
         IChatClient? compactionClient = null;
@@ -1771,9 +1830,10 @@ public static class SingleAgentOrchestrator
         // midTurnGoal/midTurnTools/inFlight: set only for mid-turn compaction, whose current turn is not committed to
         // the session yet. Goal and tools are recorded in the snapshot .txt and the summary; inFlight (the cut pass's
         // input + streamed messages, tool calls and results included) feeds the snapshot and the tool manifest, so
-        // the agent can see which calls already ran and continue instead of repeating them.
+        // the agent can see which calls already ran and continue instead of repeating them. kind labels the
+        // compaction hook event (auto/manual/resume; mid_turn when midTurnGoal is set).
         async Task<bool> TryCompactAsync(string? instruction = null, string? midTurnGoal = null, IReadOnlyList<string>? midTurnTools = null,
-            IReadOnlyList<ChatMessage>? inFlight = null)
+            IReadOnlyList<ChatMessage>? inFlight = null, string kind = "auto")
         {
             using var compactSpan = OtelTracer.GetSource().StartActivity("compaction");
             compactSpan?.SetTag("agent", singleAgentDef?.Name);
@@ -1792,6 +1852,9 @@ public static class SingleAgentOrchestrator
             ChatMessage? compactedMsg = null;
 
             ServeMode.EmitEvent(new { type = "compaction_start" });
+            string compactKind = midTurnGoal is not null ? "mid_turn" : kind;
+            HookWorker.Emit("compaction", singleAgentDef?.Name, summary: "start",
+                data: [("phase", "start"), ("kind", compactKind), ("beforeTokens", beforeTokens)]);
 
             try
             {
@@ -1832,6 +1895,8 @@ public static class SingleAgentOrchestrator
             {
                 // Close the existing progress lifecycle without claiming context savings.
                 ServeMode.EmitEvent(new { type = "compaction_done", fromTokens = beforeTokens, toTokens = beforeTokens });
+                HookWorker.Emit("compaction", singleAgentDef?.Name, summary: "failed",
+                    data: [("phase", "failed"), ("kind", compactKind), ("beforeTokens", beforeTokens)]);
                 throw;
             }
 
@@ -1847,6 +1912,9 @@ public static class SingleAgentOrchestrator
             _sessionTokens = (uint)afterTokens;
             MuxConsole.WriteSuccess($"Compacted: {beforeTokens:N0} -> {_sessionTokens:N0} tokens");
             ServeMode.EmitEvent(new { type = "compaction_done", fromTokens = beforeTokens, toTokens = _sessionTokens });
+            HookWorker.Emit("compaction", singleAgentDef?.Name, summary: "done",
+                data: [("phase", "done"), ("kind", compactKind), ("beforeTokens", beforeTokens), ("afterTokens", _sessionTokens),
+                       ("durationMs", compactSw.ElapsedMilliseconds)]);
             return _pendingCompaction;
         }
 
@@ -1860,7 +1928,7 @@ public static class SingleAgentOrchestrator
                 _sessionTokens = (uint)estimatedResumeTokens;
 
                 if (MuxConsole.Confirm("Compact before continuing?"))
-                    await TryCompactAsync();
+                    await TryCompactAsync(kind: "resume");
             }
         }
 
@@ -2093,6 +2161,8 @@ public static class SingleAgentOrchestrator
             bool wasInterrupted = false;
             bool timedOut = false;           // the activity watchdog (not the user) ended the turn
             bool turnFailed = false;         // ended by an exception other than a user interrupt
+            string? turnError = null;
+            var userTurnSw = Stopwatch.StartNew();   // whole user turn, for turn_complete
             var turnToolNames = new List<string>(); // for the failure note if the turn does not complete
             int preTurnHistoryCount = TurnFailureRecord.Count(session); // after the checkpoint restore above
             StringBuilder responseText = new();
@@ -2556,6 +2626,7 @@ public static class SingleAgentOrchestrator
                 // restored the prior history, so the end-of-turn persist below then wrote the PRE-TURN
                 // session over the file and the whole turn vanished. Record what happened instead.
                 turnFailed = true;
+                turnError = ex.Message;
                 string reason = timedOut
                     ? $"timed out after {ExecutionLimits.Current.ActivityTimeoutSeconds}s with no model or tool activity"
                     : cancellationToken.IsCancellationRequested ? "cancelled (session ending)" : $"failed: {ex.Message}";
@@ -2577,6 +2648,12 @@ public static class SingleAgentOrchestrator
                 // interrupt/failure records above, so they land next to the message they followed).
                 try { RestoreTurnSteers(session); } catch { /* best-effort; never breaks the turn */ }
             }
+
+            // turn_complete: once per user turn (turn_end fires per model round-trip), before the
+            // persist/rethrow below so an outer cancel still reports it.
+            HookWorker.Emit("turn_complete", singleAgentDef.Name,
+                summary: TurnOutcome(wasInterrupted || cancellationToken.IsCancellationRequested, timedOut, turnFailed),
+                data: [("durationMs", userTurnSw.ElapsedMilliseconds), ("toolCalls", turnToolNames.Count), ("error", turnError)]);
 
             // Persist BEFORE honouring an outer cancellation. The turn-scoped catch above rebuilds
             // the interrupted exchange into the session's history, but an OUTER-token cancel
@@ -2670,6 +2747,7 @@ public static class SingleAgentOrchestrator
             while (true)
             {
                 string metaCmd = nextInput!.Trim();
+                HookWorker.CommandExecuted(metaCmd, "agent", singleAgentDef.Name);
                 // !<command>: run a shell command, show its output, and inject "[ran: <cmd>]\n<output>"
                 // as the next user turn so the model sees the result. Intercepted before slash dispatch.
                 if (IsShellEscape(metaCmd))
@@ -2733,7 +2811,7 @@ public static class SingleAgentOrchestrator
                 {
                     var cParts = metaCmd.Split(' ', 2, StringSplitOptions.RemoveEmptyEntries);
                     var cInstruction = cParts.Length > 1 ? cParts[1].Trim() : null;
-                    await TryCompactAsync(cInstruction);
+                    await TryCompactAsync(cInstruction, kind: "manual");
                 }
                 else if (metaCmd.Equals("/handoff", StringComparison.OrdinalIgnoreCase)
                       || metaCmd.StartsWith("/handoff ", StringComparison.OrdinalIgnoreCase))
@@ -3065,13 +3143,7 @@ public static class SingleAgentOrchestrator
         if (sessionRetention > 0)
             Common.PruneOldSessions(PlatformContext.SessionsDirectory, sessionRetention);
 
-        HookWorker.Enqueue(new HookEvent
-        {
-            Event = "session_end",
-            Agent = singleAgentDef.Name,
-            Summary = cancellationToken.IsCancellationRequested ? "interrupted" : "complete",
-            Timestamp = DateTimeOffset.UtcNow
-        });
+        // session_end: emitted by ChatAgentAsync's finally so it fires on every exit path.
 
         sessionSpan?.SetTag("outcome", cancellationToken.IsCancellationRequested ? "interrupted" : "complete");
         sessionSpan?.SetTag("final_tokens", _sessionTokens);
