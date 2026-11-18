@@ -132,6 +132,17 @@ public sealed class ExtensionTuiStyleTests : IDisposable
     }
 
     [Fact]
+    public void AsciiGlyphSet_NeverStripsOrdinaryTextFromCopy()
+    {
+        AddExtension("plain", """{ "tui": { "glyphs": "ascii", "regions": { "notice": { "warnMark": "!" } } } }""");
+        Assert.Empty(LoadEnabled().Problems);
+        // Quoted text, shell prompts, pipe tables, diff lines and bullets copy exactly as shown.
+        foreach (var row in new[] { "> quoted", "| a | b |", "+ added line", "* bullet", "  ! warning text" })
+            Assert.Equal(row.Trim(), TuiComponents.ClipboardText(row)!.Trim());
+        Assert.Equal("hello", TuiComponents.ClipboardText("  \u2713 hello"));   // built-in chrome still goes
+    }
+
+    [Fact]
     public void Cards_Footer_Input_TakeTheirRegionStyles()
     {
         AddExtension("cards", """

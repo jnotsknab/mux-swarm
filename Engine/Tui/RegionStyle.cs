@@ -108,9 +108,11 @@ internal static class RegionStyle
         Interlocked.Increment(ref _version);
     }
 
-    /// <summary>Overridden glyphs that lead a transcript row (bars and marks), for clipboard and hang-indent rules.</summary>
+    /// <summary>Overridden glyphs that lead a transcript row (bars and marks), for clipboard and hang-indent rules.
+    /// Plain-ASCII glyphs (the <c>ascii</c> set, or a key set to <c>|</c>, <c>&gt;</c>, ...) are left out: they look
+    /// like ordinary text (quotes, prompts, diff lines, bullets), so copy must not strip them.</summary>
     internal static IEnumerable<string> LeadGlyphs(params string[] keys) =>
-        keys.Where(_overrides.ContainsKey).Select(Raw);
+        keys.Where(_overrides.ContainsKey).Select(Raw).Where(g => g.Any(c => c > '\x7f'));
 
     private static string Raw(string key) =>
         _overrides.TryGetValue(key, out var v) ? v : Props.TryGetValue(key, out var p) ? p.Default
