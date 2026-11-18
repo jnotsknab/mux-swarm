@@ -11,8 +11,8 @@ internal static class ComposeShape
     /// <summary>Built-in shapes. <c>classic</c> is the stock look (rule above, <c>›</c> prompt).</summary>
     internal static readonly string[] Names = ["classic", "rule", "bracket", "box", "bubble", "rail", "bare"];
 
-    /// <summary>Border glyph sets for the <c>box</c> shape: top-left, top-right, bottom-left, bottom-right, horizontal, vertical.</summary>
-    private static readonly Dictionary<string, string[]> Borders = new()
+    /// <summary>Border glyph sets (box shape, splash frame): top-left, top-right, bottom-left, bottom-right, horizontal, vertical.</summary>
+    internal static readonly Dictionary<string, string[]> Borders = new()
     {
         ["rounded"] = ["\u256d", "\u256e", "\u2570", "\u256f", "\u2500", "\u2502"],
         ["square"] = ["\u250c", "\u2510", "\u2514", "\u2518", "\u2500", "\u2502"],
