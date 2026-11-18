@@ -11,7 +11,7 @@ namespace MuxSwarm.Engine.Extensions;
 internal static class ExtensionHostApi
 {
     /// <summary>Methods a process may call (documented under <c>### Extension host API</c> in DOCS.md).</summary>
-    internal static readonly string[] Methods = ["session/info", "ui/toast", "ui/log", "ui/open", "ui/update", "ui/close", "prompt/submit", "command/run"];
+    internal static readonly string[] Methods = ["session/info", "ui/toast", "ui/log", "ui/open", "ui/update", "ui/close", "prompt/submit", "command/run", "status/set"];
 
     /// <summary>Longest text accepted by <c>prompt/submit</c>.</summary>
     internal const int MaxPromptChars = 64_000;
@@ -55,6 +55,14 @@ internal static class ExtensionHostApi
                     if (OneLine(Str("text"), 300) is not { Length: > 0 } toast) return Fail("text");
                     MuxConsole.ExtensionToast(ext, toast);
                     return new(new { });
+                case "status/set":
+                {
+                    // Keyed status text in the footer (the request form of the footer/set notification, with an answer).
+                    if (!ExtensionFooter.IsValidId(Str("key"))) return Fail("key");
+                    bool changed = ExtensionFooter.Set(ext, Str("key")!, Str("text"));
+                    if (changed) MuxConsole.TuiRepaintSoon();
+                    return new(new { changed });
+                }
                 case "ui/log":
                     if (OneLine(Str("text"), 1000) is not { Length: > 0 } log) return Fail("text");
                     MuxConsole.WriteMuted($"\u25cf {ext}: {log}");
