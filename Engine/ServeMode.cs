@@ -669,6 +669,58 @@ public static partial class ServeMode
         catch { /* serialization must never break the agent loop */ }
     }
 
+    // Extension input (prompt/submit, command/run) waits here, apart from the web input channel, so a
+    // Confirm, Prompt, Select or ask_user answer (read from InputOverride) can never take it. Only the
+    // idle read (MuxConsole.ReadInput -> ReadIdleLine) drains it, like the TUI's TryTakeInjected.
+    // A channel, not a queue + semaphore: WaitToReadAsync never consumes, so a wait abandoned when a web
+    // line wins cannot swallow the wake-up of a later extension line.
+    private static readonly Channel<string> _extChannel = Channel.CreateUnbounded<string>();
+
+    /// <summary>Test seam: route MuxConsole input through the web channel as <see cref="StartAsync"/> does,
+    /// without Kestrel. <paramref name="on"/> false restores the console.</summary>
+    internal static void UseWebInputForTests(bool on)
+    {
+        IsServing = on;
+        MuxConsole.InputOverride = on ? new WsChannelReader(_inputChannel.Reader) : Console.In;
+        while (_extChannel.Reader.TryRead(out _)) { }
+        while (_inputChannel.Reader.TryRead(out _)) { }
+    }
+
+    /// <summary>Test seam: a line as if a web client sent it.</summary>
+    internal static void WebLineForTests(string line) => _inputChannel.Writer.TryWrite(line);
+
+    /// <summary>True while MuxConsole reads its input from the web channel (not a workflow's own reader).</summary>
+    internal static bool OwnsInput => MuxConsole.InputOverride is WsChannelReader;
+
+    /// <summary>
+    /// Queue <paramref name="line"/> from an extension (prompt/submit or command/run) for the session's next
+    /// idle read; it is echoed to every client as <c>user_input</c> when it is taken.
+    /// </summary>
+    internal static void InjectInput(string line)
+    {
+        _extChannel.Writer.TryWrite(line);
+    }
+
+    /// <summary>
+    /// The session's next turn at the idle prompt: a queued extension line first, else the next web line.
+    /// Blocks until either arrives; null when the web input channel completed.
+    /// </summary>
+    internal static string? ReadIdleLine()
+    {
+        while (true)
+        {
+            if (_extChannel.Reader.TryRead(out var line))
+            {
+                BroadcastLine(JsonSerializer.Serialize(new { type = "user_input", text = line }));
+                return line;
+            }
+            if (_inputChannel.Reader.TryRead(out var web)) return web;
+            if (_inputChannel.Reader.Completion.IsCompleted) return null;
+            // Wake on a web line or an extension line, whichever comes first.
+            Task.WaitAny(_inputChannel.Reader.WaitToReadAsync().AsTask(), _extChannel.Reader.WaitToReadAsync().AsTask());
+        }
+    }
+
     /// <summary>Classify an extension as an image for the attachment event.</summary>
     private static bool IsImageExt(string ext) => ext.ToLowerInvariant() switch
     {

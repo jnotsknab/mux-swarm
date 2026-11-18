@@ -3709,6 +3709,7 @@ const icons = {
         routePill(pillFromText(ev.message, 'event-info'));
         break;
       case 'debug':   routePill(pillFromText(ev.message, 'event-debug')); break;
+      case 'ext_toast': if (typeof showToast === 'function') showToast((ev.extension ? ev.extension + ': ' : '') + (ev.text || ''), 'info'); break;
 
       case 'user_input': {
         try { resetSubRoster(); } catch (_) {}

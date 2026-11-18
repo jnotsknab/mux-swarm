@@ -121,12 +121,18 @@ internal static class ExtensionScaffold
                     cancelled.add(params.get("id"))
                 continue
 
+            # --- replies to our own requests (an id but no method) ---
+            if method is None:
+                continue
+
             # --- requests (reply with the same id) ---
             msg_id = msg["id"]
             if method == "command/run":               # { name, args, cwd, mode }
                 notify("command/output", {"text": "working..."})        # streamed progress line
                 reply(msg_id, {"output": f"hello from {name} (args: {params.get('args')!r})"})
                 # add "prompt": "..." to the result to send a message to the agent as the next turn
+                # requests TO Mux (any time): send({"jsonrpc": "2.0", "id": "t1", "method": "ui/toast", "params": {"text": "done"}})
+                # (also session/info, ui/log, prompt/submit, command/run; replies arrive on stdin with that id, no "method")
             elif method == "tool/call":               # { name, arguments } -> { content }
                 who = (params.get("arguments") or {}).get("who", "there")
                 reply(msg_id, {"content": f"hello {who}"})

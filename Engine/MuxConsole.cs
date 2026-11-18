@@ -315,6 +315,10 @@ public static partial class MuxConsole
             return TuiReadLine();
         }
 
+        // --serve idle read: extension lines (prompt/submit, command/run) are taken only here, never by
+        // a Confirm/Prompt/Select/ask_user answer, which read InputOverride directly.
+        if (ServeMode.IsServing && ServeMode.OwnsInput) return ServeMode.ReadIdleLine();
+
         if (InputOverride != Console.In)
         {
             var line = InputOverride.ReadLine();

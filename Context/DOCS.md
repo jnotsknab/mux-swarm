@@ -1359,8 +1359,9 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 - Events are queued and dropped (never blocking Mux) if the process falls behind. On `/refresh` or
   exit, Mux closes stdin, waits up to 2s, then stops the process. A process that exits is not restarted
   until the next `/refresh`.
-- Messages from the process that are not responses are notifications Mux understands:
-  `footer/set` and `command/output` (below). Others are ignored.
+- Messages from the process that are not responses are notifications Mux understands
+  (`footer/set`, `command/output`, below) or requests to Mux (Extension host API, below). Other
+  notifications are ignored.
 
 ### Extension commands
 
@@ -1382,6 +1383,35 @@ menu, on every interface (TUI, classic console, `--serve`, `--stdio`, ACP), and 
   `prompt` is sent to the agent as if you typed it (at the menu, where there is no agent, it is shown).
   A JSON-RPC `error` is shown as a warning.
 - `/share` guests cannot run extension commands.
+
+### Extension host API
+
+A trusted process can also send requests TO Mux (with an `id`; Mux replies with the same id, `result`
+or a JSON-RPC `error`). Requests are answered while a command, tool or event is in progress too.
+
+| Method | Params | Result |
+|---|---|---|
+| `session/info` | none | `{ mode, inSession, agent, model, sessionId, cwd, surface, muxVersion, context: { tokens, window, percent } }` |
+| `ui/toast` | `{ text }` | `{}`: a short notice (TUI: above the footer for 4s; web: a toast; classic: an info line) |
+| `ui/log` | `{ text }` | `{}`: a muted line in the transcript; the model does not read it |
+| `prompt/submit` | `{ text }` | `{ queued: true }`: sent to the agent as the next user turn |
+| `command/run` | `{ line }` | `{ queued: true }`: runs a slash command as if typed |
+
+- `surface` is `tui`, `classic`, `web` (`--serve`), `stdio` or `acp`. `mode` is the running mode
+  (`agent`, `swarm`, `pswarm`, `interactive` at the menu, ...).
+- `prompt/submit` and `command/run` queue the line as input: it runs when the session is idle (after the
+  current turn), and in the TUI only while your draft is empty. It is never taken as the answer to a
+  confirm, a choice or an `ask_user` question. Requests are handled in the order they arrive. The
+  transcript shows `sent by extension <name>`. Not available in the classic renderer or over ACP.
+- `command/run` also works at the main menu: the allowed command runs there like a typed one.
+- `prompt/submit` needs a running session (`/agent`, `/swarm`, `/pswarm`), max 64,000 characters, and
+  cannot start with `/` (use `command/run`) or `!`.
+- `command/run` takes one line: any extension command, or one of these built-ins: `/compact`,
+  `/prune`, `/handoff`, `/tokens`, `/context`, `/cost`, `/diff`, `/status`, `/help`, `/retry`, `/undo`,
+  `/redo`, `/effort`, `/max`, `/tag`, `/theme`, `/verbose`, `/subagentview`, `/daemonview`, `/plan`,
+  `/ultra`, `/giga`, `/tools`, `/skills`, `/sessions`, `/model`, `/limits`, `/doctor`, `/review`,
+  `/clear`, `/shortcuts`. Anything else (trust, sandbox, config, providers, sharing, exit) is refused.
+- Errors: `-32601` unknown method, `-32602` invalid params, `1` refused (the message says why).
 
 ### Extension footer chips
 
