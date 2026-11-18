@@ -78,14 +78,17 @@ internal sealed partial class TuiDriver
         List<(int Col, int Width, string Ext, string Id)> tabs, int rule = 0)
     {
         tabs.Clear();
-        string m = TuiComponents.Muted;
-        var sb = new System.Text.StringBuilder(rule > 0 ? $"[{(_resizingDock ? TuiComponents.Accent : m)}]\u2500\u2500[/]" : " ");
+        string m = RegionStyle.Color("panel.tabFg"), ruleFg = _resizingDock ? RegionStyle.Color("divider.activeFg") : m;
+        string ruleGlyph = RegionStyle.PlainGlyph("panel.rule");
+        string RuleRun(int n) => Spectre.Console.Markup.Escape(string.Concat(Enumerable.Repeat(ruleGlyph, Math.Max(0, n))));
+        var sb = new System.Text.StringBuilder(rule > 0 ? $"[{ruleFg}]{RuleRun(2)}[/]" : " ");
         int col = rule > 0 ? 3 : 2;
         foreach (var p in panels)
         {
             bool on = (p.Extension, p.Id) == active;
             string title = Spectre.Console.Markup.Escape(p.Title);
-            sb.Append(on ? $"[{(focused ? "black on " + TuiComponents.Accent : TuiComponents.Accent + " bold")}] {title} [/]" : $"[{m}] {title} [/]");
+            string onStyle = focused ? $"{RegionStyle.Color("panel.focusFg")} on {RegionStyle.Color("panel.focusBg")}" : RegionStyle.Color("panel.tabActiveFg") + " bold";
+            sb.Append(on ? $"[{onStyle}] {title} [/]" : $"[{m}] {title} [/]");
             int w = TuiMarkup.Width(p.Title) + 2;
             tabs.Add((col, w, p.Extension, p.Id));
             col += w;
@@ -93,7 +96,7 @@ internal sealed partial class TuiDriver
         string hint = focused ? "Esc back \u00b7 F6 next" : "F6 focus";
         sb.Append($" [{m}]{hint}[/] ");
         if (rule > 0)
-            sb.Append($"[{(_resizingDock ? TuiComponents.Accent : m)}]{new string('\u2500', Math.Max(0, rule - (col - 1) - TuiMarkup.Width(hint) - 2))}[/]");
+            sb.Append($"[{ruleFg}]{RuleRun(rule - (col - 1) - TuiMarkup.Width(hint) - 2)}[/]");
         return sb.ToString();
     }
 
@@ -113,7 +116,7 @@ internal sealed partial class TuiDriver
         var panel = panels.First(p => (p.Extension, p.Id) == active);
         int inner = width - 1;   // keep the screen's last column blank: a right margin, and safe from the row's EL clear
         rows.Add(TuiMarkup.TruncateMarkup(DockTabs(panels, active, _dockFocus == active, _sideTabs), inner, ""));
-        rows.Add($"[{TuiComponents.Muted}]{new string('\u2500', inner)}[/]");
+        rows.Add($"[{RegionStyle.Color("panel.tabFg")}]{Spectre.Console.Markup.Escape(string.Concat(Enumerable.Repeat(RegionStyle.PlainGlyph("panel.rule"), inner)))}[/]");
         var hits = new List<(int Row, int Col, int Width, int Payload)>();
         var view = DockView(panel);
         view.Compact = false;

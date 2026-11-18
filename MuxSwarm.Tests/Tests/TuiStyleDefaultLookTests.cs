@@ -165,4 +165,57 @@ public class TuiStyleDefaultLookTests
         Assert.Contains("diff", output);
         Assert.Equal("6C50EBF1B6D3DEAF", Hash(output));
     }
+
+    /// <summary>Every region T3 styles: palettes, modal, picker rules, dock tabs + side pane, splash.</summary>
+    internal static string RenderPanels()
+    {
+        var priorTheme = Theme.Active;
+        var surface = Engine.Extensions.ExtensionPanels.Surface;
+        var sb = new StringBuilder();
+        void Add(IEnumerable<string> lines) { foreach (var l in lines) sb.Append(TuiMarkup.ToAnsi(l)).Append('\n'); }
+        try
+        {
+            Theme.Set(Theme.Default);
+            var cmds = new List<(string, string)> { ("/agent", "start an agent"), ("/help", "help"), ("/resume", "resume") };
+            Add(TuiComponents.SlashPalette("/", cmds, 1));
+            Add(TuiComponents.SlashPalette("/zzz", cmds));
+            var many = Enumerable.Range(0, 14).Select(i => ($"skill{i:00}", $"does thing {i}")).ToList();
+            Add(TuiComponents.SkillsPreview("", many, 80, 9));
+            Add(TuiComponents.SessionsPreview("", many.Select(m => (m.Item1, m.Item2, (string?)null)).ToList(), 80, 2));
+            Add(TuiComponents.FilesPreview("", many.Select(m => m.Item1 + ".cs").ToList(), 80, 3));
+            Add(TuiComponents.ToolsPreview("", many, 80, 1));
+            Add(TuiComponents.ToolsPreview("", many, 40, 1));
+            Add([TuiComponents.FullRule(30)]);
+            var modal = new PromptModalView();
+            modal.Open(PromptModalView.Kind.MultiSelect, "Pick some", ["one", "two", "three"], null, false, 1);
+            modal.ToggleChecked();
+            Add(modal.Render(60, 20));
+            modal.Open(PromptModalView.Kind.Text, "Name?", null, "bob", false);
+            Add(modal.Render(60, 20));
+            Add(Engine.MuxConsole.BuildFrameSplashLines("1.2.3", "", "tip", "hello", 120));
+            Add(Engine.MuxConsole.BuildFrameSplashLines("1.2.3", "", "tip", "hello", 40));
+            Engine.Extensions.ExtensionPanels.Surface = () => null;
+            using var doc = System.Text.Json.JsonDocument.Parse("""{ "type": "text", "text": "pane body" }""");
+            Engine.Extensions.ExtensionPanels.Open("ref", "side", "Meter", doc.RootElement.Clone(), "side");
+            Engine.Extensions.ExtensionPanels.Open("ref", "band", "Band", doc.RootElement.Clone(), "band");
+            var driver = new TuiDriver(new Terminal { Width = 160, Height = 30 }, frameEngine: true);
+            driver.CommitLine("transcript");
+            foreach (var row in driver.ComposeFrameRows()) sb.Append(row).Append('\n');
+        }
+        finally
+        {
+            foreach (var p in Engine.Extensions.ExtensionPanels.All()) Engine.Extensions.ExtensionPanels.Close(p.Extension, p.Id, byUser: false);
+            Engine.Extensions.ExtensionPanels.Surface = surface;
+            Theme.Set(priorTheme);
+        }
+        return sb.ToString();
+    }
+
+    [Fact]
+    public void NoExtensionStyles_PalettesModalPanelsAndSplashUnchanged()
+    {
+        string output = RenderPanels();
+        Assert.Contains("pane body", output);
+        Assert.Equal("994268643450F044", Hash(output));
+    }
 }
