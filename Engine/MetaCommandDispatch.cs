@@ -23,7 +23,15 @@ internal static class MetaCommandDispatch
         /// <summary>A REPL-only command was confirmed; PendingReplCommand is set. Caller should
         /// end the session and return to the top-level menu, which dispatches it.</summary>
         QuitToMenu,
+        /// <summary>An extension command returned a prompt: the caller takes it with
+        /// <see cref="TakePrompt"/> and sends it to the agent as if the user typed it.</summary>
+        Prompt,
     }
+
+    private static string? _pendingPrompt;
+
+    /// <summary>The prompt behind the last <see cref="Result.Prompt"/> (cleared on read).</summary>
+    public static string? TakePrompt() => Interlocked.Exchange(ref _pendingPrompt, null);
 
     /// <summary>
     /// Try to handle <paramref name="input"/> as a session-agnostic meta command. The factory and
@@ -53,6 +61,13 @@ internal static class MetaCommandDispatch
             return Result.Handled;
         }
         string cmd = line.Split(' ', 2)[0].ToLowerInvariant();
+        if (Extensions.ExtensionCommands.Match(line) is not null)
+        {
+            var outcome = await Extensions.ExtensionCommands.RunAsync(line, ct);
+            if (outcome.Prompt is null) return Result.Handled;
+            _pendingPrompt = outcome.Prompt;
+            return Result.Prompt;
+        }
         switch (cmd)
         {
             case "/background":

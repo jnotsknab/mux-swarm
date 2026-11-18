@@ -39,6 +39,9 @@ internal static partial class ExtensionRegistry
 
         /// <summary>True when this extension's footer template is the one applied.</summary>
         internal bool Footer { get; init; }
+
+        /// <summary>Validated slash commands the process serves.</summary>
+        internal IReadOnlyList<ExtensionCommand> Commands { get; init; } = [];
     }
 
     /// <summary>Merged cosmetic overrides. Null members leave the built-ins in place.</summary>
@@ -56,6 +59,29 @@ internal static partial class ExtensionRegistry
 
     [GeneratedRegex("^[a-z][a-z0-9_]{0,47}$")]
     private static partial Regex ToolNamePattern();
+
+    /// <summary>A validated extension slash command: <c>/{Name}</c>, owned by <paramref name="Extension"/>.</summary>
+    internal sealed record ExtensionCommand(string Extension, string Name, string Description, int TimeoutSeconds)
+    {
+        /// <summary>The command as typed, e.g. <c>/standup</c>.</summary>
+        internal string Cmd => "/" + Name;
+    }
+
+    /// <summary>Default and maximum <c>timeoutSeconds</c> for an extension command.</summary>
+    internal const int DefaultCommandTimeoutSeconds = 60, MaxCommandTimeoutSeconds = 3600;
+
+    [GeneratedRegex("^[a-z][a-z0-9-]{0,31}$")]
+    private static partial Regex CommandNamePattern();
+
+    // Built-in command words that are not in TuiCommands.All (aliases and hidden commands).
+    private static readonly string[] ReservedCommands =
+        ["/bg", "/da", "/cont", "/dbg", "/nodbg", "/dv", "/sub", "/psub", "/sav", "/keys", "/quit",
+         "/removeagent", "/disabletools", "/startargs", "/ultraplan"];
+
+    /// <summary>True when <paramref name="cmd"/> (e.g. <c>/help</c>) is a built-in command word.</summary>
+    internal static bool IsBuiltInCommand(string cmd) =>
+        ReservedCommands.Contains(cmd, StringComparer.OrdinalIgnoreCase)
+        || Tui.TuiCommands.All.Any(e => string.Equals(e.Cmd.Split(' ', 2)[0], cmd, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Result of a scan: what loaded, the merged contributions, and human-readable problems.</summary>
     internal sealed record Result(IReadOnlyList<Extension> Extensions, IReadOnlyList<Theme> Themes, IReadOnlyList<string> Problems)
@@ -96,6 +122,7 @@ internal static partial class ExtensionRegistry
         SplashMessages.SetExtensionLines(c.Splash);
         Tui.MarkdownStyle.Set(Loaded.Markdown);
         Tui.TuiComponents.SetFooterTemplate(Loaded.FooterTemplate);
+        ExtensionCommands.Set(Loaded.Extensions.SelectMany(e => e.Commands));
         return Loaded;
     }
 
@@ -172,6 +199,7 @@ internal static partial class ExtensionRegistry
         var labels = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         Tui.MarkdownStyle? markdown = null;
         IReadOnlyList<string>? footer = null;
+        var takenCommands = new Dictionary<string, string>(StringComparer.Ordinal);   // command -> owning extension
         foreach (var (name, dir, manifest) in found.OrderBy(f => f.Name, StringComparer.Ordinal))
         {
             var mine = new List<string>();
@@ -248,6 +276,18 @@ internal static partial class ExtensionRegistry
                     hasFooter = true;
                 }
             }
+            var commands = new List<ExtensionCommand>();
+            foreach (var c in manifest.Commands ?? [])
+            {
+                var cname = (c.Name ?? "").Trim().TrimStart('/').ToLowerInvariant();
+                if (process is null) { problems.Add($"{name}: command '/{cname}' needs a process; skipped."); continue; }
+                if (!CommandNamePattern().IsMatch(cname)) { problems.Add($"{name}: invalid command name '{c.Name}' (a-z, 0-9, '-', max 32); skipped."); continue; }
+                if (IsBuiltInCommand("/" + cname)) { problems.Add($"{name}: command '/{cname}' is a built-in; skipped."); continue; }
+                if (takenCommands.TryGetValue(cname, out var owner)) { problems.Add($"{name}: command '/{cname}' is already provided by '{owner}'; skipped."); continue; }
+                takenCommands[cname] = name;
+                int timeout = Math.Clamp(c.TimeoutSeconds ?? DefaultCommandTimeoutSeconds, 1, MaxCommandTimeoutSeconds);
+                commands.Add(new ExtensionCommand(name, cname, OneLine(c.Description ?? "", 120), timeout));
+            }
             extensions.Add(new Extension(name, manifest.Version, manifest.Description, dir, mine)
             {
                 Footer = hasFooter,
@@ -255,6 +295,7 @@ internal static partial class ExtensionRegistry
                 Overrides = overrides,
                 Process = process,
                 Events = (manifest.Events ?? []).Where(e => !string.IsNullOrWhiteSpace(e)).Select(e => e.Trim()).ToList(),
+                Commands = commands,
                 Intercepts = BuildIntercepts(name, process, manifest.Intercepts, problems),
                 Tools = ValidateTools(name, manifest.Tools ?? [], process is not null, problems),
             });
@@ -441,13 +482,19 @@ internal static partial class ExtensionRegistry
         foreach (Match m in Placeholder().Matches(template))
         {
             var id = m.Groups[1].Value.Trim().ToLowerInvariant();
-            if (!Tui.TuiComponents.FooterSegmentIds.Contains(id))
+            if (!Tui.TuiComponents.FooterSegmentIds.Contains(id) && !Tui.TuiComponents.IsExtensionChipId(id))
                 problems.Add($"{extension}: footer template has unknown segment '{{{m.Groups[1].Value}}}'; ignored.");
             else if (!ids.Contains(id)) ids.Add(id);
         }
         if (ids.Count > 0) return ids;
         problems.Add($"{extension}: footer template names no known segment; skipped.");
         return null;
+    }
+
+    private static string OneLine(string text, int max)
+    {
+        var s = string.Join(' ', text.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+        return s.Length <= max ? s : s[..max];
     }
 
     // A single Spectre color token (hex, named color or "default"); rejects styles and markup.
