@@ -49,6 +49,7 @@ public sealed class ExtensionPanelsWebTests : IDisposable
         var p = Assert.Single(JsonDocument.Parse(body).RootElement.EnumerateArray());
         Assert.Equal("notes", p.GetProperty("extension").GetString());
         Assert.Equal("hi", p.GetProperty("view").GetProperty("text").GetString());
+        Assert.Equal("screen", p.GetProperty("placement").GetString());
     }
 
     [Fact]
@@ -79,9 +80,22 @@ public sealed class ExtensionPanelsWebTests : IDisposable
         Assert.Contains("case 'ext_panel':", html);
         int start = html.IndexOf("<!-- ===== Extension panels", StringComparison.Ordinal);
         var block = html[start..html.IndexOf("<!-- ===== /Extension panels", StringComparison.Ordinal)];
+        // The side-dock push must be unlayered: the unlayered global reset would beat a layered margin.
+        Assert.StartsWith("body.mux-xp-docked .app {", block[block.IndexOf("body.mux-xp-docked .app", StringComparison.Ordinal)..]);
+        Assert.True(block.IndexOf("body.mux-xp-docked .app", StringComparison.Ordinal) < block.IndexOf("@layer", StringComparison.Ordinal));
         Assert.All(ExtensionPanels.Types, t => Assert.Contains($"case '{t}':", block));
         Assert.All(ExtensionPanels.Colors.Where(c => c != "text"), c => Assert.Contains($".c-{c}", block));
         Assert.DoesNotContain("innerHTML = n.", block);   // extension text is never parsed as HTML
+        Assert.Contains("mux-xp-band", block);              // placement band
+        // The band reserves transcript room while open and follows the composer: it grows with its text
+        // and rides the mobile keyboard via visualViewport, neither of which fires a window resize.
+        Assert.Contains("function placeBand()", block);
+        var place = block[block.IndexOf("function placeBand()", StringComparison.Ordinal)..];
+        Assert.Contains("out.style.paddingBottom = pad", place[..place.IndexOf("\n  }", StringComparison.Ordinal)]);
+        Assert.Contains("new ResizeObserver(schedulePlace)", block);
+        Assert.Contains("addEventListener('transitionend', schedulePlace)", block);
+        Assert.Contains("visualViewport.addEventListener('resize', schedulePlace)", block);
+        Assert.Contains("body.mux-xp-docked .app", block);  // placement side pushes the chat
         // Esc that closes a panel must not also reach the page's Esc-cancels-the-turn handler.
         var esc = block[block.IndexOf("if (e.key === 'Escape')", StringComparison.Ordinal)..];
         esc = esc[..esc.IndexOf('}')];
