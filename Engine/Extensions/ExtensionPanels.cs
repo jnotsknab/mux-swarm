@@ -61,7 +61,7 @@ internal static class ExtensionPanels
     /// Why panels cannot be shown right now, or null when the current surface can show them.
     /// Renderers that draw panels replace it; tests too.
     /// </summary>
-    internal static Func<string?> Surface = () => $"panels are not available on this surface ({MuxConsole.Surface})";
+    internal static Func<string?> Surface = MuxConsole.PanelsUnavailable;
 
     /// <summary>Sends a notification to the extension's process (default: the running process); tests replace it.</summary>
     internal static Action<string, string, object> Notify = (ext, method, payload) =>
