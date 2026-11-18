@@ -255,7 +255,9 @@ public static partial class ServeMode
 
                     // No hook event here: the orchestrator that consumes this line emits user_input
                     // (with the real agent) for goals, and command_executed for slash commands.
-                    await _inputChannel.Writer.WriteAsync(msg);
+                    // An immediate extension command runs now, even mid-turn, instead of waiting in the queue.
+                    if (!Extensions.ExtensionCommands.TryRunImmediate(msg))
+                        await _inputChannel.Writer.WriteAsync(msg);
 
                     BroadcastLine(JsonSerializer.Serialize(new { type = "user_input", text = msg }));
 

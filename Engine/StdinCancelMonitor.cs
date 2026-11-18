@@ -154,6 +154,7 @@ public sealed class StdinCancelMonitor : IDisposable
                     continue; // Don't queue __CANCEL__ as user input
                 }
 
+                if (Extensions.ExtensionCommands.TryRunImmediate(line)) continue;   // runs now, even mid-turn
                 _lineQueue.Add(line);
             }
         }

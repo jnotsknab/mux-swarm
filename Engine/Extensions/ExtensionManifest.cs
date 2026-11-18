@@ -104,22 +104,6 @@ internal sealed class ExtensionManifest
     public List<ExtensionCommandSpec> Commands { get; set; } = [];
 }
 
-/// <summary>One process-backed slash command declared in an extension manifest.</summary>
-internal sealed class ExtensionCommandSpec
-{
-    /// <summary>Command word without the slash: <c>a-z</c>, <c>0-9</c>, <c>-</c>, starting with a letter (max 32).</summary>
-    [JsonPropertyName("name")]
-    public string Name { get; set; } = "";
-
-    /// <summary>One-line description shown in the palette and <c>/extensions</c>.</summary>
-    [JsonPropertyName("description")]
-    public string? Description { get; set; }
-
-    /// <summary>Seconds to wait for the reply (default 60, max 3600). Esc cancels earlier.</summary>
-    [JsonPropertyName("timeoutSeconds")]
-    public int? TimeoutSeconds { get; set; }
-}
-
 /// <summary>
 /// The <c>thinking</c> block: full control of the agent's thinking indicator. Every key is optional;
 /// <c>frames</c> and <c>quips</c> take precedence over the top-level <c>spinner</c> / <c>quips</c>.
@@ -149,6 +133,30 @@ internal sealed class ThinkingManifest
     /// <summary>Text after the quip (default <c>...</c>, max 8 chars, may be empty).</summary>
     [JsonPropertyName("suffix")]
     public string? Suffix { get; set; }
+}
+
+/// <summary>One process-backed slash command declared in an extension manifest.</summary>
+internal sealed class ExtensionCommandSpec
+{
+    /// <summary>Command word without the slash: <c>a-z</c>, <c>0-9</c>, <c>-</c>, starting with a letter (max 32).</summary>
+    [JsonPropertyName("name")]
+    public string Name { get; set; } = "";
+
+    /// <summary>One-line description shown in the palette and <c>/extensions</c>.</summary>
+    [JsonPropertyName("description")]
+    public string? Description { get; set; }
+
+    /// <summary>Seconds to wait for the reply (default 60, max 3600). Esc cancels earlier.</summary>
+    [JsonPropertyName("timeoutSeconds")]
+    public int? TimeoutSeconds { get; set; }
+
+    /// <summary>
+    /// Run at once even while the agent is working (default false: a command typed mid-turn waits
+    /// for the turn). Typed mid-turn via the steer box (Ctrl+N) in the TUI, or sent from the web /
+    /// stdio composer. Never starts a turn itself; a returned <c>prompt</c> is queued.
+    /// </summary>
+    [JsonPropertyName("immediate")]
+    public bool? Immediate { get; set; }
 }
 
 /// <summary>One raw <c>intercepts</c> entry; validated into an <see cref="InterceptRule"/>.</summary>
