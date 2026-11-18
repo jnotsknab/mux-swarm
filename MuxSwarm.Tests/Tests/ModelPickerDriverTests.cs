@@ -67,6 +67,34 @@ public class ModelPickerDriverTests
     }
 
     [Fact]
+    public void Framed_ResizeWarning_DoesNotLetKeysApplyABlindSelection()
+    {
+        // panel.frame takes two rows: a 13-row terminal leaves the picker 11 rows, so it shows the resize warning.
+        string root = Path.Combine(Path.GetTempPath(), "mux-picker-frame-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(root, "f"));
+        File.WriteAllText(Path.Combine(root, "f", Engine.Extensions.ExtensionRegistry.ManifestFileName),
+            """{ "tui": { "regions": { "panel": { "frame": "rounded" } } } }""");
+        bool prompt = ConsoleInputPump.PromptActive, modal = ConsoleInputPump.ModalActive;
+        ConsoleInputPump.PromptActive = false; ConsoleInputPump.ModalActive = false;
+        try
+        {
+            Assert.Empty(Engine.Extensions.ExtensionRegistry.Load(new Engine.Extensions.ExtensionsConfig { Enabled = true, Dirs = [root] }).Problems);
+            using var pump = ConsoleInputPump.CreateUnstartedForTest();
+            pump.PushFront(new[] { Key(ConsoleKey.Enter), Key(ConsoleKey.UpArrow), Key(ConsoleKey.Enter), Key(ConsoleKey.RightArrow), Key(ConsoleKey.F4), Key(ConsoleKey.Escape) });
+            int writes = 0;
+            new TuiDriver(new Terminal { Height = 13 }, frameEngine: true).RunModelPicker(View(),
+                _ => Task.FromResult(new ProviderModelCatalog.Result(new[] { "new", "old" }, null)), (_, _, _) => writes++, input: pump);
+            Assert.Equal(0, writes);
+        }
+        finally
+        {
+            ConsoleInputPump.PromptActive = prompt; ConsoleInputPump.ModalActive = modal;
+            Engine.Extensions.ExtensionRegistry.Load(null);
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [Fact]
     public void CancelDuringDiscovery_CancelsPendingRequestPromptly()
     {
         bool prompt = ConsoleInputPump.PromptActive, modal = ConsoleInputPump.ModalActive;

@@ -114,7 +114,9 @@ internal sealed partial class TuiDriver
                     continue;
                 }
                 if (ev.Kind != ConsoleInputPump.EventKind.Key) continue;
-                if (_term.Height < 12 && ev.Key.Key != ConsoleKey.Escape
+                // The view shows a resize warning below 12 rows of its own (inner, when panel.frame boxes it): keys other
+                // than Esc / Ctrl+Q must not act on a selection the user cannot see.
+                if (ViewFrame.Inner(Math.Max(1, _term.Width - 1), Math.Max(1, _term.Height)).Height < 12 && ev.Key.Key != ConsoleKey.Escape
                     && !(ev.Key.Key == ConsoleKey.Q && ev.Key.Modifiers.HasFlag(ConsoleModifiers.Control))) continue;
                 var action = view.Handle(ev.Key, Math.Max(1, ViewFrame.Inner(Math.Max(1, _term.Width - 1), Math.Max(1, _term.Height)).Height - 10));
                 if (action == ModelPickerView.Action.Cancel) break;
