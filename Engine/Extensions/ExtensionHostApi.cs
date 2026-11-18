@@ -11,7 +11,7 @@ namespace MuxSwarm.Engine.Extensions;
 internal static class ExtensionHostApi
 {
     /// <summary>Methods a process may call (documented under <c>### Extension host API</c> in DOCS.md).</summary>
-    internal static readonly string[] Methods = ["session/info", "ui/toast", "ui/log", "prompt/submit", "command/run"];
+    internal static readonly string[] Methods = ["session/info", "ui/toast", "ui/log", "ui/open", "ui/update", "ui/close", "prompt/submit", "command/run"];
 
     /// <summary>Longest text accepted by <c>prompt/submit</c>.</summary>
     internal const int MaxPromptChars = 64_000;
@@ -59,6 +59,17 @@ internal static class ExtensionHostApi
                     if (OneLine(Str("text"), 1000) is not { Length: > 0 } log) return Fail("text");
                     MuxConsole.WriteMuted($"\u25cf {ext}: {log}");
                     return new(new { });
+                case "ui/open":
+                case "ui/update":
+                {
+                    if (Str("id") is not { Length: > 0 } id) return Fail("id");
+                    var view = p.ValueKind == JsonValueKind.Object && p.TryGetProperty("view", out var v) ? v : default;
+                    var err = method == "ui/open" ? ExtensionPanels.Open(ext, id, Str("title"), view) : ExtensionPanels.Update(ext, id, view);
+                    return err is null ? new(new { }) : Reply.Fail(err, -32602);
+                }
+                case "ui/close":
+                    if (Str("id") is not { Length: > 0 } closeId) return Fail("id");
+                    return new(new { closed = ExtensionPanels.Close(ext, closeId, byUser: false) });
                 case "prompt/submit":
                 {
                     var text = Str("text")?.Trim();
