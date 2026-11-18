@@ -970,6 +970,19 @@ public static partial class MuxConsole
         return _driver!.RunThemePicker(new Tui.ThemePickerView(activeName: Theme.Active.Name), out applied);
     }
 
+    /// <summary>
+    /// Open the alt-screen <c>/extensions</c> panel in the docked TUI and return the user's action.
+    /// False when unavailable (classic renderer / stdio / another modal); the caller then prints the
+    /// text list instead.
+    /// </summary>
+    internal static bool TryExtensionsPanel(Tui.ExtensionsPanelView view, out Tui.ExtensionsPanelView.Action action,
+        Action<Tui.ExtensionsPanelView.Action>? apply = null)
+    {
+        action = Tui.ExtensionsPanelView.Action.Close;
+        if (!ViaDriver || InputOverride != Console.In) return false;
+        return _driver!.RunExtensionsPanel(view, out action, apply: apply);
+    }
+
 internal static void TuiForceRedraw() { if (ViaDriver) lock (ConsoleLock) { _driver!.ForceRedraw(); } }
 
     /// <summary>Clear the screen (Ctrl+L, /clear): committed output leaves the viewport, history stays

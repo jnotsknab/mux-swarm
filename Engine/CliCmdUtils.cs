@@ -1963,8 +1963,9 @@ public static class CliCmdUtils
     }
 
     /// <summary>
-    /// /extensions [enable|disable|trust|untrust &lt;name&gt; | reload]. Bare: every installed extension
-    /// with its contributions, process, conflicts and problems. Changes save to config.json and apply at once.
+    /// /extensions [enable|disable|trust|untrust &lt;name&gt; | reload]. Bare: the interactive panel in the
+    /// docked TUI (toggle, trust, edit, open, reload; conflicts per extension), else a text list.
+    /// Changes save to config.json and apply at once.
     /// </summary>
     public static void HandleExtensions(string userInput = "/extensions")
     {
@@ -1991,9 +1992,43 @@ public static class CliCmdUtils
             MuxConsole.WriteInfo("Extensions are off. Enable with /set extensions.enabled on, then /refresh.");
             return;
         }
-        var items = Extensions.ExtensionCatalog.Build(Extensions.ExtensionRegistry.Loaded, cfg, PanelProblems(),
-            Extensions.ExtensionHost.Running, out var other);
-        PrintExtensions(items, other);
+        Tui.ExtensionsPanelView? view = null;
+        while (true)
+        {
+            var items = Extensions.ExtensionCatalog.Build(Extensions.ExtensionRegistry.Loaded, cfg, PanelProblems(),
+                Extensions.ExtensionHost.Running, out var other);
+            if (view is null) view = new Tui.ExtensionsPanelView(items, other);
+            else view.Update(items, other, view.Selected?.Name);
+            // Toggle, trust, reload and open-folder apply while the panel stays up (no flip to the transcript).
+            void Apply(Tui.ExtensionsPanelView.Action a)
+            {
+                if (view.Selected is not { } s && a != Tui.ExtensionsPanelView.Action.Reload) return;
+                view.Message = a switch
+                {
+                    Tui.ExtensionsPanelView.Action.Toggle => ApplyExtensionChange(view.Selected!.Enabled ? "disable" : "enable", view.Selected.Name, quiet: true),
+                    Tui.ExtensionsPanelView.Action.Trust => ApplyExtensionChange(view.Selected!.Trusted ? "untrust" : "trust", view.Selected.Name, quiet: true),
+                    Tui.ExtensionsPanelView.Action.OpenFolder => OpenExtensionPath(view.Selected!.Dir, edit: false),
+                    _ => ReloadExtensionsQuiet(),
+                };
+                var fresh = Extensions.ExtensionCatalog.Build(Extensions.ExtensionRegistry.Loaded, cfg, PanelProblems(),
+                    Extensions.ExtensionHost.Running, out var rest);
+                view.Update(fresh, rest, view.Selected?.Name);
+            }
+            if (!MuxConsole.TryExtensionsPanel(view, out var action, Apply))
+            {
+                PrintExtensions(items, other);
+                return;
+            }
+            var sel = view.Selected;
+            switch (action)
+            {
+                case Tui.ExtensionsPanelView.Action.Close:
+                    return;
+                case Tui.ExtensionsPanelView.Action.Edit when sel is not null:
+                    view.Message = OpenExtensionPath(sel.Manifest, edit: true);
+                    break;
+            }
+        }
     }
 
     // Load problems plus the interceptor warnings, as the panel and the text list show them.
@@ -2049,10 +2084,38 @@ public static class CliCmdUtils
         return $"'{name}' {done} (saved). New tools reach the agent from the next session.";
     }
 
+    private static string ReloadExtensionsQuiet()
+    {
+        App.LoadExtensions(announce: false, quiet: true);
+        return $"Reloaded: {Extensions.ExtensionRegistry.Loaded.Extensions.Count} enabled.";
+    }
+
     private static bool SaveExtensionsConfig()
     {
         try { Common.SaveConfig(App.Config); return true; }
         catch (Exception) { return false; }   // SaveConfig already reported the error
+    }
+
+    // Open a manifest in $VISUAL/$EDITOR (waits, then reloads) or a path in the OS default app.
+    private static string OpenExtensionPath(string path, bool edit)
+    {
+        // Only a terminal editor ($VISUAL/$EDITOR) needs the console; the OS default app opens in the background.
+        bool terminal = edit && Extensions.ExtensionScaffold.TerminalEditor() is not null;
+        try
+        {
+            bool waited;
+            if (terminal) MuxConsole.TuiSuspend();
+            using (terminal ? EscapeKeyListener.SuspendInput() : null) waited = Extensions.ExtensionScaffold.Open(path, edit);
+            if (terminal) MuxConsole.TuiResume();
+            if (!waited) return edit ? $"Opened {Path.GetFileName(path)}; press r to reload after saving." : $"Opened {path}.";
+            App.LoadExtensions(announce: false, quiet: true);
+            return "Saved and reloaded.";
+        }
+        catch (Exception ex)
+        {
+            if (terminal) MuxConsole.TuiResume();
+            return $"Could not open {path}: {ex.Message}";
+        }
     }
 
     /// <summary>List every preset with a one-line color swatch row + the active marker.</summary>

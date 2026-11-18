@@ -136,7 +136,7 @@ public class AgentPickerDriverTests
 {
     private const System.Reflection.BindingFlags StaticPrivate = System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic;
     private const System.Reflection.BindingFlags InstancePrivate = System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic;
-    private sealed class Terminal : ITuiTerminal
+    internal sealed class Terminal : ITuiTerminal
     {
         public int Width { get; set; } = 90;
         public int Height { get; set; } = 20;
@@ -145,7 +145,7 @@ public class AgentPickerDriverTests
         public void Write(string text) { Output.Append(text); OnWrite?.Invoke(text); }
         public void Flush() { }
     }
-    private sealed class Scope : IDisposable
+    internal sealed class Scope : IDisposable
     {
         private readonly Dictionary<System.Reflection.FieldInfo, object?> _saved;
         private readonly bool _stdio = MuxConsole.StdioMode, _prompt = ConsoleInputPump.PromptActive, _modal = ConsoleInputPump.ModalActive;
