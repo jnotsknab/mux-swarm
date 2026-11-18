@@ -170,7 +170,9 @@ internal sealed partial class TuiDriver
         {
             // The footer row (built at the edge's width, its two-space lead dropped) becomes the box's title.
             title = BuildFooterRow(ComposeShape.TitleWidth(shape, width) + 2);
-            if (title.StartsWith("  ", StringComparison.Ordinal)) title = title[2..];
+            // Drop the two-space lead, also when footer.strip wraps the row in a background span.
+            int open = title.StartsWith("[on ", StringComparison.Ordinal) ? title.IndexOf(']') + 1 : 0;
+            if (string.CompareOrdinal(title, open, "  ", 0, 2) == 0) title = title.Remove(open, 2);
             titleCols = TuiMarkup.MarkupWidth(title);
         }
         var frame = ComposeShape.Wrap(shape, input.Skip(start).Take(maxInput).ToList(), width, title, titleCols);

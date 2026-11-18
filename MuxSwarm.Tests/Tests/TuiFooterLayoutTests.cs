@@ -115,6 +115,24 @@ public sealed class TuiFooterLayoutTests : IDisposable
         Assert.Equal(TuiComponents.BadgeModel, hit.Tag);
     }
 
+    [Theory]
+    [InlineData("box")]
+    [InlineData("rule")]
+    public void BorderPosition_WithStrip_StillShowsTheFooterInTheEdge(string shape)
+    {
+        Load("{ " + Split + ", \"tui\": { \"regions\": { \"compose\": { \"shape\": \"" + shape + "\" }, \"footer\": { \"position\": \"border\", \"strip\": true } } } }");
+        var d = AtPrompt();
+        var lines = d.BuildLiveFrame(d.Width).Select(TuiMarkup.Plain).ToList();
+        int edge = lines.FindIndex(l => l.Contains("model-x"));
+        Assert.True(edge >= 0, string.Join("\n", lines));   // the footer did not vanish
+        Assert.Equal(d.Width, TuiMarkup.Width(lines[edge]));
+        var rows = d.ComposeFrameRows();
+        int physRow = rows.FindIndex(r => TuiMarkup.Plain(TuiMarkup.StripAnsi(r)).Contains("model-x")) + 1;
+        int col = TuiMarkup.Plain(TuiMarkup.StripAnsi(rows[physRow - 1])).IndexOf("model-x", StringComparison.Ordinal) + 1;
+        Assert.True(d.FrameHitMap!.TryHit(physRow, col + 2, out var hit, out _, out _), "no hit on the model chip");
+        Assert.Equal(TuiComponents.BadgeModel, hit.Tag);
+    }
+
     [Fact]
     public void BorderPosition_WithAShapeWithoutAnEdge_FallsBackToAbove()
     {
