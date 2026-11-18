@@ -25,6 +25,12 @@ public static class SingleAgentOrchestrator
     /// </summary>
     public static string? PendingReplCommand = null;
 
+    /// <summary>
+    /// Opening message for the next interactive session (e.g. the brief from <c>/extensions new</c> at the
+    /// menu): sent as the first turn, after which the session stays interactive. Consumed once.
+    /// </summary>
+    public static string? PendingOpeningGoal = null;
+
     private static readonly Dictionary<string, string> Models = Common.LoadAgentModels();
     //uncached tokens
     private static uint _cachedTokens;
@@ -1030,6 +1036,13 @@ public static class SingleAgentOrchestrator
             while (true)
             {
                 cancellationToken.ThrowIfCancellationRequested();
+
+                if (Interlocked.Exchange(ref PendingOpeningGoal, null) is { Length: > 0 } opening)
+                {
+                    initialGoal = opening;
+                    MuxConsole.WriteMuted("[GOAL] " + (opening.Length > 200 ? opening[..200] + "..." : opening));
+                    break;
+                }
 
                 if (!MuxConsole.TuiActive)
                     MuxConsole.WriteInline($"[{MuxConsole.PromptColor}]> [/]", "> ");
@@ -2964,8 +2977,14 @@ public static class SingleAgentOrchestrator
                 else if (metaCmd.Equals("/extensions", StringComparison.OrdinalIgnoreCase)
                       || metaCmd.StartsWith("/extensions ", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Extensions list + enable/disable/trust (process-level, session-agnostic).
-                    CliCmdUtils.HandleExtensions(metaCmd);
+                    // Extensions panel (process-level, session-agnostic). Drafting a new extension
+                    // with the agent returns its brief as the next user turn.
+                    if (CliCmdUtils.HandleExtensions(metaCmd, inSession: true) is { } draft)
+                    {
+                        currentGoal = draft;
+                        retryGoalSet = true;
+                        break;
+                    }
                 }
                 else if (Extensions.ExtensionCommands.Match(metaCmd) is not null)
                 {

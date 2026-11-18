@@ -67,10 +67,10 @@ public sealed class ExtensionsPanelDriverTests
     {
         using var scope = new AgentPickerDriverTests.Scope(frame);
         var view = View();
-        var (row, col) = Find(view, h => h.Kind == MouseTargetKind.PromptModalOption && ExtensionsPanelView.ClickButton(h.Payload) == ExtensionsPanelView.Action.Reload);
+        var (row, col) = Find(view, h => h.Kind == MouseTargetKind.PromptModalOption && ExtensionsPanelView.ClickButton(h.Payload) == ExtensionsPanelView.Action.New);
         scope.Pump.PushFront([.. Click(row, col), Key(ConsoleKey.Escape)]);
         Assert.True(scope.Driver.RunExtensionsPanel(view, out var action, input: scope.Pump));
-        Assert.Equal(ExtensionsPanelView.Action.Reload, action);
+        Assert.Equal(ExtensionsPanelView.Action.New, action);
         scope.AssertRestored();
     }
 

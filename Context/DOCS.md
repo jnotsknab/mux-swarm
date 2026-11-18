@@ -913,7 +913,7 @@ Flags can be combined. Common stacks:
 /reloadskills   Refresh the skills directory
 /installskill   Install a skill by name from a curated set of sources, or from owner/repo, owner/repo/path, or a GitHub URL (recursive fetch + provenance stamp)
 /refresh        Full system refresh (config, MCP servers, skills, extensions)
-/extensions     Extensions panel: enable/disable, conflicts, trust, edit, reload
+/extensions     Extensions panel: enable/disable, conflicts, trust, create, edit, reload
 /classic, /tui  Switch renderer (classic line-by-line / live full-screen TUI)
 /mouse [preset] Mouse preset for the frame engine (off | wheel | buttons; default buttons)
 /telemetry [p|off]  Start/stop the standalone telemetry dashboard (default port 6725)
@@ -1262,7 +1262,9 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
 ```
 
 - **themes**: each entry needs a `name` (cannot reuse a built-in name), an optional `base` built-in
-  preset (default `default`), and any color roles to override: `step success warning error info muted
+  preset (default `default`; one of `default dark light mono solarized dracula gruvbox catppuccin-mocha
+  catppuccin-macchiato catppuccin-latte nord tokyo-night tokyo-storm rose-pine rose-dawn kanagawa
+  everforest one-dark monokai ayu-mirage synthwave`), and any color roles to override: `step success warning error info muted
   accent prompt banner agent mdHeading mdCode mdLink mdQuote cardBg inputBg diffAddBg diffDelBg
   diffHunkBg codeBg inlineCodeBg`. Values are `#RRGGBB`, a named color (`grey`, `white`) or `default`.
 - **spinner**: thinking-indicator frames (1-64, each 1-8 terminal cells: any text, multi-character,
@@ -1294,20 +1296,29 @@ Extensions customize Mux without rebuilding it. An extension is a folder holding
   (default), `light`, `rounded` or `ascii`; `bullet` and `rule` must each be one visible terminal cell.
   Invalid keys keep the built-in glyph (with a warning). If several extensions set it, the later name wins.
   Applies to the TUI and to markdown panels in the classic console.
-- `/refresh` reloads extensions and re-applies `console.theme`.
+- `/refresh` (or `r` in the `/extensions` panel, or `/extensions reload`) re-reads every manifest from
+  disk, restarts the trusted processes and re-applies `console.theme`; problems and conflicts are
+  recomputed, so a fixed manifest clears its warning on reload. Agent tools change from the next session.
+  Mux reads the manifests of the instance you run: edit `<install>/Extensions/<name>/` of that install
+  (the panel's details pane shows the exact folder).
 - **`/extensions`** opens a panel (TUI; works at the menu and inside a session) listing every installed
   extension with badges (`●` on, `○` disabled, `▶` process, `⇄` conflict, `!` problems) and the selected
   one's contributions, process state, conflicts and problems. Keys (each also a clickable button; click
   selects, double click toggles, the wheel scrolls the list or the details): Space/Enter enable or disable,
-  `t` trust/untrust its process (trusting takes a second `t`), `e` edit `extension.json` (`$VISUAL`/`$EDITOR` in
+  `t` trust/untrust its process (trusting takes a second `t`), `n` new, `e` edit `extension.json` (`$VISUAL`/`$EDITOR` in
   this console, else the OS default app), `o` open the folder, `r` reload, `/` search, Esc close.
   Changes save to config.json and apply at once; new agent tools arrive with the next session.
 - When two extensions set the same thing (a theme name, spinner, quips, splash, footer template, markdown
   style), the later name wins and the panel shows the conflict on both. Disable the winner to use the
   other: `"extensions": { "disabled": ["glow"] }`. A disabled extension is listed but contributes nothing.
   A command name taken by an earlier extension stays with that one.
+- `/extensions new [name]` scaffolds `<install>/Extensions/<name>` from the parts you pick (theme, spinner
+  + quips, footer chip, slash command, agent tool, interceptor; process parts get a working `main.py`
+  that answers every message), offers to trust it and reloads. It then offers to have the agent build it
+  out: inside a session the brief becomes your next message; at the menu it starts an `/agent` session
+  with the brief as the opening goal. The brief points the agent at this section and ## Event Hooks.
 - Outside the TUI, `/extensions` prints the same information as text; change it with
-  `/extensions enable|disable|trust|untrust <name>` and `/extensions reload`.
+  `/extensions enable|disable|trust|untrust <name>`, `/extensions new [name]` and `/extensions reload`.
 - The web UI keeps its own built-in theme set and also lists extension themes (served by
   `GET /api/themes`, mapped onto its colors) in the theme picker, as `ext-<name>`.
 
@@ -1331,10 +1342,15 @@ Mux and the process exchange newline-delimited JSON-RPC 2.0 over stdin/stdout:
 
 - First message: notification `initialize` with `{ protocolVersion: 1, muxVersion, name, dir, dataDir }`
   (`dir` = the extension folder as the process sees it; `dataDir` = its writable folder when sandboxed, else absent).
-- Each subscribed event: notification `event` whose params are the hook payload
-  (`event`, `agent`, `tool`, `text`, `summary`, `timestamp`; see ## Event Hooks).
+- Each subscribed event: notification `event` whose params are the hook payload (`event`, `timestamp`,
+  plus `agent`, `tool`, `args`, `text`, `summary`, `goalId` as set). The event names and the fields each
+  one carries are listed in the table under ## Event Hooks.
 - Requests from Mux carry an `id`; reply with `{ "jsonrpc": "2.0", "id": <same>, "result": ... }`.
-- stdout must carry only JSON-RPC lines. stderr is captured; `/extensions` shows its last lines.
+- stdout must carry only JSON-RPC lines, one per line, encoded as UTF-8 (Mux writes UTF-8 without a BOM
+  to stdin). On Windows, Python defaults pipes to the ANSI code page: call
+  `sys.stdout.reconfigure(encoding="utf-8")` (or send ASCII-escaped JSON, Python's `json.dumps` default)
+  or non-ASCII text such as a moon glyph fails with `UnicodeEncodeError`. stderr is captured;
+  `/extensions` shows its last lines.
 - **Tools**: a process can serve tools to the agent (`tools` key, below). Mux sends a request
   `tool/call` with `{ name, arguments }`; reply `{ "result": { "content": "<text for the model>" } }`,
   or a JSON-RPC `error` object (`{ "code": 1, "message": "..." }`). Errors, a missed timeout
@@ -1704,7 +1720,33 @@ the session; `/hooks on` re-enables). To skip the warning and prompt and keep ho
 Default `false`. It only affects startup warnings; in-session prompts (security approvals, ask_user, delete/overwrite
 confirms) still show.
 
-Supported events include `session_start`, `session_end`, `user_input`, `text_chunk`, `thinking_chunk`, `turn_end`, `agent_turn_start`, `tool_call`, `tool_result`, `task_complete`, `delegation`, `runtime_ready`, and the daemon events `daemon_start`, `daemon_stop`, `daemon_trigger`, `daemon_status`, `daemon_bridge`. See `docs/hooks.md` for the full table.
+Every event carries `event` and `timestamp`, plus `goalId` when the run has one; the other fields
+depend on the event (absent = not set). These are the exact names emitted, for hooks
+(`when.event`) and extension processes (`events` in the manifest, delivered as `event` notifications
+with this payload as `params`):
+
+| Event | When it fires | Fields |
+|-------|---------------|--------|
+| `runtime_ready` | Runtime finished booting | `text` |
+| `session_start` | A mode was entered | `agent`, `summary` (`agent`/`stateless`/`swarm`/`pswarm`), `text` (opening goal, if any) |
+| `session_end` | A session exited | `agent`, `summary` (`completed`/`interrupted`) |
+| `user_input` | A goal or message was received | `agent`, `text` |
+| `agent_turn_start` | An agent begins a turn | `agent` |
+| `text_chunk` | A streamed piece of the answer | `agent`, `text` |
+| `thinking_chunk` | A streamed piece of reasoning | `agent`, `text` |
+| `tool_call` | A tool is invoked | `agent`, `tool`, `args` (arguments as JSON) |
+| `tool_result` | A tool returned | `agent`, `tool`, `summary` (result text) |
+| `turn_end` | An agent turn completed | `agent`, `summary` (first 500 chars of the answer) |
+| `task_complete` | An agent signalled the task is done | `agent`, `summary` |
+| `delegation` | Work was delegated to a specialist | `agent` (delegating agent), `summary` (task, truncated) |
+| `daemon_start` | The daemon started | `summary` (`<n> triggers`) |
+| `daemon_stop` | The daemon stopped | (none) |
+| `daemon_trigger` | A trigger fired a goal | `agent`, `summary` (`cron:<id>`/`watch:<id>`/`webhook:<id>`), `text` (goal) |
+| `daemon_status` | A status check changed state | `summary` (`recovered:`/`unhealthy:`/`restarted:`/`restart_failed:<id>`), `text` |
+| `daemon_bridge` | A bridge process started or exited | `summary` (`started:`/`exited:<id>`), `text` |
+
+`*` (extensions) matches every event. `text_chunk` and `thinking_chunk` fire per streamed piece, so
+subscribe to them only when you need streaming.
 
 Daemon-specific hook events emitted automatically:
 - `daemon_start` -- fired when daemon starts with trigger count
