@@ -1499,7 +1499,8 @@ public static partial class MuxConsole
     {
         if (!ViaDriver) return false;
         var detail = detailMarkupLines as IReadOnlyList<string> ?? detailMarkupLines.ToList();
-        // Long output reads better in a full-screen panel than as a wall in the transcript.
+        // Long output reads better in a full-screen panel than as a wall in the transcript (callers open it
+        // before taking ConsoleLock; under the lock TryLongPanel declines and the block prints inline).
         if (title is not null && TryLongPanel(title, detail)) return true;
         // A single continuous accent rail runs down the whole block - the rail IS the grouping,
         // so no per-row bullet is needed. Header sits on the rail; a rail-only spacer separates it
@@ -1526,7 +1527,9 @@ public static partial class MuxConsole
     /// </summary>
     internal static bool TryLongPanel(string title, IReadOnlyList<string> markupLines)
     {
-        if (!ViaDriver || InputOverride != Console.In) return false;
+        // Never block on the panel's key loop while holding ConsoleLock: every other writer (daemon, hooks,
+        // the sub-agent ticker) would wait until it closes. Callers open the panel before WithConsole.
+        if (!ViaDriver || InputOverride != Console.In || System.Threading.Monitor.IsEntered(ConsoleLock)) return false;
         int rows = markupLines.Count;
         if (rows <= LongOutputRows && rows <= Math.Max(4, _driver!.Height - 8)) return false;
         if (!_driver!.RunTextPanel(new Tui.TextPanelView(title, markupLines))) return false;
@@ -1934,6 +1937,13 @@ public static partial class MuxConsole
 
     public static void WriteSummaryTable(string title, IEnumerable<(string Key, string Value)> rows)
     {
+        if (!StdioMode && ViaDriver)
+        {
+            var list = rows.ToList();
+            rows = list;
+            int keyW = list.Count == 0 ? 0 : list.Max(r => (r.Key ?? "").Length);
+            if (TryLongPanel(title, list.Select(r => $"[{C.Info}]{Esc((r.Key ?? "").PadRight(keyW))}[/]  [{C.Prompt}]{Esc(r.Value ?? "")}[/]").ToList())) return;
+        }
         WithConsole(() =>
         {
             if (StdioMode)
@@ -1971,6 +1981,8 @@ public static partial class MuxConsole
 
     public static void WritePanel(string title, string content)
     {
+        if (!StdioMode && ViaDriver && TryLongPanel(title, (content ?? "").Replace("\r\n", "\n").TrimEnd('\n').Split('\n')
+                .Select(l => $"[{C.Prompt}]{Esc(l.TrimEnd())}[/]").ToList())) return;
         WithConsole(() =>
         {
             if (StdioMode)
@@ -2005,6 +2017,8 @@ public static partial class MuxConsole
     /// Markdown payload (the web/SDK client renders it). Injection-safe: ToMarkup escapes brackets.</summary>
     public static void WritePanelMarkdown(string title, string content)
     {
+        if (!StdioMode && ViaDriver && TryLongPanel(title, (content ?? "").Replace("\r\n", "\n").Split('\n')
+                .Select(l => $"  {Tui.TuiMarkdown.ToMarkup(l.TrimEnd())}").ToList())) return;
         WithConsole(() =>
         {
             if (StdioMode)
@@ -2037,6 +2051,7 @@ public static partial class MuxConsole
     public static void WritePanelMarkup(string title, IEnumerable<string> markupLines, string stdioFallback)
     {
         var lines = markupLines as IReadOnlyList<string> ?? new List<string>(markupLines);
+        if (!StdioMode && ViaDriver && TryLongPanel(title, lines)) return;
         WithConsole(() =>
         {
             if (StdioMode)

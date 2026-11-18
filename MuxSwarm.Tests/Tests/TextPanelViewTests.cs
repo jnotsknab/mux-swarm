@@ -69,6 +69,36 @@ public class TextPanelViewTests
     }
 
     [Fact]
+    public void LongOutputPanel_DoesNotHoldTheConsoleLockWhileOpen()
+    {
+        using var scope = new AgentPickerDriverTests.Scope(true);
+        bool opened = false, lockFreeWhileOpen = false;
+        var probe = new Thread(() =>
+        {
+            // Wait for the panel to own input, then check another writer (daemon, hook, ticker) can take ConsoleLock.
+            for (int i = 0; i < 100 && !ConsoleInputPump.ModalActive; i++) Thread.Sleep(20);
+            opened = ConsoleInputPump.ModalActive;
+            Thread.Sleep(150);
+            if (Monitor.TryEnter(MuxConsole.ConsoleLock, 1000)) { lockFreeWhileOpen = true; Monitor.Exit(MuxConsole.ConsoleLock); }
+            scope.Pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(K(ConsoleKey.Escape)));   // always close it
+        }) { IsBackground = true };
+        probe.Start();
+        MuxConsole.WritePanel("Long", string.Join("\n", Enumerable.Range(1, 40).Select(i => $"row {i}")));
+        probe.Join();
+        Assert.True(opened);
+        Assert.True(lockFreeWhileOpen);
+        scope.AssertRestored();
+    }
+
+    [Fact]
+    public void LongOutput_UnderTheConsoleLock_PrintsInline()
+    {
+        using var scope = new AgentPickerDriverTests.Scope(true);
+        scope.Pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(K(ConsoleKey.Escape)));   // closes a panel if one wrongly opens
+        lock (MuxConsole.ConsoleLock) Assert.False(MuxConsole.TryLongPanel("t", Lines(100)));   // never a blocking loop under the lock
+    }
+
+    [Fact]
     public void LongOutput_NeedsADriver_ElseFallsBackInline() =>
         Assert.False(MuxConsole.TryLongPanel("t", Lines(100)));   // no live driver in tests: callers print inline
 }
