@@ -87,6 +87,14 @@ public sealed class ExtensionPanelsWebTests : IDisposable
         Assert.All(ExtensionPanels.Colors.Where(c => c != "text"), c => Assert.Contains($".c-{c}", block));
         Assert.DoesNotContain("innerHTML = n.", block);   // extension text is never parsed as HTML
         Assert.Contains("mux-xp-band", block);              // placement band
+        // The band reserves transcript room while open and follows the composer: it grows with its text
+        // and rides the mobile keyboard via visualViewport, neither of which fires a window resize.
+        Assert.Contains("function placeBand()", block);
+        var place = block[block.IndexOf("function placeBand()", StringComparison.Ordinal)..];
+        Assert.Contains("out.style.paddingBottom = pad", place[..place.IndexOf("\n  }", StringComparison.Ordinal)]);
+        Assert.Contains("new ResizeObserver(schedulePlace)", block);
+        Assert.Contains("addEventListener('transitionend', schedulePlace)", block);
+        Assert.Contains("visualViewport.addEventListener('resize', schedulePlace)", block);
         Assert.Contains("body.mux-xp-docked .app", block);  // placement side pushes the chat
         // Esc that closes a panel must not also reach the page's Esc-cancels-the-turn handler.
         var esc = block[block.IndexOf("if (e.key === 'Escape')", StringComparison.Ordinal)..];

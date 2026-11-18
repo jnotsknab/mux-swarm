@@ -14556,9 +14556,23 @@ body.mux-xp-docked .input-area { --composer-right-inset: var(--mux-xp-dock); }
     drawer.root.classList.toggle('docked', docked);
     drawer.root.classList.toggle('mux-xp-overlay', !docked);
     document.body.classList.toggle('mux-xp-docked', docked);
-    var ia = document.querySelector('.input-area');
-    if (ia) document.documentElement.style.setProperty('--mux-xp-band-bottom', (window.innerHeight - ia.getBoundingClientRect().top + 8) + 'px');
+    placeBand();
   }
+  // Keep the band just above the composer and leave room for it in the transcript, so the newest
+  // lines are never under it. Re-run whenever the composer or band changes size or moves.
+  function placeBand(){
+    var ia = document.querySelector('.input-area'), out = document.getElementById('output');
+    if (ia) document.documentElement.style.setProperty('--mux-xp-band-bottom', (window.innerHeight - ia.getBoundingClientRect().top + 8) + 'px');
+    if (!out) return;
+    var open = band.root.classList.contains('open');
+    var pad = open ? Math.ceil(window.innerHeight - band.root.getBoundingClientRect().top + 16) + 'px' : '';
+    if (out.style.paddingBottom === pad) return;
+    var atEnd = out.scrollHeight - out.scrollTop - out.clientHeight < 40;
+    out.style.paddingBottom = pad;   // '' = the stylesheet's composer-only reserve
+    if (atEnd) out.scrollTop = out.scrollHeight;
+  }
+  var placeQueued = 0;
+  function schedulePlace(){ if (!placeQueued) placeQueued = requestAnimationFrame(function(){ placeQueued = 0; placeBand(); }); }
   function upsert(m){
     var key = k(m), old = panels.get(key);
     panels.set(key, { extension: m.extension, id: m.id, title: m.title, version: m.version, view: m.view, placement: m.placement || 'screen',
@@ -14571,6 +14585,12 @@ body.mux-xp-docked .input-area { --composer-right-inset: var(--mux-xp-dock); }
     panels.delete(key); if (tell) send(p, { type: 'close' }); renderAll();
   }
   window.addEventListener('resize', function(){ if (panels.size) renderAll(); });
+  // The composer grows with its text and rides the mobile keyboard (--kb-inset, set from visualViewport),
+  // neither of which fires a window resize.
+  var ro = window.ResizeObserver ? new ResizeObserver(schedulePlace) : null, ia0 = document.querySelector('.input-area');
+  if (ro) ro.observe(band.root);
+  if (ia0) { if (ro) ro.observe(ia0, { box: 'border-box' }); ia0.addEventListener('transitionend', schedulePlace); }   // --kb-inset animates its bottom: a move, not a resize
+  if (window.visualViewport) { visualViewport.addEventListener('resize', schedulePlace); visualViewport.addEventListener('scroll', schedulePlace); }
   window.MuxExtPanels = {
     /** An ext_panel event from the engine (op = open | update | close). */
     event: function(m){ if (!m || !m.extension || !m.id) return; if (m.op === 'close') close(k(m), false); else upsert(m); },
