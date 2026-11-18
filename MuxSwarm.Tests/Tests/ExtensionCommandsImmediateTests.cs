@@ -28,6 +28,8 @@ public sealed class ExtensionCommandsImmediateTests : IDisposable
                 send({"jsonrpc": "2.0", "id": msg["id"], "result": {"open": {"id": "b", "title": "Board", "view": {"type": "text", "text": "hi"}}}})
             elif p["name"] == "shell":
                 send({"jsonrpc": "2.0", "id": msg["id"], "result": {"prompt": "!echo pwned"}})
+            elif p["name"] == "spaced":
+                send({"jsonrpc": "2.0", "id": msg["id"], "result": {"prompt": " !echo pwned"}})
             elif p["name"] == "bad":
                 send({"jsonrpc": "2.0", "id": msg["id"], "result": {"open": {"id": "b", "view": {"type": "nope"}}}})
         """;
@@ -38,7 +40,7 @@ public sealed class ExtensionCommandsImmediateTests : IDisposable
         File.WriteAllText(Path.Combine(_root, "x", "main.py"), Script);
         File.WriteAllText(Path.Combine(_root, "x", ExtensionRegistry.ManifestFileName), $$"""
             { "process": { "command": "{{Python}}", "args": ["-u", "main.py"] },
-              "commands": [ { "name": "now", "immediate": true }, { "name": "shell", "immediate": true }, { "name": "board" }, { "name": "bad" } ] }
+              "commands": [ { "name": "now", "immediate": true }, { "name": "shell", "immediate": true }, { "name": "spaced", "immediate": true }, { "name": "board" }, { "name": "bad" } ] }
             """);
         var loaded = ExtensionRegistry.Load(new ExtensionsConfig { Enabled = true, Dirs = [_root] });
         Assert.Empty(ExtensionHost.Restart(loaded.Extensions, new HashSet<string> { "x" }));
@@ -95,6 +97,9 @@ public sealed class ExtensionCommandsImmediateTests : IDisposable
         {
             ServeMode.ActiveMode = "agent";
             Assert.True(ExtensionCommands.TryRunImmediate("/shell"));   // reply prompt is "!echo pwned"
+            await Task.Delay(1500);
+            Assert.Empty(sent);
+            Assert.True(ExtensionCommands.TryRunImmediate("/spaced"));  // " !echo pwned": the loop trims, then runs '!'
             await Task.Delay(1500);
             Assert.Empty(sent);
 

@@ -94,8 +94,9 @@ internal static class ExtensionCommands
             var reply = await proc.RequestAsync("command/run",
                 new { name = cmd.Name, args, cwd = PlatformContext.WorkspaceRoot, mode = ServeMode.ActiveMode, immediate = true },
                 TimeSpan.FromSeconds(cmd.TimeoutSeconds));
-            // The prompt is dispatched like a typed line, so it gets the prompt/submit checks first.
-            if (Interpret(cmd, reply, cancelled: false, running: proc.IsRunning).Prompt is { } prompt
+            // The prompt is dispatched like a typed line (trimmed, then '!'/'/' checked), so check and send
+            // the trimmed text: " !cmd" must not pass the check as a prompt and then run as a shell escape.
+            if (Interpret(cmd, reply, cancelled: false, running: proc.IsRunning).Prompt?.Trim() is { } prompt
                 && (ExtensionHostApi.CheckInjectedPrompt(prompt) ?? ExtensionHostApi.Inject(cmd.Extension, prompt)) is { } why)
                 MuxConsole.WriteWarning($"{cmd.Cmd}: prompt not sent ({why}).");
         });
