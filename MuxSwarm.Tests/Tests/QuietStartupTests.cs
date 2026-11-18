@@ -43,4 +43,36 @@ public class QuietStartupTests
         Assert.Equal(["info", "ok", "muted", "warn", "info"], log);
         Assert.Contains(LogsCommand.Rows(1), r => r.Contains($"provider {id}"));
     }
+
+    [Fact]
+    public void MissingApiKeyPrompt_ShowsEveryInstruction_DuringQuietStartup()
+    {
+        var priorIn = MuxConsole.InputOverride;
+        var prior = Spectre.Console.AnsiConsole.Console;
+        string envVar = "MUX_TEST_KEY_" + Guid.NewGuid().ToString("N")[..8].ToUpperInvariant();
+        var output = new StringWriter();
+        try
+        {
+            MuxConsole.InputOverride = new StringReader("secret-value\n");
+            Spectre.Console.AnsiConsole.Console = Spectre.Console.AnsiConsole.Create(new Spectre.Console.AnsiConsoleSettings
+            {
+                Ansi = Spectre.Console.AnsiSupport.No, ColorSystem = Spectre.Console.ColorSystemSupport.NoColors,
+                Out = new Spectre.Console.AnsiConsoleOutput(output),
+            });
+            MuxConsole.QuietStartup = true;
+            App.PromptForApiKey(envVar);
+            string shown = output.ToString();
+            Assert.Contains("1. Set permanently", shown);              // muted line: was held back
+            Assert.Contains("API key set for this session.", shown);   // success line: was held back
+            Assert.True(MuxConsole.QuietStartup);                      // quiet startup resumes after the prompt
+            Assert.Equal("secret-value", Environment.GetEnvironmentVariable(envVar));
+        }
+        finally
+        {
+            MuxConsole.QuietStartup = false;
+            Spectre.Console.AnsiConsole.Console = prior;
+            MuxConsole.InputOverride = priorIn;
+            Environment.SetEnvironmentVariable(envVar, null);
+        }
+    }
 }

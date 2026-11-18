@@ -354,6 +354,7 @@ internal class App
         // --update : do-and-exit self-update from the latest GitHub release.
         if (parsed.UpdateMode)
         {
+            MuxConsole.EndQuietStartup();   // a do-and-exit command: its progress and result are the whole output
             var (staged, msg) = await MuxSwarm.State.SelfUpdater.RunAsync(line => MuxConsole.WriteInfo(line));
             MuxConsole.WriteInfo(msg);
             if (staged)
@@ -2122,10 +2123,12 @@ internal class App
                         ? args[++i] : "all";
                     break;
                 case "--register":
+                    MuxConsole.EndQuietStartup();   // do-and-exit: show its result
                     ServiceRegistration.Register(args);
                     Environment.Exit(0);
                     break;
                 case "--remove":
+                    MuxConsole.EndQuietStartup();
                     ServiceRegistration.Remove();
                     Environment.Exit(0);
                     break;
@@ -2569,32 +2572,7 @@ internal class App
         {
             var apiKeyValue = Environment.GetEnvironmentVariable(provider.ApiKeyEnvVar);
             if (string.IsNullOrWhiteSpace(apiKeyValue))
-            {
-                MuxConsole.WriteWarning($"API key env var '{provider.ApiKeyEnvVar}' is not set.");
-
-                MuxConsole.WriteBody("You can:");
-                if (PlatformContext.IsWindows)
-                {
-                    MuxConsole.WriteMuted($"  1. Set permanently (PowerShell):  [Environment]::SetEnvironmentVariable(\"{provider.ApiKeyEnvVar}\", \"your-key\", \"User\")");
-                    MuxConsole.WriteMuted($"     Or (cmd):  setx {provider.ApiKeyEnvVar} \"your-key\"");
-                }
-                else
-                {
-                    MuxConsole.WriteMuted($"  1. Set permanently:  echo 'export {provider.ApiKeyEnvVar}=\"your-key\"' >> ~/.{(PlatformContext.IsMac ? "zshrc" : "bashrc")}");
-                }
-                MuxConsole.WriteBody("  2. Set it for this session only:");
-                var input = MuxConsole.Prompt("Paste API key (hidden) or press Enter if no key is necessary", secret: true);
-                if (!string.IsNullOrEmpty(input))
-                {
-                    Environment.SetEnvironmentVariable(provider.ApiKeyEnvVar, input, EnvironmentVariableTarget.Process);
-                    apiKeyValue = input;
-                    MuxConsole.WriteSuccess("API key set for this session.");
-                }
-                else
-                {
-                    MuxConsole.WriteWarning("No API key provided. LLM Invocations may fail unless no key is needed.");
-                }
-            }
+                PromptForApiKey(provider.ApiKeyEnvVar);
 
             // MuxConsole.WriteMuted($"API key: {MaskSecret(apiKeyValue)}");
         }
@@ -2605,6 +2583,39 @@ internal class App
         MuxConsole.WriteInfo($"Provider: {provider.Name}");
         MuxConsole.WriteInfo($"Endpoint: {normalizedEndpoint}");
         OtelLogger.Info($"Initialized LLM Provider: {provider.Name}, endpoint is {normalizedEndpoint}");
+    }
+
+    /// <summary>The missing-API-key prompt: how to set it, then a hidden prompt for this session. Shown in full even
+    /// during quiet startup (it is interactive); quiet startup resumes afterwards.</summary>
+    internal static void PromptForApiKey(string envVar)
+    {
+        // An interactive prompt: show every instruction line and the confirmation, then resume quiet startup.
+        bool quiet = MuxConsole.QuietStartup;
+        MuxConsole.EndQuietStartup();
+        MuxConsole.WriteWarning($"API key env var '{envVar}' is not set.");
+
+        MuxConsole.WriteBody("You can:");
+        if (PlatformContext.IsWindows)
+        {
+            MuxConsole.WriteMuted($"  1. Set permanently (PowerShell):  [Environment]::SetEnvironmentVariable(\"{envVar}\", \"your-key\", \"User\")");
+            MuxConsole.WriteMuted($"     Or (cmd):  setx {envVar} \"your-key\"");
+        }
+        else
+        {
+            MuxConsole.WriteMuted($"  1. Set permanently:  echo 'export {envVar}=\"your-key\"' >> ~/.{(PlatformContext.IsMac ? "zshrc" : "bashrc")}");
+        }
+        MuxConsole.WriteBody("  2. Set it for this session only:");
+        var input = MuxConsole.Prompt("Paste API key (hidden) or press Enter if no key is necessary", secret: true);
+        if (!string.IsNullOrEmpty(input))
+        {
+            Environment.SetEnvironmentVariable(envVar, input, EnvironmentVariableTarget.Process);
+            MuxConsole.WriteSuccess("API key set for this session.");
+        }
+        else
+        {
+            MuxConsole.WriteWarning("No API key provided. LLM Invocations may fail unless no key is needed.");
+        }
+        MuxConsole.QuietStartup = quiet;
     }
 
     private static string NormalizeOpenAiEndpoint(string endpoint)
