@@ -190,7 +190,7 @@ internal sealed class ModelPickerView
         string Clip(string s) => TuiMarkup.TruncateMarkup(s, width, "");
         var rows = new List<string>
         {
-            $"[{TuiComponents.Accent} bold] MODEL SETTINGS[/] [{TuiComponents.Muted}]— {Esc(Provider)}[/]",
+            TuiComponents.PanelHeader($"[{TuiComponents.Accent} bold] MODEL SETTINGS[/] [{TuiComponents.Muted}]— {Esc(Provider)}[/]", width),
             $"[{TuiComponents.Muted}] Tab: Slots / Models / Effort · Active: {_pane}[/]",
             $"[{TuiComponents.Text}] {Esc((Slot?.Label ?? "No slots") + " (" + (Slot?.Id ?? "") + ")")}[/]",
             $"[{TuiComponents.Muted}] Model: {Esc(Model.Length > 0 ? Model : "(select)")}[/]",
@@ -214,7 +214,8 @@ internal sealed class ModelPickerView
             for (int i = start; i < Math.Min(_slots.Count, start + room); i++)
             {
                 hits?.Add(new HitRegion(rows.Count + 1, 1, 1, width, MouseTargetKind.PickerItem, i));
-                rows.Add($"[{(i == _slotIndex ? TuiComponents.Accent : TuiComponents.Muted)}]{(i == _slotIndex ? "›" : " ")} {Esc(_slots[i].Label)} · {Esc(_slots[i].Model ?? "unset")}[/]");
+                string row = $"[{(i == _slotIndex ? TuiComponents.Accent : TuiComponents.Muted)}]{(i == _slotIndex ? TuiComponents.PanelMarker("›") : " ")} {Esc(_slots[i].Label)} · {Esc(_slots[i].Model ?? "unset")}[/]";
+                rows.Add(i == _slotIndex ? TuiComponents.PanelSelectedRow(row, width) : row);
             }
         }
         else if (_pane == Pane.Models)
@@ -227,7 +228,8 @@ internal sealed class ModelPickerView
                 for (int i = start; i < Math.Min(matches.Count, start + modelRoom); i++)
                 {
                     hits?.Add(new HitRegion(rows.Count + 1, 1, 1, width, MouseTargetKind.PickerItem, i));
-                    rows.Add($"[{(i == _modelIndex ? TuiComponents.Accent : TuiComponents.Muted)}]{(i == _modelIndex ? "›" : " ")} {Esc(matches[i])}{(matches[i] == Slot?.Model ? " (current)" : "")}[/]");
+                    string row = $"[{(i == _modelIndex ? TuiComponents.Accent : TuiComponents.Muted)}]{(i == _modelIndex ? TuiComponents.PanelMarker("›") : " ")} {Esc(matches[i])}{(matches[i] == Slot?.Model ? " (current)" : "")}[/]";
+                    rows.Add(i == _modelIndex ? TuiComponents.PanelSelectedRow(row, width) : row);
                 }
             if (!_manual && matches.Count == 0) rows.Add($"[{TuiComponents.Muted}] {(Loading ? "Loading models…" : "No matches. F2: enter model manually.")}[/]");
         }
@@ -242,8 +244,8 @@ internal sealed class ModelPickerView
         if (rows.Count > bodyEnd) rows = rows.Take(bodyEnd).ToList();
         while (rows.Count < bodyEnd) rows.Add("");
         rows.Add($"[{TuiComponents.Muted}] {Esc(Loading ? "Querying active provider…" : Message ?? "")}[/]");
-        rows.Add($"[{TuiComponents.Accent}] F4 Apply · Enter choose · Tab pane · ↑↓/PgUp/PgDn navigate[/]");
-        rows.Add($"[{TuiComponents.Muted}] F2 manual/custom · F5 refresh · Esc/Ctrl+Q cancel[/]");
+        rows.Add(TuiComponents.PanelHint($"[{TuiComponents.Accent}] F4 Apply · Enter choose · Tab pane · ↑↓/PgUp/PgDn navigate[/]", width));
+        rows.Add(TuiComponents.PanelHint($"[{TuiComponents.Muted}] F2 manual/custom · F5 refresh · Esc/Ctrl+Q cancel[/]", width));
         return rows.TakeLast(height).Select(Clip).ToList();
     }
 }
