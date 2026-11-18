@@ -108,6 +108,34 @@ public class InputDuringTurnTests
     }
 
     [Fact]
+    public void QueuedCommand_FromAnEndedSession_NeverRunsInTheNextOne()
+    {
+        try
+        {
+            Assert.Equal("queued", SingleAgentOrchestrator.RouteTurnLine("/wipe"));   // queued, then the session was cancelled
+            SingleAgentOrchestrator.ClearAfterTurn();                                    // what a new session does first
+            Assert.Equal("typed", SingleAgentOrchestrator.NextInputOrQueued(() => "typed"));
+            // The session entry point clears the queue before its first read.
+            var src = File.ReadAllText(Path.Combine(SourceRoot(), "Engine", "SingleAgentOrchestrator.cs"));
+            int core = src.IndexOf("private static async Task ChatAgentCoreAsync(", StringComparison.Ordinal);
+            int firstRead = src.IndexOf("string firstInput = MuxConsole.ReadInput(", core, StringComparison.Ordinal);
+            int clear = src.IndexOf("ClearAfterTurn();", core, StringComparison.Ordinal);
+            Assert.True(clear > core && clear < firstRead, "ChatAgentCoreAsync must clear queued after-turn lines before the first read");
+        }
+        finally
+        {
+            while (SingleAgentOrchestrator.NextInputOrQueued(() => null) is not null) { }
+        }
+    }
+
+    private static string SourceRoot([System.Runtime.CompilerServices.CallerFilePath] string path = "")
+    {
+        var dir = Path.GetDirectoryName(path);
+        while (dir is not null && !File.Exists(Path.Combine(dir, "MuxSwarm.csproj"))) dir = Path.GetDirectoryName(dir);
+        return dir!;
+    }
+
+    [Fact]
     public void SteerBox_PaletteCompletesCommandsLikeThePrompt()
     {
         var driver = new TuiDriver(new Term(), frameEngine: true);

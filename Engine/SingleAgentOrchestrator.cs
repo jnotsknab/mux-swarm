@@ -108,6 +108,13 @@ public static class SingleAgentOrchestrator
         return _afterTurn.TryDequeue(out var queued) ? queued : read();
     }
 
+    /// <summary>Drop after-turn lines left by an earlier session (it was cancelled or ended before its next prompt),
+    /// so a /command typed there never runs in this one. Called when a session starts.</summary>
+    internal static void ClearAfterTurn()
+    {
+        while (_afterTurn.TryDequeue(out _)) { }
+    }
+
     internal static string? DrainSteer()
     {
         if (_pendingSteer.IsEmpty) return null;
@@ -984,6 +991,7 @@ public static class SingleAgentOrchestrator
         }
 
         HookWorker.SetGoalId(goalId);
+        ClearAfterTurn();
         var resolvedModelId = "";
         using var sessionSpan = OtelTracer.GetSource().StartActivity("agent_session");
 
