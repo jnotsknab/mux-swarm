@@ -24,13 +24,19 @@ internal static class LayoutCommand
         return shape == "classic" ? Standard : shape;
     }
 
-    /// <summary>Set (or for <see cref="Standard"/> remove) the user's <c>compose.shape</c> in <paramref name="console"/>.
-    /// False when nothing changed. Other user region styles are kept.</summary>
-    internal static bool Apply(ConsoleConfig console, string choice)
+    /// <summary>The shape the enabled extensions set on their own (without the user's <c>console.tui</c>), or <c>classic</c>.</summary>
+    internal static string ExtensionShape() =>
+        ExtensionRegistry.Loaded.ExtensionTuiStyles is { } s && s.TryGetValue("compose.shape", out var v) ? v : "classic";
+
+    /// <summary>Set the user's <c>compose.shape</c> in <paramref name="console"/>. For <see cref="Standard"/> the override is
+    /// removed, or set to <c>classic</c> when an extension sets another shape (<paramref name="extensionShape"/>), since
+    /// removing it would bring that shape back. False when nothing changed. Other user region styles are kept.</summary>
+    internal static bool Apply(ConsoleConfig console, string choice, string extensionShape = "classic")
     {
         var regions = console.Tui?.Regions;
         string? current = regions is not null && regions.TryGetValue("compose", out var c) && c.TryGetValue("shape", out var v)
             && v.ValueKind == JsonValueKind.String ? v.GetString() : null;
+        if (choice == Standard && extensionShape != "classic") choice = "classic";
         if (choice == Standard)
         {
             if (current is null) return false;

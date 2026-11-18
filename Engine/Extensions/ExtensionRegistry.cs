@@ -112,6 +112,9 @@ internal static partial class ExtensionRegistry
 
         /// <summary>Merged per-region TUI styles (<c>region.property</c> -&gt; value); null = built-in look.</summary>
         internal IReadOnlyDictionary<string, string>? TuiStyles { get; init; }
+
+        /// <summary>The extensions' merged TUI styles before the user's <c>console.tui</c> is applied; null = none.</summary>
+        internal IReadOnlyDictionary<string, string>? ExtensionTuiStyles { get; init; }
     }
 
     private static readonly Result Empty = new([], [], []);
@@ -156,7 +159,7 @@ internal static partial class ExtensionRegistry
         if (BuildTuiStyles(user, problems, UserStyleOwner) is not { } mine) return loaded with { Problems = problems };
         var styles = new Dictionary<string, string>(loaded.TuiStyles ?? new Dictionary<string, string>(), StringComparer.OrdinalIgnoreCase);
         foreach (var (k, v) in mine) styles[k] = v;
-        return loaded with { Problems = problems, TuiStyles = styles };
+        return loaded with { Problems = problems, TuiStyles = styles, ExtensionTuiStyles = loaded.TuiStyles };
     }
 
     /// <summary>The install folder followed by <see cref="ExtensionsConfig.Dirs"/>, resolved and de-duplicated.</summary>
@@ -372,6 +375,7 @@ internal static partial class ExtensionRegistry
         {
             Cosmetics = cosmetics, FooterTemplate = footer, Markdown = markdown, Conflicts = conflicts, Disabled = skipped,
             TuiStyles = styles.Count == 0 ? null : styles,
+            ExtensionTuiStyles = styles.Count == 0 ? null : styles,
         };
     }
 

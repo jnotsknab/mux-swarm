@@ -2108,7 +2108,11 @@ public static class CliCmdUtils
             return;
         }
         // Already in effect (from your config or an extension; also Esc on the picker): change nothing.
-        if (pick == active || !Extensions.LayoutCommand.Apply(App.Config.Console, pick)) { MuxConsole.WriteMuted($"Layout is already {pick}."); return; }
+        if (pick == active || !Extensions.LayoutCommand.Apply(App.Config.Console, pick, Extensions.LayoutCommand.ExtensionShape()))
+        {
+            MuxConsole.WriteMuted($"Layout is already {pick}.");
+            return;
+        }
         try { Common.SaveConfig(App.Config); }
         catch (Exception ex) { MuxConsole.WriteWarning($"Layout changed for this session, but config.json could not be saved: {ex.Message}"); }
         App.LoadExtensions(announce: false, quiet: true);   // re-applies console.tui over the extensions

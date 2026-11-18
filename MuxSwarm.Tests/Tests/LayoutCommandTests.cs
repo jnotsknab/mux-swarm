@@ -69,4 +69,24 @@ public sealed class LayoutCommandTests : IDisposable
         ExtensionRegistry.Load(null);
         Assert.Equal(LayoutCommand.Standard, LayoutCommand.Active());
     }
+
+    [Theory]
+    [InlineData(false)]   // no shape of the user's own yet
+    [InlineData(true)]    // the user had picked one before
+    public void Standard_OverridesAnExtensionShape_BackToTheStockLook(bool userHadShape)
+    {
+        var dir = Path.Combine(_root, "hearth");
+        Directory.CreateDirectory(dir);
+        File.WriteAllText(Path.Combine(dir, ExtensionRegistry.ManifestFileName), "{ \"tui\": { \"regions\": { \"compose\": { \"shape\": \"box\" } } } }");
+        var cfg = new ExtensionsConfig { Enabled = true, Dirs = [_root] };
+        var console = new ConsoleConfig();
+        if (userHadShape) LayoutCommand.Apply(console, "rule");
+        ExtensionRegistry.Load(cfg, console.Tui);
+        Assert.Equal("box", LayoutCommand.ExtensionShape());   // the user's own pick is not the extension's
+
+        Assert.True(LayoutCommand.Apply(console, LayoutCommand.Standard, LayoutCommand.ExtensionShape()));   // reports a change
+        ExtensionRegistry.Load(cfg, console.Tui);
+        Assert.Equal(LayoutCommand.Standard, LayoutCommand.Active());   // stock look, not the extension's box
+        Assert.False(LayoutCommand.Apply(console, LayoutCommand.Standard, LayoutCommand.ExtensionShape()));
+    }
 }
