@@ -92,7 +92,7 @@ public sealed class DaemonRunner : IAsyncDisposable
 
         var ct = _cts.Token;
 
-        MuxConsole.WriteInfo($"[Daemon] Starting {_config.Triggers.Count} trigger(s)...");
+        MuxConsole.WriteInfo($"Daemon starting {_config.Triggers.Count} trigger(s)...");
 
         HookWorker.Enqueue(new HookEvent
         {
@@ -140,11 +140,11 @@ public sealed class DaemonRunner : IAsyncDisposable
     /// </summary>
     public string? AddTriggerRuntime(DaemonTrigger trigger)
     {
-        if (!IsStarted) { MuxConsole.WriteWarning("[Daemon] Not started yet; cannot add a runtime trigger."); return null; }
+        if (!IsStarted) { MuxConsole.WriteWarning("[daemon] Not started yet; cannot add a runtime trigger."); return null; }
         var type = (trigger.Type ?? "").ToLowerInvariant();
         if (type is not ("cron" or "watch" or "webhook"))
         {
-            MuxConsole.WriteWarning($"[Daemon] Runtime add supports cron|watch|webhook (got '{trigger.Type}').");
+            MuxConsole.WriteWarning($"[daemon] Runtime add supports cron|watch|webhook (got '{trigger.Type}').");
             return null;
         }
         if (string.IsNullOrWhiteSpace(trigger.Id))
@@ -903,7 +903,7 @@ public sealed class DaemonRunner : IAsyncDisposable
     {
         if (string.IsNullOrWhiteSpace(trigger.Id))
         {
-            MuxConsole.WriteWarning("[Daemon] webhook trigger missing an id; skipping.");
+            MuxConsole.WriteWarning("[daemon] webhook trigger missing an id; skipping.");
             return;
         }
 
