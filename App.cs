@@ -256,6 +256,10 @@ internal class App
         }
         
         Activity? startupSpan = null;
+
+        // Routine startup notices (provider, skills, telemetry ...) go to the startup log (/logs) instead of
+        // the screen; warnings and errors still print. MUXSWARM_VERBOSE=1 keeps the old output.
+        MuxConsole.QuietStartup = !MuxConsole.StdioMode && !VerboseInit;
         
         // In-proc OTel ingestion for the telemetry dashboard (metrics/traces/logs tabs).
         // Always on, independent of the OTLP exporter gate; bounded memory.
@@ -288,12 +292,9 @@ internal class App
         InitLlmProvider();
         SkillLoader.LoadSkills();
         
-        // Hooks confirm BEFORE the MCP kickoff: HookWorker.Start shows a blocking
-        // Confirm prompt when hooks are configured (interactive path), and putting it
-        // after the MCP fan-out landed the prompt in the middle of the subprocess spawn
-        // storm - key handling turned sluggish and startup felt slow. On a quiet machine
-        // the prompt is instant; MCP init still overlaps everything after it and is
-        // awaited lazily via EnsureMcpReadyAsync() before the first tool use.
+        // Hooks load here; on interactive runs the "Proceed with hooks enabled?" prompt is deferred to
+        // HookWorker.ConfirmPending() once the TUI is up (it then shows in the frame). MCP init still
+        // overlaps everything and is awaited lazily via EnsureMcpReadyAsync() before the first tool use.
         HookWorker.Start(SwarmConfig?.Hooks ?? []);
         OtelLogger.Info("Hook Worker Started");
 
@@ -353,6 +354,7 @@ internal class App
         // --update : do-and-exit self-update from the latest GitHub release.
         if (parsed.UpdateMode)
         {
+            MuxConsole.EndQuietStartup();   // a do-and-exit command: its progress and result are the whole output
             var (staged, msg) = await MuxSwarm.State.SelfUpdater.RunAsync(line => MuxConsole.WriteInfo(line));
             MuxConsole.WriteInfo(msg);
             if (staged)
@@ -513,12 +515,16 @@ internal class App
         if (!string.IsNullOrWhiteSpace(parsed.Goal))
         {
             DaemonPending = false;   // daemon never starts on this path; health must not stay "starting"
+            MuxConsole.EndQuietStartup();
+            HookWorker.ConfirmPending();
             await EnsureMcpReadyAsync();
             return await HandleParsedRun(parsed);
         }
 
         if (parsed.ReportAll || parsed.ReportSessionId != null)
         {
+            MuxConsole.EndQuietStartup();
+            HookWorker.ConfirmPending();
             CliCmdUtils.GenerateSessionReports(parsed.ReportSessionId);
             OtelLogger.Info("Generated Session Reports From parsed --report arg");
             DaemonPending = false;
@@ -541,6 +547,8 @@ internal class App
                 }
             }
 
+            MuxConsole.EndQuietStartup();
+            HookWorker.ConfirmPending();
             await EnsureMcpReadyAsync();
             DaemonRunner.Start(
                 chatClientFactory: modelId => CreateChatClient(modelId),
@@ -554,6 +562,8 @@ internal class App
         if (OnboardRequested)
         {
             OnboardRequested = false;
+            MuxConsole.EndQuietStartup();
+            HookWorker.ConfirmPending();
             await EnsureMcpReadyAsync();
             var onboardModel = LoadSingleAgentModel();
             var onboardCts = GetOrResetCts();
@@ -571,6 +581,8 @@ internal class App
         // agent/swarm sessions. At the menu it runs in "top-level" palette scope (mode-select
         // commands); sessions switch it to the in-session command set. No-op outside TUI.
         MuxConsole.EnableDockedFooter(topLevel: true);
+        MuxConsole.EndQuietStartup();
+        HookWorker.ConfirmPending();   // in the frame modal when the frame engine is up
         // Interactive loop
         while (!Environment.HasShutdownStarted)
         {
@@ -1562,6 +1574,10 @@ internal class App
                     break;
                 }
 
+                case "/logs":
+                    LogsCommand.Run();
+                    break;
+
                 case var extCmd when Engine.Extensions.ExtensionCommands.Match(extCmd) is not null:
                 {
                     // Extension command at the menu. There is no agent here, so a returned prompt is
@@ -2107,10 +2123,12 @@ internal class App
                         ? args[++i] : "all";
                     break;
                 case "--register":
+                    MuxConsole.EndQuietStartup();   // do-and-exit: show its result
                     ServiceRegistration.Register(args);
                     Environment.Exit(0);
                     break;
                 case "--remove":
+                    MuxConsole.EndQuietStartup();
                     ServiceRegistration.Remove();
                     Environment.Exit(0);
                     break;
@@ -2554,32 +2572,7 @@ internal class App
         {
             var apiKeyValue = Environment.GetEnvironmentVariable(provider.ApiKeyEnvVar);
             if (string.IsNullOrWhiteSpace(apiKeyValue))
-            {
-                MuxConsole.WriteWarning($"API key env var '{provider.ApiKeyEnvVar}' is not set.");
-
-                MuxConsole.WriteBody("You can:");
-                if (PlatformContext.IsWindows)
-                {
-                    MuxConsole.WriteMuted($"  1. Set permanently (PowerShell):  [Environment]::SetEnvironmentVariable(\"{provider.ApiKeyEnvVar}\", \"your-key\", \"User\")");
-                    MuxConsole.WriteMuted($"     Or (cmd):  setx {provider.ApiKeyEnvVar} \"your-key\"");
-                }
-                else
-                {
-                    MuxConsole.WriteMuted($"  1. Set permanently:  echo 'export {provider.ApiKeyEnvVar}=\"your-key\"' >> ~/.{(PlatformContext.IsMac ? "zshrc" : "bashrc")}");
-                }
-                MuxConsole.WriteBody("  2. Set it for this session only:");
-                var input = MuxConsole.Prompt("Paste API key (hidden) or press Enter if no key is necessary", secret: true);
-                if (!string.IsNullOrEmpty(input))
-                {
-                    Environment.SetEnvironmentVariable(provider.ApiKeyEnvVar, input, EnvironmentVariableTarget.Process);
-                    apiKeyValue = input;
-                    MuxConsole.WriteSuccess("API key set for this session.");
-                }
-                else
-                {
-                    MuxConsole.WriteWarning("No API key provided. LLM Invocations may fail unless no key is needed.");
-                }
-            }
+                PromptForApiKey(provider.ApiKeyEnvVar);
 
             // MuxConsole.WriteMuted($"API key: {MaskSecret(apiKeyValue)}");
         }
@@ -2590,6 +2583,39 @@ internal class App
         MuxConsole.WriteInfo($"Provider: {provider.Name}");
         MuxConsole.WriteInfo($"Endpoint: {normalizedEndpoint}");
         OtelLogger.Info($"Initialized LLM Provider: {provider.Name}, endpoint is {normalizedEndpoint}");
+    }
+
+    /// <summary>The missing-API-key prompt: how to set it, then a hidden prompt for this session. Shown in full even
+    /// during quiet startup (it is interactive); quiet startup resumes afterwards.</summary>
+    internal static void PromptForApiKey(string envVar)
+    {
+        // An interactive prompt: show every instruction line and the confirmation, then resume quiet startup.
+        bool quiet = MuxConsole.QuietStartup;
+        MuxConsole.EndQuietStartup();
+        MuxConsole.WriteWarning($"API key env var '{envVar}' is not set.");
+
+        MuxConsole.WriteBody("You can:");
+        if (PlatformContext.IsWindows)
+        {
+            MuxConsole.WriteMuted($"  1. Set permanently (PowerShell):  [Environment]::SetEnvironmentVariable(\"{envVar}\", \"your-key\", \"User\")");
+            MuxConsole.WriteMuted($"     Or (cmd):  setx {envVar} \"your-key\"");
+        }
+        else
+        {
+            MuxConsole.WriteMuted($"  1. Set permanently:  echo 'export {envVar}=\"your-key\"' >> ~/.{(PlatformContext.IsMac ? "zshrc" : "bashrc")}");
+        }
+        MuxConsole.WriteBody("  2. Set it for this session only:");
+        var input = MuxConsole.Prompt("Paste API key (hidden) or press Enter if no key is necessary", secret: true);
+        if (!string.IsNullOrEmpty(input))
+        {
+            Environment.SetEnvironmentVariable(envVar, input, EnvironmentVariableTarget.Process);
+            MuxConsole.WriteSuccess("API key set for this session.");
+        }
+        else
+        {
+            MuxConsole.WriteWarning("No API key provided. LLM Invocations may fail unless no key is needed.");
+        }
+        MuxConsole.QuietStartup = quiet;
     }
 
     private static string NormalizeOpenAiEndpoint(string endpoint)

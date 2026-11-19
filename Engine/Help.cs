@@ -32,6 +32,7 @@ public struct Help
         "  /kanban          (in a taskboard team) editable board: add/assign/move/ready/remove tasks + toggle peer self-claim (/kanban help)",
         "  /resume         Resume a previous lead-agent session; bare /resume opens the fuzzy picker (Enter resume, v preview)",
         "  /history        Browse past sessions in a full-screen viewer: fuzzy find, Enter opens, j/k scroll, / searches",
+        "  /logs           Recent notices (incl. the quiet startup lines) and runtime log lines, in a panel",
         "  /telemetry      Start the telemetry dashboard (tokens/cost/tools, all-time, Grafana-style) [/telemetry <port>|off]",
         "  /tag            (in-session) Tag the live session with free-form text for easy resume/search; optional MEMORY.md stub",
         "  /compact        Compact current session context now (optional steering: /compact <instruction>)",
