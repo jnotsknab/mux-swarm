@@ -328,6 +328,9 @@ public static partial class MuxConsole
                 InputOverride = Console.In;
                 return Console.ReadLine();
             }
+            // Not typed: the startup input box (drawn before the first keyboard read) must not stay up while the
+            // agent works on this line (e.g. /setup's seeded onboarding goal).
+            if (ViaDriver) lock (ConsoleLock) _driver!.ReleaseInputBox();
             return line;
         }
 
@@ -661,14 +664,12 @@ public static partial class MuxConsole
                 return;
             }
 
-            AnsiConsole.WriteLine();
             if (!RegionStyle.Flag("splash.show"))
             {
                 // splash.show false: one quiet version line instead of the banner card (both renderers).
                 string line = SplashTitleMarkup(version, debugTag);
                 FrameSplashFactory = _ => new List<string> { line, "" };
-                AnsiConsole.MarkupLine(line);
-                AnsiConsole.WriteLine();
+                PrintSplash(() => { AnsiConsole.WriteLine(); AnsiConsole.MarkupLine(line); AnsiConsole.WriteLine(); });
                 return;
             }
 
@@ -681,13 +682,28 @@ public static partial class MuxConsole
             FrameSplashFactory = terminalWidth => BuildFrameSplashLines(
                 version, debugTag, splashLabel, splashText, terminalWidth, recentSessions);
 
-            AnsiConsole.Write(BuildSplashRenderable(version, debugTag, splashLabel, splashText,
-                AnsiConsole.Profile.Width, recentSessions));
-
-            AnsiConsole.WriteLine();
-            AnsiConsole.Write(new Rule().RuleStyle(Style.Parse(C.Muted)));
-            AnsiConsole.WriteLine();
+            PrintSplash(() =>
+            {
+                AnsiConsole.WriteLine();
+                AnsiConsole.Write(BuildSplashRenderable(version, debugTag, splashLabel, splashText,
+                    AnsiConsole.Profile.Width, recentSessions));
+                AnsiConsole.WriteLine();
+                AnsiConsole.Write(new Rule().RuleStyle(Style.Parse(C.Muted)));
+                AnsiConsole.WriteLine();
+            });
         });
+    }
+
+    /// <summary>When true, the primary-screen splash print is held until <see cref="EndQuietStartup"/>; the frame
+    /// engine drops it when it paints the splash itself, so a frame start paints the splash once, in place.</summary>
+    internal static bool DeferSplashToFrame { get; set; }
+
+    private static Action? _deferredSplash;
+
+    private static void PrintSplash(Action print)
+    {
+        if (DeferSplashToFrame) _deferredSplash = print;
+        else print();
     }
 
     /// <summary>Build the primary-screen card from the same bounded rows as the frame renderer.</summary>
@@ -1557,7 +1573,13 @@ public static partial class MuxConsole
     internal static bool QuietStartup { get; set; }
 
     /// <summary>Stop holding back routine notices (the interactive loop is about to take input).</summary>
-    internal static void EndQuietStartup() => QuietStartup = false;
+    internal static void EndQuietStartup()
+    {
+        QuietStartup = false;
+        DeferSplashToFrame = false;
+        // A held splash nobody painted (classic renderer, --goal, --report, daemon, driver init failure): print it now.
+        if (Interlocked.Exchange(ref _deferredSplash, null) is { } splash) WithConsole(splash);
+    }
 
     /// <summary>Recent console notices (level, text, time), newest last; at most 300. Shown by /logs.</summary>
     internal static IReadOnlyList<(string Level, string Text, DateTime At)> NoticeLog
