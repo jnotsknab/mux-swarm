@@ -264,6 +264,10 @@ public class InputDuringTurnTests
                     SpinWait.SpinUntil(() => !steers.IsEmpty, TimeSpan.FromSeconds(2));
                     Assert.Equal(new[] { "a\\" }, steers.ToArray());                     // typed, not swallowed
                     Assert.Equal(1, Volatile.Read(ref opened));
+                    // End like the block above: Esc stops this listener's thread before the hide-mode listener starts,
+                    // so a still-polling thread can never take the next block's key.
+                    pump.Enqueue(ConsoleInputPump.InputEvent.OfKey(new ConsoleKeyInfo('\u001b', ConsoleKey.Escape, false, false, false)));
+                    Assert.True(turn.Token.WaitHandle.WaitOne(TimeSpan.FromSeconds(2)), "Esc did not cancel");
                 }
                 driver.SetTurnInput(false);
             }
