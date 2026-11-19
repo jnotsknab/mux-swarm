@@ -1283,6 +1283,10 @@ internal class App
                     CliCmdUtils.HandleTheme(userInput);
                     break;
 
+                case var lay when lay == "/layout" || lay.StartsWith("/layout ", StringComparison.Ordinal):
+                    CliCmdUtils.HandleLayout(userInput);
+                    break;
+
                 case "/reloadskills":
                     CliCmdUtils.ReloadSkills();
                     break;
