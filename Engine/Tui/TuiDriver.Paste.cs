@@ -112,6 +112,9 @@ internal sealed partial class TuiDriver
 
     private void CancelPendingPaste(bool discardQueued = false)
     {
+        // Only a paste that was actually in flight earns the notice: ReadLine's exit calls this on every submit, and
+        // a stale "cancelled" line would show in the mid-turn input box (console.inputDuringTurn = "steer").
+        bool wasPending = PastePending;
         _pasteCancellation?.Cancel();
         // Observe failures on an abandoned operation; it can never mutate an editor or save a file.
         var cancellation = _pasteCancellation;
@@ -122,7 +125,7 @@ internal sealed partial class TuiDriver
         _pasteTask = null;
         _terminalPaste?.Cancel();
         if (discardQueued) _pasteDeferred.Clear();
-        _pasteStatus = "Paste cancelled; draft retained.";
+        if (wasPending) _pasteStatus = "Paste cancelled; draft retained.";
     }
 
     private void HandleTerminalPaste(string packet) => _terminalPaste?.Handle(packet);
@@ -140,7 +143,7 @@ internal sealed partial class TuiDriver
         string shape = ComposeShape.Active;
         // Shaped boxes draw their own field; the highlight band is for the classic look only.
         var input = TuiComponents.InputRowsWithCursor(display.Text, display.Cursor, ComposeShape.InnerWidth(shape, width),
-            _inputHighlight && shape == "classic", _composeMeta);
+            _inputHighlight && shape == "classic", _composeMeta, _turnInput ? TurnInputPlaceholder : null);
         // Keep the cursor neighborhood visible when ordinary composed text itself spans many rows.
         int statusRows = _pasteStatus is null ? 0 : 1;
         int minCardRows = _editor.Attachments.Items.Count == 0 ? 0 : _editor.Attachments.Expanded ? 3 : 2;
