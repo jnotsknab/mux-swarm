@@ -76,4 +76,34 @@ public class ServeFileApiTests : IDisposable
     [InlineData("a.txt", "text")]
     [InlineData("a.exe", "binary")]
     public void FileKind_FromExtension(string name, string kind) => Assert.Equal(kind, ServeMode.FileKind(name));
+
+    // Files come from roots that hold content the user did not write, on the web UI's origin: an HTML/SVG file
+    // opened directly must not run script with access to the page's token.
+    [Theory]
+    [InlineData("page.html", false, "sandbox")]
+    [InlineData("page.HTM", false, "sandbox")]
+    [InlineData("logo.svg", false, "sandbox")]
+    [InlineData("feed.xml", false, "sandbox")]
+    [InlineData("page.html", true, null)]      // attachment: the browser saves it, nothing runs
+    [InlineData("chart.png", false, null)]
+    [InlineData("notes.txt", false, null)]
+    public void ServedFile_IsNeverSniffed_AndActiveTypesAreSandboxed(string name, bool download, string? csp)
+    {
+        var headers = new Microsoft.AspNetCore.Http.HeaderDictionary();
+        ServeMode.ApplyFileHeaders(headers, name, download);
+        Assert.Equal("nosniff", headers["X-Content-Type-Options"].ToString());
+        Assert.Equal(csp, headers.TryGetValue("Content-Security-Policy", out var v) ? v.ToString() : null);
+    }
+
+    [Fact]
+    public void HandleFile_AppliesTheHeaders_BeforeWritingTheFile()
+    {
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d != null && !File.Exists(Path.Combine(d.FullName, "MuxSwarm.csproj"))) d = d.Parent;
+        var src = File.ReadAllText(Path.Combine(d!.FullName, "Engine", "ServeMode.Files.cs"));
+        int a = src.IndexOf("private static async Task HandleFile(", StringComparison.Ordinal);
+        int h = src.IndexOf("ApplyFileHeaders(context.Response.Headers", a, StringComparison.Ordinal);
+        int f = src.IndexOf("Results.File(", a, StringComparison.Ordinal);
+        Assert.True(a > 0 && h > a && h < f, "HandleFile must set the headers before Results.File");
+    }
 }

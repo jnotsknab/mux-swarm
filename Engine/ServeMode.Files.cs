@@ -90,11 +90,29 @@ public static partial class ServeMode
         _mime.TryGetContentType(path, out var ct) ? ct
         : TextExtensions.Contains(Path.GetExtension(path)) ? "text/plain; charset=utf-8" : "application/octet-stream";
 
+    // Types a browser runs script in when opened directly.
+    private static readonly HashSet<string> ActiveExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".html", ".htm", ".xhtml", ".shtml", ".svg", ".svgz", ".xml", ".xsl", ".xslt",
+    };
+
+    /// <summary>
+    /// Headers for a served file. Files come from the sandbox and allowed roots, which hold content the user did
+    /// not write (fetched pages, uploads, cloned repos), on the web UI's own origin. So: never sniff a type, and an
+    /// HTML/SVG/XML file opened in view mode is sandboxed (opaque origin, no access to the page's token or API).
+    /// </summary>
+    internal static void ApplyFileHeaders(IHeaderDictionary headers, string path, bool download)
+    {
+        headers["X-Content-Type-Options"] = "nosniff";
+        if (!download && ActiveExtensions.Contains(Path.GetExtension(path))) headers["Content-Security-Policy"] = "sandbox";
+    }
+
     private static async Task HandleFile(HttpContext context)
     {
         var full = ResolveServableFile(context.Request.Query["path"].FirstOrDefault(), FileRoots(), FileExcludes());
         if (full == null) { await WriteJson(context, 404, new { error = "File not found" }); return; }
         var download = string.Equals(context.Request.Query["as"].FirstOrDefault(), "download", StringComparison.OrdinalIgnoreCase);
+        ApplyFileHeaders(context.Response.Headers, full, download);
         await Results.File(full, MimeOf(full), download ? Path.GetFileName(full) : null, enableRangeProcessing: true)
             .ExecuteAsync(context);
     }
