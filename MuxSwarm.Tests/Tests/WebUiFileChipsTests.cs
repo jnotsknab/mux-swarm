@@ -32,6 +32,17 @@ public class WebUiFileChipsTests
     }
 
     [Fact]
+    public void CopyingAReply_GivesThePath_NotTheChipLabel()
+    {
+        // /copy and a mouse selection read the chip back as its data-path; the action glyphs are never selectable.
+        Assert.Contains("function plainText(node)", Html);
+        Assert.Contains("ch.replaceWith(document.createTextNode(ch.dataset.path || ''))", Html);
+        Assert.Contains("document.addEventListener('copy', function(e)", Html);
+        Assert.Contains("window.MuxFileChips.plainText(body)", Html);
+        Assert.Contains("user-select: none; }", Html[Html.IndexOf(".mux-fchip .mux-fchip-act {", StringComparison.Ordinal)..]);
+    }
+
+    [Fact]
     public void Chips_CanBeTurnedOff() =>
         Assert.Contains("toggleRow('fileChips'", Html);
 }

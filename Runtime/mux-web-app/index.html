@@ -6108,7 +6108,7 @@ const icons = {
           const blocks = output ? output.querySelectorAll('.stream-block') : [];
           const last = blocks && blocks.length ? blocks[blocks.length - 1] : null;
           const body = last ? (last.querySelector('.stream-body') || last) : null;
-          const copyText = body ? (body.innerText || '').trim() : '';
+          const copyText = body ? ((window.MuxFileChips && window.MuxFileChips.plainText) ? window.MuxFileChips.plainText(body) : (body.innerText || '')).trim() : '';
           if (!copyText) { appendText('Nothing to copy yet.', 'event-warning'); return; }
           (async () => {
             try {
@@ -14786,7 +14786,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   .mux-fchip:hover { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); }
   .mux-fchip .mux-fchip-ico { color: var(--accent); flex: 0 0 auto; display: inline-flex; }
   .mux-fchip .mux-fchip-name { overflow: hidden; text-overflow: ellipsis; }
-  .mux-fchip .mux-fchip-act { opacity: 0; color: var(--muted); padding: 0 1px; border: 0; background: none; cursor: pointer; font: inherit; }
+  .mux-fchip .mux-fchip-act { opacity: 0; color: var(--muted); padding: 0 1px; border: 0; background: none; cursor: pointer; font: inherit;
+    -webkit-user-select: none; user-select: none; }
   .mux-fchip:hover .mux-fchip-act, .mux-fchip:focus-within .mux-fchip-act { opacity: 1; }
   .mux-fchip .mux-fchip-act:hover { color: var(--text); }
   .mux-fthumb { display: block; margin: 8px 0; max-width: min(100%, 480px); max-height: 320px; border: 1px solid var(--border);
@@ -14825,6 +14826,26 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     el.querySelector('.mux-fchip-name').textContent = label;
     return el;
   }
+  // Text of a node with every chip read back as its full path (not the label + button glyphs), so copying a
+  // reply (/copy, or a mouse selection) gives what the agent wrote.
+  function plainText(node){
+    if (!node || !node.querySelector || !node.querySelector('.mux-fchip')) return node ? (node.innerText || node.textContent || '') : '';
+    var c = node.cloneNode(true);
+    c.querySelectorAll('.mux-fchip').forEach(function(ch){ ch.replaceWith(document.createTextNode(ch.dataset.path || '')); });
+    c.style.position = 'fixed'; c.style.left = '-99999px'; c.style.top = '0';
+    document.body.appendChild(c);
+    var t = c.innerText; c.remove();
+    return t;
+  }
+  document.addEventListener('copy', function(e){
+    var sel = window.getSelection && window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount || !e.clipboardData) return;
+    var frag = sel.getRangeAt(0).cloneContents();
+    if (!frag.querySelector || !frag.querySelector('.mux-fchip')) return;
+    var box = document.createElement('div'); box.appendChild(frag);
+    e.clipboardData.setData('text/plain', plainText(box));
+    e.preventDefault();
+  });
   // Desktop shell (mux-desktop) can open files with their default app; browsers cannot.
   function hasOpen(){ var h = window.muxHost; return !!(h && typeof h.openPath === 'function' && (h.capabilities || []).indexOf('openPath') >= 0); }
   // The async clipboard API needs a secure context (https or localhost); a tailnet/LAN http origin falls back.
@@ -14943,7 +14964,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     out.querySelectorAll(BLOCKS).forEach(later);
   }
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', start); else start();
-  window.MuxFileChips = { scan: scan, lookup: lookup, fileUrl: fileUrl };
+  window.MuxFileChips = { scan: scan, lookup: lookup, fileUrl: fileUrl, plainText: plainText };
 })();
 </script>
 <!-- ===== /File chips ===== -->
