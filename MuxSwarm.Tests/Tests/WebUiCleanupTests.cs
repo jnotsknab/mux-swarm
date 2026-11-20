@@ -23,6 +23,15 @@ public class WebUiCleanupTests
     }
 
     [Fact]
+    public void StatusMenu_LivesOutsideTheClippedHeader()
+    {
+        // The header has overflow: hidden (collapse animation); a menu inside the pill was cut off and unreachable.
+        Assert.Contains("document.body.appendChild(statusMenu);", Html);
+        Assert.DoesNotContain("statusBtn.appendChild(statusMenu)", Html);
+        Assert.Contains(".mux-cpop.mux-status-menu { position: fixed;", Html);
+    }
+
+    [Fact]
     public void NodeGraph_DeleteSitsApartFromPing_AndStillConfirms()
     {
         Assert.Contains("mng-row mng-row-quiet", Html);

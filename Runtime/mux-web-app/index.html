@@ -6650,7 +6650,15 @@ const icons = {
   statusMenu.className = 'mux-cpop mux-status-menu'; statusMenu.setAttribute('role', 'menu');
   statusMenu.innerHTML = '<button class="opt" type="button" data-act="reconnect">Reconnect</button>' +
     '<button class="opt" type="button" data-act="restart">Restart server\u2026</button>';
-  statusBtn.style.position = 'relative'; statusBtn.appendChild(statusMenu);
+  // On <body>, not inside the pill: the header clips its overflow (collapse animation), which hid the menu.
+  document.body.appendChild(statusMenu);
+  function placeStatusMenu(){
+    const r = statusBtn.getBoundingClientRect();
+    statusMenu.style.top = Math.round(r.bottom + 6) + 'px';
+    statusMenu.style.left = Math.round(Math.max(8, Math.min(r.left, window.innerWidth - 168))) + 'px';
+  }
+  function toggleStatusMenu(){ placeStatusMenu(); statusMenu.classList.toggle('open'); }
+  window.addEventListener('resize', () => { if (statusMenu.classList.contains('open')) placeStatusMenu(); });
   statusMenu.addEventListener('click', (e) => {
     const b = e.target.closest('.opt'); if (!b) return;
     e.stopPropagation(); statusMenu.classList.remove('open');
@@ -6658,10 +6666,9 @@ const icons = {
     restartServer();
   });
   statusBtn.addEventListener('click', (e) => {
-    if (e.target.closest('.mux-status-menu')) return;
-    e.stopPropagation(); statusMenu.classList.toggle('open');
+    e.stopPropagation(); toggleStatusMenu();
   });
-  statusBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); statusMenu.classList.toggle('open'); } });
+  statusBtn.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleStatusMenu(); } });
   document.addEventListener('click', () => statusMenu.classList.remove('open'));
   function restartServer() {
     if (confirm('Are you sure you want to restart the server?')) {
@@ -15255,7 +15262,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   .mux-cpop { position: absolute; bottom: calc(100% + 8px); right: 0; min-width: 180px; z-index: 80; padding: 6px; display: none;
     background: var(--mux-surface-solid); border: 1px solid var(--border); border-radius: var(--radius, 8px); box-shadow: var(--mux-shadow-md, 0 12px 34px rgba(0,0,0,.4)); }
   .mux-cpop.open { display: block; }
-  .mux-cpop.mux-status-menu { bottom: auto; top: calc(100% + 6px); left: 0; right: auto; min-width: 160px; }
+  .mux-cpop.mux-status-menu { position: fixed; bottom: auto; right: auto; min-width: 160px; z-index: 10050; }
   .mux-cpop .opt { display: flex; width: 100%; justify-content: space-between; gap: 12px; border: 0; background: none; color: var(--text); font: inherit;
     font-size: calc(12.5px * var(--ui-font-scale, 1)); padding: 6px 8px; border-radius: 4px; cursor: pointer; text-align: left; }
   .mux-cpop .opt:hover { background: rgba(var(--mux-tint-rgb), .06); }
