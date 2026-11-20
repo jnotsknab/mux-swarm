@@ -71,6 +71,16 @@ public class WebUiSessionsComposerTests
     }
 
     [Fact]
+    public void Resume_RedrawsOncePerPage_NotOnEverySocketReconnect()
+    {
+        // The server re-sends its recent broadcast lines (incl. the /resume echo) to every new socket.
+        int a = Html.IndexOf("function replay(n){", StringComparison.Ordinal);
+        int b = Html.IndexOf("sessionJson(n)", a, StringComparison.Ordinal);
+        Assert.True(a > 0 && b > a);
+        Assert.Contains(".mux-replay[data-session=\"' + CSS.escape(n) + '\"]')) return;", Html[a..b]);
+    }
+
+    [Fact]
     public void Composer_Collapses_AndComesBackForQuestions()
     {
         Assert.Contains("document.body.classList.toggle('mux-composer-collapsed', cst.collapsed);", Html);
