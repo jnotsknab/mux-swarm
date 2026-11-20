@@ -22,6 +22,28 @@ public class WebUiWorkspaceTests
     }
 
     [Fact]
+    public void Follow_NeverRendersActiveFiles_OrStealsFocus()
+    {
+        int a = Html.IndexOf("<!-- ===== Workspace:", StringComparison.Ordinal), b = Html.IndexOf("<!-- ===== /Workspace", a, StringComparison.Ordinal);
+        var ws = Html[a..b];
+        // A file the agent writes (maybe a downloaded page) opens as text under Follow; the user's click renders it.
+        Assert.Contains("if (auto && (k === 'html' || k === 'svg')) k = 'text';", ws);
+        Assert.Contains("if (auto) opts.focus = false;", ws);
+        Assert.Contains("open(meta.path, meta.kind, true);", ws);
+        Assert.Contains("show(src, opts) { openPanel(opts && opts.focus);", Html);
+        Assert.Contains("if (focus !== false) setTimeout(() => urlIn.focus(), 50);", Html);
+    }
+
+    [Fact]
+    public void DockWidth_IsCappedEverywhereItIsUsed()
+    {
+        // A width saved on a wide window must not push the chat and composer off a narrower one.
+        Assert.Contains("body.mux-ws-docked .app { margin-right: min(var(--mux-workspace-width, 44vw), 80vw, calc(100vw - 420px)); }", Html);
+        Assert.Contains("--composer-right-inset: min(var(--mux-workspace-width, 44vw), 80vw, calc(100vw - 420px)); }", Html);
+        Assert.DoesNotContain("margin-right: var(--mux-workspace-width, 44vw);", Html);
+    }
+
+    [Fact]
     public void EventTap_FiresAfterTheTranscriptHandler()
     {
         int handled = Html.IndexOf("try { _ev = JSON.parse(line); handleEvent(_ev); }", StringComparison.Ordinal);
