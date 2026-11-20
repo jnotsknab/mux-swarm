@@ -8900,13 +8900,13 @@ const icons = {
     renderInto(fetchUrl, kind);
   }
 
-  function openPanel() {
+  function openPanel(focus) {
     if (!isMobile() && !panel.style.left) {
       panel.style.left = Math.max(40, (window.innerWidth - 720) / 2) + 'px';
       panel.style.top  = Math.max(40, (window.innerHeight - 540) / 2) + 'px';
     }
     panel.classList.add('open');
-    setTimeout(() => urlIn.focus(), 50);
+    if (focus !== false) setTimeout(() => urlIn.focus(), 50);
   }
   function closePanel() { panel.classList.remove('open'); }
 
@@ -9292,7 +9292,8 @@ const icons = {
   })();
 
   window.MuxPreview = {
-    show(src, opts) { openPanel(); load(src, opts); },
+    // opts.focus === false: open without taking keyboard focus (programmatic opens while the user types).
+    show(src, opts) { openPanel(opts && opts.focus); load(src, opts); },
     reader(src) { openPanel(); renderReader(src); },
     open: openPanel, close: closePanel, load: load
   };
@@ -14972,13 +14973,15 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
 @layer mux.base {
   .mux-preview-panel.docked {
     top: 0 !important; right: 0 !important; left: auto !important; bottom: 0 !important;
-    width: var(--mux-workspace-width, 44vw) !important; height: 100vh !important; max-width: 80vw;
+    width: min(var(--mux-workspace-width, 44vw), 80vw, calc(100vw - 420px)) !important; height: 100vh !important; max-width: 80vw;
     border-radius: 0; border-top: 0; border-bottom: 0; border-right: 0; box-shadow: none;
   }
   .mux-preview-panel.docked .mux-preview-resize { display: none; }
   .mux-preview-panel.docked .mux-preview-header { cursor: default; }
-  body.mux-ws-docked .app { margin-right: var(--mux-workspace-width, 44vw); }
-  body.mux-ws-docked .input-area { --composer-right-inset: var(--mux-workspace-width, 44vw); }
+  /* Capped like the panel itself and leaving the chat at least 420px, so a width saved on a wider window never
+     squeezes the chat and composer off-screen. */
+  body.mux-ws-docked .app { margin-right: min(var(--mux-workspace-width, 44vw), 80vw, calc(100vw - 420px)); }
+  body.mux-ws-docked .input-area { --composer-right-inset: min(var(--mux-workspace-width, 44vw), 80vw, calc(100vw - 420px)); }
   .mux-ws-edge { position: absolute; left: -3px; top: 0; bottom: 0; width: 6px; cursor: col-resize; display: none; z-index: 2; }
   .mux-preview-panel.docked .mux-ws-edge { display: block; }
   .mux-ws-tabs { display: none; gap: 2px; padding: 4px 6px 0; border-bottom: 1px solid var(--border); background: var(--bg-card);
@@ -15025,7 +15028,7 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
     document.body.classList.toggle('mux-ws-docked', !!st.docked && panel.classList.contains('open'));
     dockBtn.classList.toggle('on', !!st.docked);
     followBtn.classList.toggle('on', !!st.follow);
-    if (st.width) document.documentElement.style.setProperty('--mux-workspace-width', st.width + 'px');
+    if (st.width) document.documentElement.style.setProperty('--mux-workspace-width', st.width + 'px');   // capped in CSS
   }
   // The panel opens/closes from many places (FAB, file browser, chips); keep the page margin in sync.
   new MutationObserver(applyDock).observe(panel, { attributes: true, attributeFilter: ['class'] });
@@ -15056,18 +15059,23 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   }
   var PREVIEW_KIND = { image: 'image', video: 'video', audio: 'audio', pdf: 'iframe', markdown: 'markdown', html: 'html', json: 'json', table: 'table', text: 'text' };
   var urlIn = document.getElementById('muxPreviewUrl');
-  function show(t){
+  // auto: opened by Follow, not by the user. It never takes keyboard focus, and a file that would run
+  // script when rendered (HTML, SVG) opens as text; clicking its tab renders it.
+  function show(t, auto){
     active = t.path; renderTabs();
     var k = PREVIEW_KIND[t.kind]; if (t.kind === 'image' && /\.svg$/i.test(t.path)) k = 'svg';
-    window.MuxPreview.show('/api/file?path=' + encodeURIComponent(t.path), k ? { kind: k } : undefined);
+    if (auto && (k === 'html' || k === 'svg')) k = 'text';
+    var opts = k ? { kind: k } : {};
+    if (auto) opts.focus = false;
+    window.MuxPreview.show('/api/file?path=' + encodeURIComponent(t.path), opts);
     if (urlIn) urlIn.title = t.path; // full path on hover; the bar keeps the loadable /api/file URL
   }
-  function open(path, kind){
+  function open(path, kind, auto){
     var t = tabs.find(function(o){ return o.path === path; });
     if (!t) { t = { path: path, kind: kind || 'text' }; tabs.push(t); if (tabs.length > MAX_TABS) tabs.shift(); }
     if (kind) t.kind = kind;
-    if (t.kind === 'binary') { window.open((window.MuxFileChips ? window.MuxFileChips.fileUrl(path, 'download') : '/api/file?as=download&path=' + encodeURIComponent(path)), '_blank', 'noopener'); return; }
-    show(t);
+    if (t.kind === 'binary') { if (!auto) window.open((window.MuxFileChips ? window.MuxFileChips.fileUrl(path, 'download') : '/api/file?as=download&path=' + encodeURIComponent(path)), '_blank', 'noopener'); return; }
+    show(t, auto);
   }
 
   // Follow agent: when a write/edit/move/download tool reports a file path, open it (debounced).
@@ -15086,8 +15094,8 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
       look.then(function(meta){
         if (!meta) return;
         var t = tabs.find(function(o){ return o.path === meta.path; });
-        if (t && active === t.path) { show(t); return; } // refresh the open file
-        open(meta.path, meta.kind);
+        if (t && active === t.path) { show(t, true); return; } // refresh the open file
+        open(meta.path, meta.kind, true);
       });
     }, 400);
   }
