@@ -2877,7 +2877,12 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
     rec.stream.getTracks().forEach(t => t.stop());
     const blob = new Blob(_recChunks, { type: rec.mimeType || 'audio/webm' });
     const r = await fetch(_apiUrl('/api/voice/transcribe'), { method: 'POST', headers: { 'Content-Type': (blob.type || 'audio/webm').split(';')[0] }, body: blob });
-    if (!r.ok) throw new Error(r.status === 429 ? 'busy, try again' : ('transcribe failed (' + r.status + ')'));
+    if (!r.ok) {
+      // The server says why (whisper not installed yet, needs ffmpeg for this format, busy, ...): show that.
+      let why = '';
+      try { why = (await r.json()).error || ''; } catch (_) {}
+      throw new Error(r.status === 429 ? 'busy, try again' : (why || ('transcribe failed (' + r.status + ')')));
+    }
     return (await r.json()).text || '';
   }
   function syncMicAvailability() {
@@ -2924,13 +2929,15 @@ html, body, #output, .message, .bubble, .panel-block, .panel-body, .mux-md-view,
         micBtn.classList.remove('recording');
         micBtn.classList.add('transcribing');
         const text = await stopCapture();
-        if (!appendTranscript(text)) console.log('No speech detected');
+        if (!appendTranscript(text)) showToast('Voice: no speech detected', 'error');
         input.focus();
       }
     } catch (e) {
       isRecording = false;
       micBtn.classList.remove('recording');
-      console.error('Voice: ' + (e && e.message ? e.message : e));
+      const why = 'Voice: ' + (e && e.message ? e.message : e);
+      console.error(why);
+      showToast(why, 'error');   // a failed recording is never silent
     } finally {
       if (!isRecording) { _voiceBusy = false; micBtn.classList.remove('transcribing'); }
     }
