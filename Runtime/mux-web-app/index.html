@@ -15049,6 +15049,9 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   function replay(n){
     if (!SV) return;
     var out = document.getElementById('output'); if (!out) return;
+    // Once per session per page: a socket reconnect re-sends the recent broadcast lines (including the
+    // "/resume <id>" echo), which must not draw the history again.
+    if (out.querySelector('.mux-replay[data-session="' + CSS.escape(n) + '"]')) return;
     // Placeholder now, so the history lands above the echoed "/resume" and anything the engine prints next.
     var box = document.createElement('div'); box.className = 'mux-replay'; box.dataset.session = n;
     var last = out.lastElementChild;
