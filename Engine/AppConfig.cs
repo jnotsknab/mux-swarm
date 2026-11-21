@@ -547,7 +547,7 @@ public class ServeConfig
 
 /// <summary>
 /// Built-in browser: a pinned Chrome for Testing build downloaded on first use into
-/// <c>Runtime/browser</c>, run headless with a persistent profile and streamed into the web UI's
+/// <c>Runtime/browser</c> (or an installed Chromium browser, see <see cref="Engine"/>), run headless with a persistent profile and streamed into the web UI's
 /// preview panel. The built-in Playwright MCP server attaches to the same browser, so the user
 /// watches (and can take over) the agent's tabs.
 /// </summary>
@@ -562,6 +562,15 @@ public class ServeBrowserConfig
     [JsonPropertyName("playwright")]
     public bool Playwright { get; set; } = true;
 
+    /// <summary>
+    /// Which browser runs: <c>auto</c> (default) = the first installed Chrome, Edge, Brave or Chromium,
+    /// else managed; <c>managed</c> = a pinned Chrome for Testing build Mux downloads on first use;
+    /// <c>chrome</c> | <c>edge</c> | <c>brave</c> | <c>chromium</c> = that installed browser (error if
+    /// missing). Each browser gets its own profile (<c>BrowserProfiles/&lt;engine&gt;</c>, managed = <c>BrowserProfiles/managed</c>).
+    /// </summary>
+    [JsonPropertyName("engine")]
+    public string Engine { get; set; } = Browser.BrowserHost.DefaultEngine;
+
     /// <summary>When true (default), the browser runs headless and is only seen in the panel. False opens
     /// a real browser window too (desktop sessions only), still mirrored in the panel.</summary>
     [JsonPropertyName("headless")]
@@ -572,7 +581,7 @@ public class ServeBrowserConfig
     [JsonPropertyName("homePage")]
     public string HomePage { get; set; } = "https://duckduckgo.com";
 
-    /// <summary>Profile directory (cookies, logins). Empty = <c>Sessions/BrowserProfile</c>.</summary>
+    /// <summary>Profile directory (cookies, logins). Empty = <c>BrowserProfiles/&lt;engine&gt;</c> under the install folder.</summary>
     [JsonPropertyName("profileDir")]
     public string ProfileDir { get; set; } = "";
 }
