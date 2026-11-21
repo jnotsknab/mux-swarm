@@ -38,8 +38,10 @@ public class WebUiWorkspaceTests
     public void DockWidth_IsCappedEverywhereItIsUsed()
     {
         // A width saved on a wide window must not push the chat and composer off a narrower one.
-        Assert.Contains("body.mux-ws-docked .app { margin-right: min(var(--mux-workspace-width, 44vw), 80vw, calc(100vw - 420px)); }", Html);
-        Assert.Contains("--composer-right-inset: min(var(--mux-workspace-width, 44vw), 80vw, calc(100vw - 420px)); }", Html);
+        // One clamped value (also leaving room for the open sessions rail) feeds the panel width, the chat margin and the composer.
+        Assert.Contains("body.mux-ws-docked { --mux-ws-dock: max(320px, min(var(--mux-workspace-width, 44vw), calc(100vw - var(--mux-rail-dock, 0px) - 420px), 80vw)); }", Html);
+        Assert.Contains("body.mux-ws-docked .app { margin-right: var(--mux-ws-dock); }", Html);
+        Assert.Contains("body.mux-ws-docked .input-area { --composer-right-inset: var(--mux-ws-dock); }", Html);
         Assert.DoesNotContain("margin-right: var(--mux-workspace-width, 44vw);", Html);
     }
 
