@@ -100,7 +100,7 @@ internal sealed class ShellJob
         if (_proc is null) { MarkFailed("failed to start process"); return; }
         _status = "running";
         // Background jobs outlive their tool call: keep file_changed reporting armed until the process exits.
-        var fileScope = FileChangeTracker.Shared?.BeginToolCall("execute_command_async");
+        var fileScope = FileChangeTracker.Shared?.BeginToolCall("execute_command_async", background: true);
 
         Pump(_proc.StandardOutput, _out, $"ShellOut:{_id}", isStdout: true);
         Pump(_proc.StandardError, _err, $"ShellErr:{_id}", isStdout: false);
