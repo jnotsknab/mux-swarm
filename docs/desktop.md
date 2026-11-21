@@ -38,7 +38,7 @@ already reserves titlebar space. A host that defines the bridge late can call `w
 interface MuxHost {
   platform: "windows" | "macos" | "linux";
   version: string;
-  capabilities: Array<"window" | "voice" | "theme" | "notify" | "openExternal">;
+  capabilities: Array<"window" | "voice" | "theme" | "notify" | "openExternal" | "openPath">;
   window?: {
     minimize(): Promise<void>;
     toggleMaximize(): Promise<void>;
@@ -52,6 +52,7 @@ interface MuxHost {
   theme?: { set(scheme: "light" | "dark", bg: string): void };  // native window background + dark chrome
   notify?(title: string, body: string): void;
   openExternal?(url: string): void;
+  openPath?(path: string): Promise<void>;   // open a local file with its default app; rejects for executables/folders
 }
 ```
 
@@ -70,6 +71,8 @@ What the web app does when the bridge is present:
 - **theme**: on every `mux:theme-changed` (`detail: { id, scheme, bg, changed }`; it fires on every theme apply, `changed` is true when id or scheme moved) the app calls
   `theme.set(scheme, bg)` so the native background matches and resizing never flashes white.
 - **openExternal**: off-origin `http(s)` links open through the host.
+- **openPath**: file chips get an "Open with default app" action. The host refuses folders, missing files and
+  executable or shortcut types (`.exe`, `.bat`, `.lnk`, `.sh`, `.app`, `.desktop`, ...).
 - Without `window.muxHost` nothing changes: no titlebar slot, and the mic uses Web Speech or server
   transcription.
 
