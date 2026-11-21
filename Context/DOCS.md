@@ -1689,7 +1689,10 @@ choices persist per browser. The floating panel stays the default.
 
 **Sessions sidebar and composer chips.** A left sidebar lists sessions (newest first, grouped by day with counts, Older
 collapsed; titled by their first message, up to two lines, with the time and message count; pins shared with the Sessions
-tab; the resumed session is highlighted); click resumes (`/resume <id>`), hover pins or copies the ID, **+ New** sends
+tab is gone; the rail is the one sessions list; the resumed session is highlighted). Click opens a read-only
+**viewer** over the transcript (the saved conversation, with Resume / Copy ID / Download; Esc closes); Resume or a
+double-click sends `/resume <id>`, and the page then redraws that session's last 200 messages above a "Resumed" divider
+(client-side from the session file; the engine already restores the context). Hover pins or copies the ID, **+ New** sends
 `/agent`. Drag its right edge to resize (220-520px). It starts open on wide screens and remembers your choice (toggle next
 to the wordmark). In an agent session the composer shows an **Effort** chip (sends `/effort <level>`) once the session has
 run a turn, a **context gauge** (tokens until auto-compact, from `/api/status`) with a **Compact now** action, and an
@@ -2032,6 +2035,25 @@ is read-only.
 Optional app-level auth is configured via `serve.auth` (see [serve](#serve)). The
 web app prompts for the token, stores it in `sessionStorage`, and attaches it to all
 API/WS calls. App auth complements (does not replace) an nginx perimeter.
+
+### Desktop app (Mux-Swarm Desktop)
+
+A native window for the same web UI: one Tauri v2 shell for Windows (WebView2), macOS (WKWebView) and Linux
+(WebKitGTK). It uses your existing engine install (`muxExe` in its config, then `MUX_EXE`, the per-OS install
+dir, then `PATH`); if none is found the loading screen offers **Install Mux-Swarm**. It attaches to a serve
+already answering on its port (default 6723), otherwise it spawns `MuxSwarm --serve <port>` and stops that engine
+when the window closes. Remote mode (`url`) opens a hosted Mux instead.
+
+- Installers ship with the releases: `Mux-Swarm-Desktop_<ver>_x64-setup.exe` / `.msi` (Windows, per-user,
+  installs WebView2 if missing), `.dmg` (macOS universal), `.AppImage` / `.deb` (Linux, needs webkit2gtk 4.1).
+- The builds are not code-signed yet. Trust them once on first open: Windows SmartScreen **More info > Run
+  anyway**; macOS **System Settings > Privacy & Security > Open Anyway** (macOS 15+); Linux needs nothing.
+- Native extras through `window.muxHost`: window controls in the header, microphone capture (sent to
+  `/api/voice/transcribe`), dark/light window chrome, notifications, links in your browser, **Open with
+  default app** on file chips. The loading screen uses the colors of the last theme the web UI reported
+  (`theme.json` in the app config dir; delete it to reset).
+- Shell config: `<app config dir>/config.json` (`muxExe`, `port`, `url`, `trustRemoteOrigin`, `extraArgs`,
+  `keepServerOnClose`, `startupTimeoutSecs`). Bridge contract for other shells: `docs/desktop.md`.
 
 ## Subscription Auth (CLIProxy sidecar)
 

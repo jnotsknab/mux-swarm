@@ -33,7 +33,51 @@ public class WebUiSessionsComposerTests
     {
         Assert.Contains("send('/effort ' + l[0])", Html);
         Assert.Contains("send('/compact')", Html);
-        Assert.Contains("send('/resume ' + s.n)", Html);
+        Assert.Contains("send('/resume ' + n)", Html);
+    }
+
+    [Fact]
+    public void RailClick_Views_ResumeIsExplicit_AndTheLegacyTabIsGone()
+    {
+        Assert.Contains("b.addEventListener('click', function(){ view(s.n, s.title);", Html);
+        Assert.Contains("b.addEventListener('dblclick', function(){ resume(s.n); });", Html);
+        Assert.DoesNotContain("data-tab=\"sessions\"", Html);
+        Assert.DoesNotContain("function loadSessionsView", Html);
+    }
+
+    [Fact]
+    public void Viewer_StacksItsHeaderOnPhones()
+    {
+        // Side by side, four buttons left the title 80px at 390px and the header was 434px tall.
+        Assert.Contains(".mux-sv-head { position: relative; flex-direction: column; align-items: stretch;", Html);
+        Assert.Contains("-webkit-line-clamp: 2; line-clamp: 2;", Html);
+        Assert.Contains(".mux-sv-acts [data-act=\"close\"] { position: absolute;", Html);
+        Assert.Contains("sv.querySelector('.t').addEventListener('click', function(){ this.classList.toggle('full'); });", Html);
+    }
+
+    [Fact]
+    public void Rail_ListsSavedSessionsOnly()
+    {
+        // The generic folder listing showed browser profiles / tool output as sessions.
+        Assert.Contains("fetch(apiUrl('/api/sessions')).then(", Html);
+        Assert.DoesNotContain("fetch('/api/list/sessions')", Html);
+    }
+
+    [Fact]
+    public void Resume_RedrawsTheSavedConversation()
+    {
+        Assert.Contains("if (c === '/resume' && w[1]) { current = w[1]; render(); replay(w[1]); }", Html);
+        Assert.Contains("'Resumed \\u00b7 earlier conversation above'", Html);
+    }
+
+    [Fact]
+    public void Resume_RedrawsOncePerPage_NotOnEverySocketReconnect()
+    {
+        // The server re-sends its recent broadcast lines (incl. the /resume echo) to every new socket.
+        int a = Html.IndexOf("function replay(n){", StringComparison.Ordinal);
+        int b = Html.IndexOf("sessionJson(n)", a, StringComparison.Ordinal);
+        Assert.True(a > 0 && b > a);
+        Assert.Contains(".mux-replay[data-session=\"' + CSS.escape(n) + '\"]')) return;", Html[a..b]);
     }
 
     [Fact]
@@ -56,6 +100,6 @@ public class WebUiSessionsComposerTests
     {
         Assert.Contains("Math.max(220, Math.min(520,", Html);
         Assert.Contains("function togglePin(n)", Html);
-        Assert.Contains("if (c === '/resume' && w[1]) { current = w[1]; render(); }", Html);
+        Assert.Contains("if (c === '/resume' && w[1]) { current = w[1]; render();", Html);
     }
 }
