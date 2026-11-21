@@ -103,6 +103,10 @@ internal sealed class ExtensionManifest
     [JsonPropertyName("commands")]
     public List<ExtensionCommandSpec> Commands { get; set; } = [];
 
+    /// <summary>Web UI contributions: themes with CSS, fonts and light/dark variants (see <see cref="WebManifest"/>).</summary>
+    [JsonPropertyName("web")]
+    public WebManifest? Web { get; set; }
+
     /// <summary>Per-region TUI styles (colours, glyphs, show/hide). Null = built-in look.</summary>
     [JsonPropertyName("tui")]
     public TuiManifest? Tui { get; set; }
