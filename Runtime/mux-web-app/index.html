@@ -14828,11 +14828,13 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   }
   // Text of a node with every chip read back as its full path (not the label + button glyphs), so copying a
   // reply (/copy, or a mouse selection) gives what the agent wrote.
-  function plainText(node){
+  // `ws`: the source's white-space; the off-screen clone loses its block's pre-wrap, which would fold line breaks.
+  function plainText(node, ws){
     if (!node || !node.querySelector || !node.querySelector('.mux-fchip')) return node ? (node.innerText || node.textContent || '') : '';
     var c = node.cloneNode(true);
     c.querySelectorAll('.mux-fchip').forEach(function(ch){ ch.replaceWith(document.createTextNode(ch.dataset.path || '')); });
     c.style.position = 'fixed'; c.style.left = '-99999px'; c.style.top = '0';
+    c.style.whiteSpace = ws || (node.isConnected ? getComputedStyle(node).whiteSpace : '') || 'normal';
     document.body.appendChild(c);
     var t = c.innerText; c.remove();
     return t;
@@ -14840,10 +14842,11 @@ body:has(.theme-panel.open) .mng-trigger { opacity: 0; pointer-events: none; }
   document.addEventListener('copy', function(e){
     var sel = window.getSelection && window.getSelection();
     if (!sel || sel.isCollapsed || !sel.rangeCount || !e.clipboardData) return;
-    var frag = sel.getRangeAt(0).cloneContents();
+    var range = sel.getRangeAt(0), frag = range.cloneContents();
     if (!frag.querySelector || !frag.querySelector('.mux-fchip')) return;
+    var anc = range.commonAncestorContainer; if (anc && anc.nodeType !== 1) anc = anc.parentElement;
     var box = document.createElement('div'); box.appendChild(frag);
-    e.clipboardData.setData('text/plain', plainText(box));
+    e.clipboardData.setData('text/plain', plainText(box, anc ? getComputedStyle(anc).whiteSpace : ''));
     e.preventDefault();
   });
   // Desktop shell (mux-desktop) can open files with their default app; browsers cannot.

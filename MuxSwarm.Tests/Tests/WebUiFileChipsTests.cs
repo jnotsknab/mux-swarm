@@ -35,10 +35,13 @@ public class WebUiFileChipsTests
     public void CopyingAReply_GivesThePath_NotTheChipLabel()
     {
         // /copy and a mouse selection read the chip back as its data-path; the action glyphs are never selectable.
-        Assert.Contains("function plainText(node)", Html);
+        Assert.Contains("function plainText(node, ws)", Html);
         Assert.Contains("ch.replaceWith(document.createTextNode(ch.dataset.path || ''))", Html);
         Assert.Contains("document.addEventListener('copy', function(e)", Html);
         Assert.Contains("window.MuxFileChips.plainText(body)", Html);
+        // The clone keeps the source block's white-space (tool output / bubbles are pre-wrap), so line breaks survive.
+        Assert.Contains("c.style.whiteSpace = ws || (node.isConnected ? getComputedStyle(node).whiteSpace : '') || 'normal';", Html);
+        Assert.Contains("plainText(box, anc ? getComputedStyle(anc).whiteSpace : '')", Html);
         Assert.Contains("user-select: none; }", Html[Html.IndexOf(".mux-fchip .mux-fchip-act {", StringComparison.Ordinal)..]);
     }
 
