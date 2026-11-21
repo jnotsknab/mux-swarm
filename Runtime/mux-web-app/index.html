@@ -8693,7 +8693,9 @@ const icons = {
     const f = document.createElement('iframe');
     if (opts.srcdoc) { f.srcdoc = opts.srcdoc; } else { f.src = src; }
     f.referrerPolicy = 'no-referrer';
-    f.sandbox = 'allow-scripts allow-forms allow-popups allow-same-origin allow-modals allow-downloads';
+    // A previewed HTML file (srcdoc) is untrusted content: its scripts run, but in an opaque origin, so they
+    // cannot reach the app's storage, token or API. External URLs (src) keep allow-same-origin so sites work.
+    f.sandbox = 'allow-scripts allow-forms allow-popups allow-modals allow-downloads' + (opts.srcdoc ? '' : ' allow-same-origin');
     f.allow = 'fullscreen; clipboard-read; clipboard-write; autoplay; encrypted-media; picture-in-picture';
     body.appendChild(f);
     // Detect X-Frame-Options / frame-ancestors refusal: if iframe never loads, show CTA.
@@ -8728,21 +8730,12 @@ const icons = {
         img.className = 'mux-preview-media'; img.src = src; img.alt = '';
         body.appendChild(img);
       } else if (kind === 'svg') {
-        // Fetch SVG text and render inline so it scales nicely; fall back to <img>.
-        try {
-          const resp = await fetch(src);
-          const txt = await resp.text();
-          body.innerHTML = '';
-          const wrap = document.createElement('div');
-          wrap.className = 'mux-preview-svg';
-          wrap.innerHTML = txt;
-          body.appendChild(wrap);
-        } catch (_) {
-          body.innerHTML = '';
-          const img = document.createElement('img');
-          img.className = 'mux-preview-media'; img.src = src; img.alt = '';
-          body.appendChild(img);
-        }
+        // Always as an image: an SVG drawn through <img> never runs its scripts or event handlers
+        // (markup inlined into the page would run them as the app).
+        body.innerHTML = '';
+        const img = document.createElement('img');
+        img.className = 'mux-preview-media'; img.src = src; img.alt = '';
+        body.appendChild(img);
       } else if (kind === 'video') {
         body.innerHTML = '';
         const v = document.createElement('video');

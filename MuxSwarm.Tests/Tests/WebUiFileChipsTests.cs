@@ -46,6 +46,21 @@ public class WebUiFileChipsTests
     }
 
     [Fact]
+    public void Preview_RunsFileContentWithoutTheAppsOrigin()
+    {
+        // A chip click opens agent-written files: an HTML file renders in an opaque-origin iframe and an SVG as <img>,
+        // so neither can reach the app's storage, token or API.
+        int a = Html.IndexOf("function renderIframe(src, opts)", StringComparison.Ordinal);
+        var iframe = Html[a..Html.IndexOf("body.appendChild(f);", a, StringComparison.Ordinal)];
+        Assert.Contains("f.sandbox = 'allow-scripts allow-forms allow-popups allow-modals allow-downloads' + (opts.srcdoc ? '' : ' allow-same-origin');", iframe);
+        Assert.DoesNotContain("allow-popups allow-same-origin allow-modals", iframe);
+        int s = Html.IndexOf("} else if (kind === 'svg') {", StringComparison.Ordinal);
+        var svg = Html[s..Html.IndexOf("} else if (kind === 'video') {", s, StringComparison.Ordinal)];
+        Assert.Contains("document.createElement('img')", svg);
+        Assert.DoesNotContain("innerHTML = txt", svg);
+    }
+
+    [Fact]
     public void Chips_CanBeTurnedOff() =>
         Assert.Contains("toggleRow('fileChips'", Html);
 }
