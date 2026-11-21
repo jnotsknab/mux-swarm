@@ -67,7 +67,7 @@ What the web app does when the bridge is present:
   the composer (never auto-sends). Whole-line `[...]` / `(...)` annotations such as `[BLANK_AUDIO]`
   are dropped. A shell can capture audio natively and POST it as WAV to `/api/voice/transcribe`,
   so it does not need to bundle a speech engine.
-- **theme**: on every `mux:theme-changed` (`detail: { id, scheme, bg }`) the app calls
+- **theme**: on every `mux:theme-changed` (`detail: { id, scheme, bg, changed }`; it fires on every theme apply, `changed` is true when id or scheme moved) the app calls
   `theme.set(scheme, bg)` so the native background matches and resizing never flashes white.
 - **openExternal**: off-origin `http(s)` links open through the host.
 - Without `window.muxHost` nothing changes: no titlebar slot, and the mic uses Web Speech or server
