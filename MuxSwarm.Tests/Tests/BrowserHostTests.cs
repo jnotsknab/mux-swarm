@@ -93,6 +93,20 @@ public class BrowserHostTests
             "--cdp-endpoint", "http://127.0.0.1:9333" }, outp);
     }
 
+    [Theory]
+    [InlineData("auto", true)]
+    [InlineData(null, true)]       // unset = auto
+    [InlineData(" AUTO ", true)]
+    [InlineData("chrome", false)]  // a named browser keeps its error
+    [InlineData("managed", false)]
+    public void AnInstalledBrowserThatWillNotStart_FallsBackToManaged_OnlyForAuto(string? engine, bool expected)
+    {
+        Assert.Equal(expected, BrowserHost.ShouldFallBackToManaged(engine, new InvalidOperationException("Chrome exited (code 1)."), "linux64"));
+        Assert.Equal(expected, BrowserHost.ShouldFallBackToManaged(engine, new TimeoutException("Chrome DevTools did not come up."), "linux64"));
+        Assert.False(BrowserHost.ShouldFallBackToManaged(engine, new InvalidOperationException("x"), platform: null));   // nothing to fall back to
+        Assert.False(BrowserHost.ShouldFallBackToManaged(engine, new OperationCanceledException(), "linux64"));
+    }
+
     [Fact]
     public void NoSandbox_FromThePlaywrightConfig_ReachesTheSharedBrowser()
     {
