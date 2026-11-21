@@ -133,29 +133,21 @@ internal static class BrowserHost
         {
             if (_proc is { HasExited: false } && _port > 0) return _port;
             _error = null;
-            var installed = ResolveInstalled(App.Config.Serve.Browser.Engine);
-            string exe;
-            if (installed is { } b) exe = b.Exe;
-            else
+            var engine = App.Config.Serve.Browser.Engine;
+            var installed = ResolveInstalled(engine);
+            if (installed is { } b)
             {
-                var platform = Platform() ?? throw new PlatformNotSupportedException("No Chrome for Testing build for this platform; set serve.browser.engine to an installed browser.");
-                exe = ExePath(platform);
-                if (!File.Exists(exe)) { _status = "downloading"; await DownloadAsync(platform, ct); }
+                try { await LaunchAsync(b.Exe, b.Engine, ct); }
+                catch (Exception ex) when (ShouldFallBackToManaged(engine, ex, Platform()))
+                {
+                    // auto = installed, else managed: an installed browser that will not start (snap confinement,
+                    // a broken install) falls back to the managed download instead of failing the panel and Playwright.
+                    MuxConsole.WriteWarning($"[browser] {b.Exe} did not start ({ex.Message}); using the managed browser.");
+                    try { if (_proc is { HasExited: false } stale) stale.Kill(entireProcessTree: true); } catch { }
+                    await LaunchAsync(await ManagedExeAsync(ct), null, ct);
+                }
             }
-            _status = "starting";
-            _port = ReservedPort;
-            var profile = string.IsNullOrWhiteSpace(App.Config.Serve.Browser.ProfileDir)
-                ? DefaultProfile(ProfilesRoot, installed?.Engine) : App.Config.Serve.Browser.ProfileDir;
-            Directory.CreateDirectory(profile);
-            var args = LaunchArgs(_port, profile, App.Config.Serve.Browser.Headless, NoSandboxRequested);
-            try { await StartAndWaitAsync(exe, args, ct); }
-            catch (InvalidOperationException) when (OperatingSystem.IsLinux() && !args.Contains("--no-sandbox"))
-            {
-                // No usable sandbox (restricted user namespaces, non-root containers): Chrome exits at once.
-                // Retry once without it, as Playwright's own launch did.
-                args.Insert(0, "--no-sandbox");
-                await StartAndWaitAsync(exe, args, ct);
-            }
+            else await LaunchAsync(await ManagedExeAsync(ct), null, ct);
             _status = "ready";
             return _port;
         }
@@ -165,6 +157,43 @@ internal static class BrowserHost
             throw;
         }
         finally { Gate.Release(); }
+    }
+
+    internal static bool IsAuto(string? engine) => string.IsNullOrWhiteSpace(engine) || engine.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// <c>auto</c> and an installed browser that failed to start (exited, DevTools never came up, could not be
+    /// executed): use the managed download instead, when this platform has one. A named engine keeps its error.
+    /// </summary>
+    internal static bool ShouldFallBackToManaged(string? engine, Exception ex, string? platform) =>
+        IsAuto(engine) && platform != null
+        && ex is InvalidOperationException or TimeoutException or System.ComponentModel.Win32Exception;
+
+    // The pinned Chrome for Testing build, downloaded on first use.
+    private static async Task<string> ManagedExeAsync(CancellationToken ct)
+    {
+        var platform = Platform() ?? throw new PlatformNotSupportedException("No Chrome for Testing build for this platform; set serve.browser.engine to an installed browser.");
+        var exe = ExePath(platform);
+        if (!File.Exists(exe)) { _status = "downloading"; await DownloadAsync(platform, ct); }
+        return exe;
+    }
+
+    private static async Task LaunchAsync(string exe, string? engine, CancellationToken ct)
+    {
+        _status = "starting";
+        _port = ReservedPort;
+        var profile = string.IsNullOrWhiteSpace(App.Config.Serve.Browser.ProfileDir)
+            ? DefaultProfile(ProfilesRoot, engine) : App.Config.Serve.Browser.ProfileDir;
+        Directory.CreateDirectory(profile);
+        var args = LaunchArgs(_port, profile, App.Config.Serve.Browser.Headless, NoSandboxRequested);
+        try { await StartAndWaitAsync(exe, args, ct); }
+        catch (InvalidOperationException) when (OperatingSystem.IsLinux() && !args.Contains("--no-sandbox"))
+        {
+            // No usable sandbox (restricted user namespaces, non-root containers): Chrome exits at once.
+            // Retry once without it, as Playwright's own launch did.
+            args.Insert(0, "--no-sandbox");
+            await StartAndWaitAsync(exe, args, ct);
+        }
     }
 
     private static async Task StartAndWaitAsync(string exe, List<string> args, CancellationToken ct)
