@@ -128,13 +128,11 @@ internal sealed class FileChangeTracker
             yield return Path.Combine(root, "Runtime", "whisper");
             yield return Path.Combine(root, "cliproxy");
             yield return Path.Combine(root, "Backups");
+            yield return Path.Combine(root, "BrowserProfiles");   // built-in browser profiles
         }
         foreach (var s in new[] { sessionsDir, Path.Combine(baseDir, "Sessions") })
             if (!string.IsNullOrWhiteSpace(s))
-            {
-                yield return Path.Combine(s, "BrowserProfile");
                 yield return Path.Combine(s, "PlaywrightChromeProfile");
-            }
         if (!string.IsNullOrWhiteSpace(chromaPath)) yield return chromaPath;
         // The graph file only (its folder may be the user's sandbox, the setup default).
         if (!string.IsNullOrWhiteSpace(kgPath)) yield return kgPath;

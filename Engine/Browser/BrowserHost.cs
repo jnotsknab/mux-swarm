@@ -8,8 +8,9 @@ using System.Text.Json;
 namespace MuxSwarm.Engine.Browser;
 
 /// <summary>
-/// The built-in browser: a pinned Chrome for Testing build fetched on first use into
-/// <c>Runtime/browser/&lt;version&gt;</c> (SHA-256 checked), launched headless with a persistent
+/// The built-in browser: by default a pinned Chrome for Testing build fetched on first use into
+/// <c>Runtime/browser/&lt;version&gt;</c> (SHA-256 checked), or an installed Chromium browser picked
+/// with <c>serve.browser.engine</c>; launched headless with a persistent
 /// profile and a loopback-only DevTools port. Shared by the web UI's Browser tab (screencast via
 /// <see cref="BrowserRelay"/>) and the built-in Playwright MCP server (<c>--cdp-endpoint</c>).
 /// Chrome for Testing is distributed by Google and downloaded from Google's bucket at runtime; Mux
@@ -59,6 +60,47 @@ internal static class BrowserHost
 
     internal static string InstallDir => Path.Combine(PlatformContext.BaseDirectory, "Runtime", "browser", Version);
 
+    /// <summary>Values of <c>serve.browser.engine</c>: <c>managed</c> = the Chrome for Testing download.</summary>
+    internal static readonly string[] Engines = { "managed", "auto", "chrome", "edge", "brave", "chromium" };
+
+    /// <summary>Engine used when <c>serve.browser.engine</c> is unset or empty: an installed browser, else managed.</summary>
+    internal const string DefaultEngine = "auto";
+
+    /// <summary>
+    /// The installed browser <paramref name="engine"/> selects (<c>auto</c> = first found), or null for
+    /// <c>managed</c> / <c>auto</c> with nothing installed. Throws when a named browser is not installed
+    /// or the value is unknown.
+    /// </summary>
+    internal static (string Engine, string Exe, BrowserIdentity Identity)? ResolveInstalled(string? engine)
+    {
+        var e = string.IsNullOrWhiteSpace(engine) ? DefaultEngine : engine.Trim().ToLowerInvariant();
+        if (!Engines.Contains(e)) throw new ArgumentException($"serve.browser.engine '{engine}' is not one of: {string.Join(", ", Engines)}.");
+        if (e == "managed") return null;
+        foreach (var b in BrowserIdentity.Installed())
+            if (e == "auto" || b.Engine == e) return b;
+        if (e == "auto") return null;
+        throw new InvalidOperationException($"serve.browser.engine is '{e}' but that browser is not installed. Install it or use \"managed\".");
+    }
+
+    /// <summary>
+    /// True when the browser can be offered on this host: a named installed browser (if it is missing,
+    /// starting it reports why), or a managed build for this platform, or (<c>auto</c>) any installed one.
+    /// </summary>
+    internal static bool CanRun(string? engine)
+    {
+        var e = string.IsNullOrWhiteSpace(engine) ? DefaultEngine : engine.Trim().ToLowerInvariant();
+        return e is not ("managed" or "auto") || Platform() != null || (e == "auto" && BrowserIdentity.Installed().Any());
+    }
+
+    /// <summary>Root of the default browser profiles: <c>&lt;install&gt;/BrowserProfiles</c>, outside
+    /// <c>Sessions</c> so profiles are never mistaken for saved sessions.</summary>
+    internal static string ProfilesRoot => Path.Combine(PlatformContext.BaseDirectory, "BrowserProfiles");
+
+    /// <summary>Default profile folder for <paramref name="engine"/>: <c>&lt;root&gt;/managed</c> or <c>&lt;root&gt;/&lt;engine&gt;</c>
+    /// (one per browser: profiles are not portable across browsers or versions).</summary>
+    internal static string DefaultProfile(string root, string? engine) =>
+        Path.Combine(root, engine is null or "auto" ? "managed" : engine);
+
     /// <summary>Chrome executable inside the extracted archive for <paramref name="platform"/>.</summary>
     internal static string ExePath(string platform) => platform switch
     {
@@ -74,7 +116,8 @@ internal static class BrowserHost
     internal static object Status() => new
     {
         enabled = App.Config.Serve.Browser.Enabled,
-        status = Platform() is null ? "unsupported" : _status,
+        engine = App.Config.Serve.Browser.Engine,
+        status = CanRun(App.Config.Serve.Browser.Engine) ? _status : "unsupported",
         identity = new { brand = BrowserIdentity.Current.Brand, version = BrowserIdentity.Current.Version, source = BrowserIdentity.Current.Source },
         installed = Platform() is { } p && File.Exists(ExePath(p)),
         version = Version,
@@ -89,24 +132,22 @@ internal static class BrowserHost
         try
         {
             if (_proc is { HasExited: false } && _port > 0) return _port;
-            var platform = Platform() ?? throw new PlatformNotSupportedException("No Chrome for Testing build for this platform.");
-            var exe = ExePath(platform);
             _error = null;
-            if (!File.Exists(exe)) { _status = "downloading"; await DownloadAsync(platform, ct); }
-            _status = "starting";
-            _port = ReservedPort;
-            var profile = string.IsNullOrWhiteSpace(App.Config.Serve.Browser.ProfileDir)
-                ? Path.Combine(PlatformContext.SessionsDirectory, "BrowserProfile") : App.Config.Serve.Browser.ProfileDir;
-            Directory.CreateDirectory(profile);
-            var args = LaunchArgs(_port, profile, App.Config.Serve.Browser.Headless, NoSandboxRequested);
-            try { await StartAndWaitAsync(exe, args, ct); }
-            catch (InvalidOperationException) when (OperatingSystem.IsLinux() && !args.Contains("--no-sandbox"))
+            var engine = App.Config.Serve.Browser.Engine;
+            var installed = ResolveInstalled(engine);
+            if (installed is { } b)
             {
-                // No usable sandbox (restricted user namespaces, non-root containers): Chrome exits at once.
-                // Retry once without it, as Playwright's own launch did.
-                args.Insert(0, "--no-sandbox");
-                await StartAndWaitAsync(exe, args, ct);
+                try { await LaunchAsync(b.Exe, b.Engine, ct); }
+                catch (Exception ex) when (ShouldFallBackToManaged(engine, ex, Platform()))
+                {
+                    // auto = installed, else managed: an installed browser that will not start (snap confinement,
+                    // a broken install) falls back to the managed download instead of failing the panel and Playwright.
+                    MuxConsole.WriteWarning($"[browser] {b.Exe} did not start ({ex.Message}); using the managed browser.");
+                    try { if (_proc is { HasExited: false } stale) stale.Kill(entireProcessTree: true); } catch { }
+                    await LaunchAsync(await ManagedExeAsync(ct), null, ct);
+                }
             }
+            else await LaunchAsync(await ManagedExeAsync(ct), null, ct);
             _status = "ready";
             return _port;
         }
@@ -116,6 +157,43 @@ internal static class BrowserHost
             throw;
         }
         finally { Gate.Release(); }
+    }
+
+    internal static bool IsAuto(string? engine) => string.IsNullOrWhiteSpace(engine) || engine.Trim().Equals("auto", StringComparison.OrdinalIgnoreCase);
+
+    /// <summary>
+    /// <c>auto</c> and an installed browser that failed to start (exited, DevTools never came up, could not be
+    /// executed): use the managed download instead, when this platform has one. A named engine keeps its error.
+    /// </summary>
+    internal static bool ShouldFallBackToManaged(string? engine, Exception ex, string? platform) =>
+        IsAuto(engine) && platform != null
+        && ex is InvalidOperationException or TimeoutException or System.ComponentModel.Win32Exception;
+
+    // The pinned Chrome for Testing build, downloaded on first use.
+    private static async Task<string> ManagedExeAsync(CancellationToken ct)
+    {
+        var platform = Platform() ?? throw new PlatformNotSupportedException("No Chrome for Testing build for this platform; set serve.browser.engine to an installed browser.");
+        var exe = ExePath(platform);
+        if (!File.Exists(exe)) { _status = "downloading"; await DownloadAsync(platform, ct); }
+        return exe;
+    }
+
+    private static async Task LaunchAsync(string exe, string? engine, CancellationToken ct)
+    {
+        _status = "starting";
+        _port = ReservedPort;
+        var profile = string.IsNullOrWhiteSpace(App.Config.Serve.Browser.ProfileDir)
+            ? DefaultProfile(ProfilesRoot, engine) : App.Config.Serve.Browser.ProfileDir;
+        Directory.CreateDirectory(profile);
+        var args = LaunchArgs(_port, profile, App.Config.Serve.Browser.Headless, NoSandboxRequested);
+        try { await StartAndWaitAsync(exe, args, ct); }
+        catch (InvalidOperationException) when (OperatingSystem.IsLinux() && !args.Contains("--no-sandbox"))
+        {
+            // No usable sandbox (restricted user namespaces, non-root containers): Chrome exits at once.
+            // Retry once without it, as Playwright's own launch did.
+            args.Insert(0, "--no-sandbox");
+            await StartAndWaitAsync(exe, args, ct);
+        }
     }
 
     private static async Task StartAndWaitAsync(string exe, List<string> args, CancellationToken ct)
