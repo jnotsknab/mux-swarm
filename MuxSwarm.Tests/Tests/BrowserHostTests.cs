@@ -93,6 +93,33 @@ public class BrowserHostTests
             "--cdp-endpoint", "http://127.0.0.1:9333" }, outp);
     }
 
+    [Fact]
+    public void NoSandbox_FromThePlaywrightConfig_ReachesTheSharedBrowser()
+    {
+        // Linux without a usable sandbox (restricted user namespaces, non-root containers): the default Playwright
+        // config passes --no-sandbox, and the shared browser must keep it or Playwright's tools stop working.
+        var prior = BrowserHost.NoSandboxRequested;
+        try
+        {
+            BrowserHost.NoSandboxRequested = false;
+            BrowserHost.PlaywrightArgs(new[] { "@playwright/mcp@latest", "--no-sandbox" }, "http://127.0.0.1:1");
+            Assert.True(BrowserHost.NoSandboxRequested);
+            Assert.Contains("--no-sandbox", BrowserHost.LaunchArgs(1, "/p", noSandbox: BrowserHost.NoSandboxRequested));
+            Assert.DoesNotContain("--no-sandbox", BrowserHost.LaunchArgs(1, "/p", noSandbox: false).Where(_ => !OperatingSystem.IsLinux() || Environment.UserName != "root"));
+        }
+        finally { BrowserHost.NoSandboxRequested = prior; }
+    }
+
+    [Fact]
+    public void Launch_RetriesWithoutTheSandbox_WhenChromeExitsAtOnceOnLinux()
+    {
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d != null && !File.Exists(Path.Combine(d.FullName, "MuxSwarm.csproj"))) d = d.Parent;
+        var src = File.ReadAllText(Path.Combine(d!.FullName, "Engine", "Browser", "BrowserHost.cs"));
+        Assert.Contains("catch (InvalidOperationException) when (OperatingSystem.IsLinux() && !args.Contains(\"--no-sandbox\"))", src);
+        Assert.Contains("args.Insert(0, \"--no-sandbox\");", src);
+    }
+
     [Theory]
     [InlineData("example.com", "https://example.com")]
     [InlineData("http://localhost:3000", "http://localhost:3000")]

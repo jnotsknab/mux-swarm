@@ -54,6 +54,9 @@ internal static class BrowserHost
     /// <summary>True when the built-in Playwright server is routed to this browser (set at MCP connect).</summary>
     internal static bool SharedWithPlaywright;
 
+    /// <summary>The user's Playwright config asked for <c>--no-sandbox</c>; the shared browser keeps that choice.</summary>
+    internal static bool NoSandboxRequested;
+
     internal static string InstallDir => Path.Combine(PlatformContext.BaseDirectory, "Runtime", "browser", Version);
 
     /// <summary>Chrome executable inside the extracted archive for <paramref name="platform"/>.</summary>
@@ -95,17 +98,15 @@ internal static class BrowserHost
             var profile = string.IsNullOrWhiteSpace(App.Config.Serve.Browser.ProfileDir)
                 ? Path.Combine(PlatformContext.SessionsDirectory, "BrowserProfile") : App.Config.Serve.Browser.ProfileDir;
             Directory.CreateDirectory(profile);
-            var psi = new ProcessStartInfo(exe)
+            var args = LaunchArgs(_port, profile, App.Config.Serve.Browser.Headless, NoSandboxRequested);
+            try { await StartAndWaitAsync(exe, args, ct); }
+            catch (InvalidOperationException) when (OperatingSystem.IsLinux() && !args.Contains("--no-sandbox"))
             {
-                UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
-            };
-            foreach (var a in LaunchArgs(_port, profile, App.Config.Serve.Browser.Headless)) psi.ArgumentList.Add(a);
-            _proc = Process.Start(psi) ?? throw new InvalidOperationException("Chrome did not start.");
-            ProcessCleanup.Instance.Track(_proc);   // dies with the engine (Job Object / tracked PID)
-            _proc.StandardInput.Close();
-            _proc.ErrorDataReceived += (_, _) => { }; _proc.OutputDataReceived += (_, _) => { };
-            _proc.BeginErrorReadLine(); _proc.BeginOutputReadLine();
-            await WaitForDevToolsAsync(_port, ct);
+                // No usable sandbox (restricted user namespaces, non-root containers): Chrome exits at once.
+                // Retry once without it, as Playwright's own launch did.
+                args.Insert(0, "--no-sandbox");
+                await StartAndWaitAsync(exe, args, ct);
+            }
             _status = "ready";
             return _port;
         }
@@ -117,8 +118,23 @@ internal static class BrowserHost
         finally { Gate.Release(); }
     }
 
+    private static async Task StartAndWaitAsync(string exe, List<string> args, CancellationToken ct)
+    {
+        var psi = new ProcessStartInfo(exe)
+        {
+            UseShellExecute = false, RedirectStandardInput = true, RedirectStandardOutput = true, RedirectStandardError = true, CreateNoWindow = true,
+        };
+        foreach (var a in args) psi.ArgumentList.Add(a);
+        _proc = Process.Start(psi) ?? throw new InvalidOperationException("Chrome did not start.");
+        ProcessCleanup.Instance.Track(_proc);   // dies with the engine (Job Object / tracked PID)
+        _proc.StandardInput.Close();
+        _proc.ErrorDataReceived += (_, _) => { }; _proc.OutputDataReceived += (_, _) => { };
+        _proc.BeginErrorReadLine(); _proc.BeginOutputReadLine();
+        await WaitForDevToolsAsync(_port, ct);
+    }
+
     /// <summary>Chrome flags: headless, loopback-only DevTools, persistent profile, no first-run UI.</summary>
-    internal static List<string> LaunchArgs(int port, string profile, bool headless = true)
+    internal static List<string> LaunchArgs(int port, string profile, bool headless = true, bool noSandbox = false)
     {
         var args = new List<string>
         {
@@ -130,8 +146,9 @@ internal static class BrowserHost
             "about:blank",
         };
         if (headless) args.Insert(0, "--headless=new");
-        // Linux containers often run as root, where Chrome refuses to start sandboxed.
-        if (OperatingSystem.IsLinux() && Environment.UserName == "root") args.Insert(0, "--no-sandbox");
+        // Linux containers often run as root, where Chrome refuses to start sandboxed; the user's Playwright
+        // config may also ask for it (restricted user namespaces).
+        if (noSandbox || (OperatingSystem.IsLinux() && Environment.UserName == "root")) args.Insert(0, "--no-sandbox");
         return args;
     }
 
@@ -141,6 +158,7 @@ internal static class BrowserHost
     /// </summary>
     internal static string[] PlaywrightArgs(string[] args, string cdp)
     {
+        NoSandboxRequested |= args.Contains("--no-sandbox");
         var withValue = new HashSet<string>(StringComparer.Ordinal) { "--browser", "--executable-path", "--user-data-dir", "--cdp-endpoint", "--viewport-size", "--device" };
         var flags = new HashSet<string>(StringComparer.Ordinal) { "--headless", "--no-sandbox", "--isolated", "--extension" };
         var outp = new List<string>();
