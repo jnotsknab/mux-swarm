@@ -84,6 +84,14 @@ public class ServeFileApiTests : IDisposable
     [InlineData("page.HTM", false, "sandbox")]
     [InlineData("logo.svg", false, "sandbox")]
     [InlineData("feed.xml", false, "sandbox")]
+    [InlineData("x.xht", false, "sandbox")]    // application/xhtml+xml
+    [InlineData("x.hxt", false, "sandbox")]    // text/html via the MIME table
+    [InlineData("x.xsd", false, "sandbox")]    // text/xml
+    [InlineData("x.htc", false, "sandbox")]    // text/x-component
+    [InlineData("x.vbs", false, "sandbox")]    // any type not known to be passive
+    [InlineData("report.pdf", false, null)]    // the PDF viewer needs no sandbox
+    [InlineData("clip.mp4", false, null)]
+    [InlineData("data.json", false, null)]
     [InlineData("page.html", true, null)]      // attachment: the browser saves it, nothing runs
     [InlineData("chart.png", false, null)]
     [InlineData("notes.txt", false, null)]

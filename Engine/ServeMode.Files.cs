@@ -90,21 +90,29 @@ public static partial class ServeMode
         _mime.TryGetContentType(path, out var ct) ? ct
         : TextExtensions.Contains(Path.GetExtension(path)) ? "text/plain; charset=utf-8" : "application/octet-stream";
 
-    // Types a browser runs script in when opened directly.
-    private static readonly HashSet<string> ActiveExtensions = new(StringComparer.OrdinalIgnoreCase)
+    /// <summary>
+    /// True for a response type a browser only displays (never runs script in): raster images, audio, video, PDF,
+    /// plain text, CSS, JSON. Everything else (HTML, XHTML, SVG, XML, components, unknown types) is treated as active.
+    /// </summary>
+    internal static bool IsPassiveType(string contentType)
     {
-        ".html", ".htm", ".xhtml", ".shtml", ".svg", ".svgz", ".xml", ".xsl", ".xslt",
-    };
+        var t = contentType.Split(';')[0].Trim().ToLowerInvariant();
+        if (t.Contains("svg") || t.Contains("xml") || t.Contains("html")) return false;
+        return t.StartsWith("image/", StringComparison.Ordinal) || t.StartsWith("audio/", StringComparison.Ordinal)
+            || t.StartsWith("video/", StringComparison.Ordinal) || t is "application/pdf" or "text/plain" or "text/css"
+            or "text/markdown" or "text/csv" or "text/tab-separated-values" or "application/json" or "application/octet-stream";
+    }
 
     /// <summary>
     /// Headers for a served file. Files come from the sandbox and allowed roots, which hold content the user did
-    /// not write (fetched pages, uploads, cloned repos), on the web UI's own origin. So: never sniff a type, and an
-    /// HTML/SVG/XML file opened in view mode is sandboxed (opaque origin, no access to the page's token or API).
+    /// not write (fetched pages, uploads, cloned repos), on the web UI's own origin. So: never sniff a type, and any
+    /// view response whose type is not known to be passive is sandboxed (opaque origin, no access to the page's token
+    /// or API). Decided from the type actually sent, so an unusual extension mapped to an active type is covered.
     /// </summary>
     internal static void ApplyFileHeaders(IHeaderDictionary headers, string path, bool download)
     {
         headers["X-Content-Type-Options"] = "nosniff";
-        if (!download && ActiveExtensions.Contains(Path.GetExtension(path))) headers["Content-Security-Policy"] = "sandbox";
+        if (!download && !IsPassiveType(MimeOf(path))) headers["Content-Security-Policy"] = "sandbox";
     }
 
     private static async Task HandleFile(HttpContext context)
