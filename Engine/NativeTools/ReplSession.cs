@@ -144,7 +144,7 @@ internal sealed class ReplSession : IDisposable
 
         // A job still running after the 2s quick window outlives its tool call: keep file_changed
         // reporting armed until the job ends (done/error/dead/killed all complete this TCS).
-        if (FileChangeTracker.Shared?.BeginToolCall("repl_shell_exec") is { } fileScope)
+        if (FileChangeTracker.Shared?.BeginToolCall("repl_shell_exec", background: true) is { } fileScope)
             _ = done.Task.ContinueWith(_ => fileScope.Dispose(), TaskScheduler.Default);
 
         // Worker exec() runs arbitrary model code - normalize to LF so multi-line constructs tokenize

@@ -57,6 +57,32 @@ public class FileChangeTrackerTests : IDisposable
     }
 
     [Fact]
+    public void ABackgroundJobThatHitTheCap_DoesNotSilenceTheNextToolCall()
+    {
+        // A dev server / watcher started with execute_command_async holds its scope until it exits.
+        var job = _t.BeginToolCall("execute_command_async", background: true);
+        try
+        {
+            for (int i = 0; i < FileChangeTracker.MaxEventsPerCall + 5; i++) File.WriteAllText(Path.Combine(_root, $"job{i}.log.txt"), "x");
+            Assert.True(WaitFor(_ => _events.Count >= FileChangeTracker.MaxEventsPerCall));
+            Thread.Sleep(300);
+            var f = Path.Combine(_root, "agent-edit.md");
+            using (_t.BeginToolCall("write_file"))   // a later foreground call gets its own budget
+                File.WriteAllText(f, "edited");
+            Assert.True(WaitFor(e => e.Path == f && e.Tool == "write_file"));
+        }
+        finally { job.Dispose(); }
+    }
+
+    [Fact]
+    public void HomeFolderAndDriveRoot_AreNeverWatched()
+    {
+        Assert.True(FileChangeTracker.IsTooBroad(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)));
+        Assert.True(FileChangeTracker.IsTooBroad(Path.GetPathRoot(_root)!));
+        Assert.False(FileChangeTracker.IsTooBroad(_root));
+    }
+
+    [Fact]
     public void WriteOutsideAnyToolCall_IsNotReported()
     {
         File.WriteAllText(Path.Combine(_root, "user-edit.md"), "mine");

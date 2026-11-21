@@ -4,11 +4,14 @@ namespace MuxSwarm.Engine;
 
 /// <summary>
 /// Reports files created, changed, renamed or deleted while a tool call runs, whatever the tool
-/// (file tools, REPL, shell, MCP servers): watchers on the workspace, sandbox and allowed paths are
-/// armed only while at least one tool call is in flight (plus a short tail for late notifications),
-/// so the user's own edits between tool calls are not reported. Changes become <c>file_changed</c>
-/// events on the serve/stdio stream only; they never reach the model. Off with
-/// <c>serve.fileEvents: false</c>.
+/// (file tools, REPL, shell, MCP servers): recursive watchers on the workspace, sandbox and allowed paths
+/// run while serving, and a change is reported only while at least one tool call is in flight (plus a short
+/// tail for late notifications), so the user's own edits between tool calls are not reported. A background
+/// job (async shell / REPL) keeps the window open while it runs; each foreground call starts a fresh event
+/// budget, so a long-lived job cannot silence later calls. A home folder or filesystem root is never watched
+/// (too broad: on Linux every subdirectory costs an inotify watch), and a watcher error is reported once.
+/// Changes become <c>file_changed</c> events on the serve/stdio stream only; they never reach the model.
+/// Off with <c>serve.fileEvents: false</c>.
 /// </summary>
 internal sealed class FileChangeTracker
 {
@@ -39,6 +42,7 @@ internal sealed class FileChangeTracker
     private DateTime _windowEnd = DateTime.MinValue;
     private string? _tool;
     private int _emitted;
+    private int _watchErrorReported;
 
     internal FileChangeTracker(Action<string, string, string?> emit) => _emit = emit;
 
@@ -50,6 +54,7 @@ internal sealed class FileChangeTracker
     {
         foreach (var root in NormalizeRoots(roots))
         {
+            if (IsTooBroad(root)) { MuxConsole.WriteWarning($"[file events] not watching {root}: too broad (home folder or drive root)."); continue; }
             try
             {
                 var w = new FileSystemWatcher(root)
@@ -62,6 +67,14 @@ internal sealed class FileChangeTracker
                 w.Changed += (_, e) => On(e.FullPath, "modified");
                 w.Deleted += (_, e) => On(e.FullPath, "deleted");
                 w.Renamed += (_, e) => On(e.FullPath, "renamed");
+                // Buffer overflow or an OS watch limit (inotify on Linux): say so once instead of going quiet.
+                w.Error += (_, e) =>
+                {
+                    if (Interlocked.Exchange(ref _watchErrorReported, 1) == 0)
+                        MuxConsole.WriteWarning($"[file events] watcher error ({e.GetException().Message}); Follow may miss changes.");
+                };
+                // Always on while serving (re-arming per call would re-walk the tree on Linux and miss the first
+                // events); outside a tool call's window, On() drops what it sees.
                 w.EnableRaisingEvents = true;
                 _watchers.Add(w);
             }
@@ -72,12 +85,17 @@ internal sealed class FileChangeTracker
         }
     }
 
-    /// <summary>Mark a tool call as running; changes are reported until every running call has ended (plus <see cref="Tail"/>).</summary>
-    internal IDisposable BeginToolCall(string? tool)
+    /// <summary>
+    /// Mark a tool call as running; changes are reported until every running call has ended (plus <see cref="Tail"/>).
+    /// A foreground call starts a fresh <see cref="MaxEventsPerCall"/> budget; a <paramref name="background"/> job
+    /// (still running after its tool call returned) does not, so a long-lived job cannot exhaust it for later calls.
+    /// </summary>
+    internal IDisposable BeginToolCall(string? tool, bool background = false)
     {
         lock (_gate)
         {
-            if (_inFlight++ == 0 && DateTime.UtcNow > _windowEnd) _emitted = 0;
+            if (!background || (_inFlight == 0 && DateTime.UtcNow > _windowEnd)) _emitted = 0;
+            _inFlight++;
             _tool = tool;
         }
         return new Scope(this);
@@ -127,6 +145,16 @@ internal sealed class FileChangeTracker
                || name.EndsWith(".swp", StringComparison.OrdinalIgnoreCase)
                || name.Contains(".mux-tmp-", StringComparison.Ordinal)   // Mux's own atomic-write temp
                || name.Equals(".DS_Store", StringComparison.Ordinal);
+    }
+
+    /// <summary>A filesystem root or the user's home folder: watching it recursively would cover far too much.</summary>
+    internal static bool IsTooBroad(string root)
+    {
+        var full = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        var cmp = OperatingSystem.IsWindows() || OperatingSystem.IsMacOS() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal;
+        if (string.Equals(full, Path.TrimEndingDirectorySeparator(Path.GetPathRoot(full) ?? ""), cmp)) return true;
+        var home = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        return !string.IsNullOrEmpty(home) && string.Equals(full, Path.TrimEndingDirectorySeparator(Path.GetFullPath(home)), cmp);
     }
 
     /// <summary>Existing directories only, full paths, duplicates and roots nested in another root removed.</summary>
