@@ -1593,6 +1593,7 @@ public static partial class ServeMode
             giga = App.GigaMode,
             sub = App.SubAgentsMode,
             psub = App.ParallelSubAgentsMode,
+            effort = MuxConsole.CurrentEffort,
         });
     }
 
